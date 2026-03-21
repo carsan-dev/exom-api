@@ -1,6 +1,11 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { PrismaModule } from './prisma/prisma.module';
+import { FirebaseAuthGuard } from './common/guards/firebase-auth.guard';
+import { RolesGuard } from './common/guards/roles.guard';
+
+// Modules
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProfileModule } from './modules/profile/profile.module';
@@ -22,8 +27,38 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
-  imports: [AuthModule, UsersModule, ProfileModule, TrainingsModule, ExercisesModule, DietsModule, MealsModule, IngredientsModule, AssignmentsModule, ProgressModule, CalendarModule, MetricsModule, RecapsModule, ChallengesModule, AchievementsModule, StreaksModule, FeedbackModule, UploadsModule, NotificationsModule],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    AuthModule,
+    UsersModule,
+    ProfileModule,
+    TrainingsModule,
+    ExercisesModule,
+    DietsModule,
+    MealsModule,
+    IngredientsModule,
+    AssignmentsModule,
+    ProgressModule,
+    CalendarModule,
+    MetricsModule,
+    RecapsModule,
+    ChallengesModule,
+    AchievementsModule,
+    StreaksModule,
+    FeedbackModule,
+    UploadsModule,
+    NotificationsModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: FirebaseAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+  ],
 })
 export class AppModule {}

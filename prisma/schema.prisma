@@ -1,13 +1,485 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  CLIENT
+}
+
+enum AuthProvider {
+  email
+  google
+  apple
+}
+
+enum TrainingType {
+  FUERZA
+  CARDIO
+  HIIT
+  FLEXIBILIDAD
+}
+
+enum Level {
+  PRINCIPIANTE
+  INTERMEDIO
+  AVANZADO
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  SNACK
+  DINNER
+}
+
+enum MeasureUnit {
+  g
+  ml
+  piece
+}
+
+enum ChallengeType {
+  WEEKLY
+  MAIN_GOAL
+}
+
+enum RecapStatus {
+  DRAFT
+  SUBMITTED
+  REVIEWED
+}
+
+enum FeedbackStatus {
+  PENDING
+  REVIEWED
+}
+
+enum MediaType {
+  VIDEO
+  IMAGE
+}
+
+// ─── User & Profile ───────────────────────────────────────────────────────────
+
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  firebase_uid String  @unique
+  role        Role     @default(CLIENT)
+  auth_provider AuthProvider @default(email)
+  is_active   Boolean  @default(true)
+  is_locked   Boolean  @default(false)
+  login_attempts Int   @default(0)
+  locked_at   DateTime?
+  fcm_token   String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  profile     Profile?
+  adminOf     AdminClientAssignment[] @relation("AdminAssignments")
+  clientOf    AdminClientAssignment[] @relation("ClientAssignments")
+  dayProgress DayProgress[]
+  bodyMetrics BodyMetric[]
+  streak      Streak?
+  weeklyRecaps WeeklyRecap[]
+  clientChallenges ChallengeClient[]
+  userAchievements UserAchievement[]
+  feedbackMedia FeedbackMedia[]
+
+  @@map("users")
+}
+
+model Profile {
+  id              String    @id @default(uuid())
+  user_id         String    @unique
+  first_name      String
+  last_name       String
+  avatar_url      String?
+  level           Level     @default(PRINCIPIANTE)
+  main_goal       String?
+  target_calories Int?
+  current_weight  Float?
+  height          Float?
+  birth_date      DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model AdminClientAssignment {
+  id        String   @id @default(uuid())
+  admin_id  String
+  client_id String
+  is_active Boolean  @default(true)
+  created_at DateTime @default(now())
+
+  admin  User @relation("AdminAssignments", fields: [admin_id], references: [id], onDelete: Cascade)
+  client User @relation("ClientAssignments", fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([admin_id, client_id])
+  @@map("admin_client_assignments")
+}
+
+// ─── Training & Exercise ──────────────────────────────────────────────────────
+
+model Training {
+  id                     String       @id @default(uuid())
+  name                   String
+  type                   TrainingType
+  level                  Level        @default(PRINCIPIANTE)
+  estimated_duration_min Int?
+  estimated_calories     Int?
+  total_volume           Int?
+  warmup_description     String?
+  warmup_duration_min    Int?
+  cooldown_description   String?
+  tags                   String[]
+  is_active              Boolean      @default(true)
+  created_by             String?
+  created_at             DateTime     @default(now())
+  updated_at             DateTime     @updatedAt
+
+  exercises    TrainingExercise[]
+  assignments  PlanAssignment[]
+
+  @@map("trainings")
+}
+
+model Exercise {
+  id                  String   @id @default(uuid())
+  name                String
+  muscle_groups       String[]
+  equipment           String[]
+  level               Level    @default(PRINCIPIANTE)
+  video_url           String?
+  video_stream_id     String?
+  thumbnail_url       String?
+  technique_text      String?
+  common_errors_text  String?
+  explanation_text    String?
+  is_active           Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  trainingExercises TrainingExercise[]
+  feedbackMedia     FeedbackMedia[]
+
+  @@map("exercises")
+}
+
+model TrainingExercise {
+  id               String  @id @default(uuid())
+  training_id      String
+  exercise_id      String
+  order            Int
+  sets             Int
+  reps_or_duration String
+  rest_seconds     Int     @default(60)
+
+  training Training @relation(fields: [training_id], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
+
+  @@unique([training_id, order])
+  @@map("training_exercises")
+}
+
+// ─── Diet & Meal & Ingredient ─────────────────────────────────────────────────
+
+model Diet {
+  id              String   @id @default(uuid())
+  name            String
+  total_calories  Int?
+  total_protein_g Float?
+  total_carbs_g   Float?
+  total_fat_g     Float?
+  is_active       Boolean  @default(true)
+  created_by      String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  meals       Meal[]
+  assignments PlanAssignment[]
+
+  @@map("diets")
+}
+
+model Meal {
+  id                  String   @id @default(uuid())
+  diet_id             String
+  type                MealType
+  name                String
+  image_url           String?
+  calories            Int?
+  protein_g           Float?
+  carbs_g             Float?
+  fat_g               Float?
+  nutritional_badges  String[]
+  order               Int      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  diet        Diet             @relation(fields: [diet_id], references: [id], onDelete: Cascade)
+  ingredients MealIngredient[]
+
+  @@map("meals")
+}
+
+model Ingredient {
+  id               String   @id @default(uuid())
+  name             String
+  icon             String?
+  calories_per_100g Float
+  protein_per_100g  Float
+  carbs_per_100g    Float
+  fat_per_100g      Float
+  is_active         Boolean  @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  mealIngredients MealIngredient[]
+
+  @@map("ingredients")
+}
+
+model MealIngredient {
+  id            String      @id @default(uuid())
+  meal_id       String
+  ingredient_id String
+  quantity      Float
+  unit          MeasureUnit @default(g)
+
+  meal       Meal       @relation(fields: [meal_id], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredient_id], references: [id], onDelete: Restrict)
+
+  @@unique([meal_id, ingredient_id])
+  @@map("meal_ingredients")
+}
+
+// ─── Assignments & Progress ───────────────────────────────────────────────────
+
+model PlanAssignment {
+  id          String   @id @default(uuid())
+  client_id   String
+  admin_id    String?
+  date        DateTime @db.Date
+  training_id String?
+  diet_id     String?
+  is_rest_day Boolean  @default(false)
+  notes       String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  diet     Diet?     @relation(fields: [diet_id], references: [id], onDelete: SetNull)
+
+  @@unique([client_id, date])
+  @@map("plan_assignments")
+}
+
+model DayProgress {
+  id                   String   @id @default(uuid())
+  client_id            String
+  date                 DateTime @db.Date
+  training_completed   Boolean  @default(false)
+  exercises_completed  Json     @default("[]")
+  meals_completed      String[]
+  notes                String?
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([client_id, date])
+  @@map("day_progress")
+}
+
+// ─── Body Metrics ─────────────────────────────────────────────────────────────
+
+model BodyMetric {
+  id           String   @id @default(uuid())
+  client_id    String
+  date         DateTime @db.Date @default(now())
+  weight_kg    Float?
+  height_cm    Float?
+  sleep_hours  Float?
+  neck_cm      Float?
+  shoulders_cm Float?
+  chest_cm     Float?
+  arm_cm       Float?
+  forearm_cm   Float?
+  waist_cm     Float?
+  hips_cm      Float?
+  thigh_cm     Float?
+  calf_cm      Float?
+  created_at   DateTime @default(now())
+
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@map("body_metrics")
+}
+
+// ─── Streak ───────────────────────────────────────────────────────────────────
+
+model Streak {
+  id               String    @id @default(uuid())
+  client_id        String    @unique
+  current_days     Int       @default(0)
+  longest_days     Int       @default(0)
+  last_active_date DateTime? @db.Date
+  updated_at       DateTime  @updatedAt
+
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
+}
+
+// ─── Weekly Recap ─────────────────────────────────────────────────────────────
+
+model WeeklyRecap {
+  id                       String      @id @default(uuid())
+  client_id                String
+  week_start_date          DateTime    @db.Date
+  week_end_date            DateTime    @db.Date
+
+  // Step 1: Training
+  training_effort          Int?
+  training_sessions        Int?
+  training_progress        String?
+  training_notes           String?
+
+  // Step 2: Nutrition
+  nutrition_quality        String?
+  hydration_enabled        Boolean     @default(false)
+  hydration_level          String?
+  food_quality             Int?
+  nutrition_notes          String?
+
+  // Step 3: Recovery
+  sleep_hours_range        String?
+  fatigue_level            String?
+  muscle_pain_zones        Json        @default("[]")
+  recovery_notes           String?
+
+  // Step 4: General feelings
+  mood                     String?
+  stress_enabled           Boolean     @default(false)
+  stress_level             Int?
+  general_notes            String?
+
+  // Improvement section
+  improvement_app_rating     Int?
+  improvement_service_rating Int?
+  improvement_areas          String[]
+  improvement_feedback_text  String?
+
+  status     RecapStatus @default(DRAFT)
+  created_at DateTime    @default(now())
+  updated_at DateTime    @updatedAt
+
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([client_id, week_start_date])
+  @@map("weekly_recaps")
+}
+
+// ─── Challenges ───────────────────────────────────────────────────────────────
+
+model Challenge {
+  id           String        @id @default(uuid())
+  title        String
+  description  String
+  type         ChallengeType @default(WEEKLY)
+  target_value Float
+  unit         String
+  is_manual    Boolean       @default(false)
+  is_global    Boolean       @default(false)
+  deadline     DateTime?     @db.Date
+  created_by   String?
+  created_at   DateTime      @default(now())
+  updated_at   DateTime      @updatedAt
+
+  clients ChallengeClient[]
+
+  @@map("challenges")
+}
+
+model ChallengeClient {
+  id            String   @id @default(uuid())
+  challenge_id  String
+  client_id     String
+  current_value Float    @default(0)
+  is_completed  Boolean  @default(false)
+  completed_at  DateTime?
+  assigned_at   DateTime @default(now())
+
+  challenge Challenge @relation(fields: [challenge_id], references: [id], onDelete: Cascade)
+  client    User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([challenge_id, client_id])
+  @@map("challenge_clients")
+}
+
+// ─── Achievements ─────────────────────────────────────────────────────────────
+
+model Achievement {
+  id              String   @id @default(uuid())
+  name            String
+  description     String
+  icon_url        String?
+  criteria_type   String
+  criteria_value  Float
+  created_at      DateTime @default(now())
+
+  userAchievements UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id             String   @id @default(uuid())
+  user_id        String
+  achievement_id String
+  unlocked_at    DateTime @default(now())
+
+  user        User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievement_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, achievement_id])
+  @@map("user_achievements")
+}
+
+// ─── Feedback Media ───────────────────────────────────────────────────────────
+
+model FeedbackMedia {
+  id             String         @id @default(uuid())
+  client_id      String
+  exercise_id    String?
+  media_type     MediaType
+  media_url      String
+  notes          String?
+  admin_response String?
+  status         FeedbackStatus @default(PENDING)
+  reviewed_by    String?
+  reviewed_at    DateTime?
+  created_at     DateTime       @default(now())
+  updated_at     DateTime       @updatedAt
+
+  client   User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  exercise Exercise? @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
+
+  @@map("feedback_media")
 }
