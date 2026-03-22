@@ -9,7 +9,7 @@ if (!connectionString) {
 }
 
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString }),
+  adapter: new PrismaPg({ connectionString: `${connectionString}${connectionString!.includes('?') ? '&' : '?'}sslmode=no-verify` }),
 });
 
 // ⚠️  ANTES DE EJECUTAR EL SEED:
