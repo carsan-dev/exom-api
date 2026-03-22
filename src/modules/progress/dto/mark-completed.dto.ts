@@ -1,13 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsUUID, IsOptional, IsNumber, IsString } from 'class-validator';
+import { IsOptional, IsNumber, IsString } from 'class-validator';
 
 export class MarkExerciseDto {
   @ApiProperty()
   @IsString()
   date: string;
 
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty()
+  @IsString()
   exercise_id: string;
 
   @ApiPropertyOptional()
@@ -21,7 +21,7 @@ export class MarkMealDto {
   @IsString()
   date: string;
 
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty()
+  @IsString()
   meal_id: string;
 }

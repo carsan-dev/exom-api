@@ -31,12 +31,12 @@ export class TrainingsService {
     return paginate(data, total, pagination);
   }
 
-  async findToday(clientId: string) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  async findToday(clientId: string, date?: Date) {
+    const target = date ?? new Date();
+    target.setHours(0, 0, 0, 0);
 
     const assignment = await this.prisma.planAssignment.findUnique({
-      where: { client_id_date: { client_id: clientId, date: today } },
+      where: { client_id_date: { client_id: clientId, date: target } },
       include: {
         training: {
           include: trainingExercisesInclude,

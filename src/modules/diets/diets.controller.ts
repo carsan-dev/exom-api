@@ -37,10 +37,14 @@ export class DietsController {
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
   @Get('today')
-  @ApiOperation({ summary: "Get today's diet for the current client" })
+  @ApiOperation({ summary: "Get diet for the current client on a given date (defaults to today)" })
   @Roles(Role.CLIENT)
-  findToday(@CurrentUser() user: AuthenticatedUser) {
-    return this.dietsService.findToday(user.id);
+  findToday(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('date') dateStr?: string,
+  ) {
+    const date = dateStr ? new Date(dateStr) : undefined;
+    return this.dietsService.findToday(user.id, date);
   }
 
   @Get(':id')
