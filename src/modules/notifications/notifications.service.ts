@@ -5,8 +5,40 @@ import { PrismaService } from '../../prisma/prisma.service';
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
+  private static readonly defaultChannelId = 'exom_high_importance';
 
   constructor(private readonly prisma: PrismaService) {}
+
+  private resolveRoute(data?: Record<string, string>): string | undefined {
+    const directRoute = data?.route;
+    if (directRoute?.startsWith('/')) {
+      return directRoute;
+    }
+
+    switch (data?.type?.toLowerCase()) {
+      case 'recap_reminder':
+      case 'recap':
+        return '/recap';
+      case 'training':
+      case 'training_reminder':
+        return '/trainings';
+      case 'meal':
+      case 'diet':
+      case 'diet_reminder':
+        return '/diets';
+      case 'challenge':
+      case 'challenge_update':
+        return '/challenges';
+      case 'profile':
+        return '/profile';
+      case 'calendar':
+        return '/calendar';
+      case 'home':
+        return '/';
+      default:
+        return undefined;
+    }
+  }
 
   async sendToUser(
     userId: string,
@@ -29,10 +61,32 @@ export class NotificationsService {
     }
 
     try {
+      const route = this.resolveRoute(data);
       const messageId = await admin.messaging().send({
         token: user.fcm_token,
         notification: { title, body },
-        data: data ?? {},
+        data: {
+          ...(data ?? {}),
+          ...(route ? { route } : {}),
+        },
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: NotificationsService.defaultChannelId,
+            sound: 'default',
+            clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+          },
+        },
+        apns: {
+          headers: {
+            'apns-priority': '10',
+          },
+          payload: {
+            aps: {
+              sound: 'default',
+            },
+          },
+        },
       });
       this.logger.log(`FCM sent to ${user.email}: ${messageId}`);
       return { success: true, message: messageId };

@@ -1,13 +1,13 @@
 import { Controller, Post, Body } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUUID } from 'class-validator';
+import { IsString, IsOptional } from 'class-validator';
 import { NotificationsService } from './notifications.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 
 class SendNotificationDto {
   @ApiProperty()
-  @IsUUID()
+  @IsString()
   user_id: string;
 
   @ApiProperty()
