@@ -47,13 +47,23 @@ export class MetricsService {
         client_id: clientId,
         weight_kg: { not: null },
       },
-      orderBy: { date: 'asc' },
-      select: { date: true, weight_kg: true },
+      orderBy: [{ date: 'asc' }, { created_at: 'asc' }],
+      select: { date: true, weight_kg: true, created_at: true },
     });
 
-    return records.map((r) => ({
-      date: new Date(r.date).toISOString().split('T')[0],
-      weight_kg: r.weight_kg,
-    }));
+    const uniqueByDay = new Map<
+      string,
+      { date: string; weight_kg: number | null }
+    >();
+
+    for (const record of records) {
+      const day = new Date(record.date).toISOString().split('T')[0];
+      uniqueByDay.set(day, {
+        date: day,
+        weight_kg: record.weight_kg,
+      });
+    }
+
+    return [...uniqueByDay.values()];
   }
 }

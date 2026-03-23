@@ -12,6 +12,12 @@ export class CreateBodyMetricDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  muscle_mass_kg?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   height_cm?: number;
 
   @ApiPropertyOptional()

@@ -73,47 +73,48 @@ enum MediaType {
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
-  id          String   @id @default(uuid())
-  email       String   @unique
-  firebase_uid String  @unique
-  role        Role     @default(CLIENT)
-  auth_provider AuthProvider @default(email)
-  is_active   Boolean  @default(true)
-  is_locked   Boolean  @default(false)
-  login_attempts Int   @default(0)
-  locked_at   DateTime?
-  fcm_token   String?
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  id             String       @id @default(uuid())
+  email          String       @unique
+  firebase_uid   String       @unique
+  role           Role         @default(CLIENT)
+  auth_provider  AuthProvider @default(email)
+  is_active      Boolean      @default(true)
+  is_locked      Boolean      @default(false)
+  login_attempts Int          @default(0)
+  locked_at      DateTime?
+  fcm_token      String?
+  created_at     DateTime     @default(now())
+  updated_at     DateTime     @updatedAt
 
-  profile     Profile?
-  adminOf     AdminClientAssignment[] @relation("AdminAssignments")
-  clientOf    AdminClientAssignment[] @relation("ClientAssignments")
-  dayProgress DayProgress[]
-  bodyMetrics BodyMetric[]
-  streak      Streak?
-  weeklyRecaps WeeklyRecap[]
+  profile          Profile?
+  adminOf          AdminClientAssignment[] @relation("AdminAssignments")
+  clientOf         AdminClientAssignment[] @relation("ClientAssignments")
+  dayProgress      DayProgress[]
+  bodyMetrics      BodyMetric[]
+  streak           Streak?
+  weeklyRecaps     WeeklyRecap[]
   clientChallenges ChallengeClient[]
   userAchievements UserAchievement[]
-  feedbackMedia FeedbackMedia[]
+  feedbackMedia    FeedbackMedia[]
 
   @@map("users")
 }
 
 model Profile {
-  id              String    @id @default(uuid())
-  user_id         String    @unique
-  first_name      String
-  last_name       String
-  avatar_url      String?
-  level           Level     @default(PRINCIPIANTE)
-  main_goal       String?
-  target_calories Int?
-  current_weight  Float?
-  height          Float?
-  birth_date      DateTime?
-  created_at      DateTime  @default(now())
-  updated_at      DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  user_id          String    @unique
+  first_name       String
+  last_name        String
+  avatar_url       String?
+  level            Level     @default(PRINCIPIANTE)
+  main_goal        String?
+  muscle_mass_goal Float?
+  target_calories  Int?
+  current_weight   Float?
+  height           Float?
+  birth_date       DateTime?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -121,10 +122,10 @@ model Profile {
 }
 
 model AdminClientAssignment {
-  id        String   @id @default(uuid())
-  admin_id  String
-  client_id String
-  is_active Boolean  @default(true)
+  id         String   @id @default(uuid())
+  admin_id   String
+  client_id  String
+  is_active  Boolean  @default(true)
   created_at DateTime @default(now())
 
   admin  User @relation("AdminAssignments", fields: [admin_id], references: [id], onDelete: Cascade)
@@ -153,27 +154,27 @@ model Training {
   created_at             DateTime     @default(now())
   updated_at             DateTime     @updatedAt
 
-  exercises    TrainingExercise[]
-  assignments  PlanAssignment[]
+  exercises   TrainingExercise[]
+  assignments PlanAssignment[]
 
   @@map("trainings")
 }
 
 model Exercise {
-  id                  String   @id @default(uuid())
-  name                String
-  muscle_groups       String[]
-  equipment           String[]
-  level               Level    @default(PRINCIPIANTE)
-  video_url           String?
-  video_stream_id     String?
-  thumbnail_url       String?
-  technique_text      String?
-  common_errors_text  String?
-  explanation_text    String?
-  is_active           Boolean  @default(true)
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  name               String
+  muscle_groups      String[]
+  equipment          String[]
+  level              Level    @default(PRINCIPIANTE)
+  video_url          String?
+  video_stream_id    String?
+  thumbnail_url      String?
+  technique_text     String?
+  common_errors_text String?
+  explanation_text   String?
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   trainingExercises TrainingExercise[]
   feedbackMedia     FeedbackMedia[]
@@ -182,13 +183,13 @@ model Exercise {
 }
 
 model TrainingExercise {
-  id               String  @id @default(uuid())
+  id               String @id @default(uuid())
   training_id      String
   exercise_id      String
   order            Int
   sets             Int
   reps_or_duration String
-  rest_seconds     Int     @default(60)
+  rest_seconds     Int    @default(60)
 
   training Training @relation(fields: [training_id], references: [id], onDelete: Cascade)
   exercise Exercise @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
@@ -218,19 +219,19 @@ model Diet {
 }
 
 model Meal {
-  id                  String   @id @default(uuid())
-  diet_id             String
-  type                MealType
-  name                String
-  image_url           String?
-  calories            Int?
-  protein_g           Float?
-  carbs_g             Float?
-  fat_g               Float?
-  nutritional_badges  String[]
-  order               Int      @default(0)
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  diet_id            String
+  type               MealType
+  name               String
+  image_url          String?
+  calories           Int?
+  protein_g          Float?
+  carbs_g            Float?
+  fat_g              Float?
+  nutritional_badges String[]
+  order              Int      @default(0)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   diet        Diet             @relation(fields: [diet_id], references: [id], onDelete: Cascade)
   ingredients MealIngredient[]
@@ -239,9 +240,9 @@ model Meal {
 }
 
 model Ingredient {
-  id               String   @id @default(uuid())
-  name             String
-  icon             String?
+  id                String   @id @default(uuid())
+  name              String
+  icon              String?
   calories_per_100g Float
   protein_per_100g  Float
   carbs_per_100g    Float
@@ -291,15 +292,15 @@ model PlanAssignment {
 }
 
 model DayProgress {
-  id                   String   @id @default(uuid())
-  client_id            String
-  date                 DateTime @db.Date
-  training_completed   Boolean  @default(false)
-  exercises_completed  Json     @default("[]")
-  meals_completed      String[]
-  notes                String?
-  created_at           DateTime @default(now())
-  updated_at           DateTime @updatedAt
+  id                  String   @id @default(uuid())
+  client_id           String
+  date                DateTime @db.Date
+  training_completed  Boolean  @default(false)
+  exercises_completed Json     @default("[]")
+  meals_completed     String[]
+  notes               String?
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
@@ -310,22 +311,23 @@ model DayProgress {
 // ─── Body Metrics ─────────────────────────────────────────────────────────────
 
 model BodyMetric {
-  id           String   @id @default(uuid())
-  client_id    String
-  date         DateTime @db.Date @default(now())
-  weight_kg    Float?
-  height_cm    Float?
-  sleep_hours  Float?
-  neck_cm      Float?
-  shoulders_cm Float?
-  chest_cm     Float?
-  arm_cm       Float?
-  forearm_cm   Float?
-  waist_cm     Float?
-  hips_cm      Float?
-  thigh_cm     Float?
-  calf_cm      Float?
-  created_at   DateTime @default(now())
+  id             String   @id @default(uuid())
+  client_id      String
+  date           DateTime @default(now()) @db.Date
+  weight_kg      Float?
+  muscle_mass_kg Float?
+  height_cm      Float?
+  sleep_hours    Float?
+  neck_cm        Float?
+  shoulders_cm   Float?
+  chest_cm       Float?
+  arm_cm         Float?
+  forearm_cm     Float?
+  waist_cm       Float?
+  hips_cm        Float?
+  thigh_cm       Float?
+  calf_cm        Float?
+  created_at     DateTime @default(now())
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
@@ -350,35 +352,35 @@ model Streak {
 // ─── Weekly Recap ─────────────────────────────────────────────────────────────
 
 model WeeklyRecap {
-  id                       String      @id @default(uuid())
-  client_id                String
-  week_start_date          DateTime    @db.Date
-  week_end_date            DateTime    @db.Date
+  id              String   @id @default(uuid())
+  client_id       String
+  week_start_date DateTime @db.Date
+  week_end_date   DateTime @db.Date
 
   // Step 1: Training
-  training_effort          Int?
-  training_sessions        Int?
-  training_progress        String?
-  training_notes           String?
+  training_effort   Int?
+  training_sessions Int?
+  training_progress String?
+  training_notes    String?
 
   // Step 2: Nutrition
-  nutrition_quality        String?
-  hydration_enabled        Boolean     @default(false)
-  hydration_level          String?
-  food_quality             Int?
-  nutrition_notes          String?
+  nutrition_quality String?
+  hydration_enabled Boolean @default(false)
+  hydration_level   String?
+  food_quality      Int?
+  nutrition_notes   String?
 
   // Step 3: Recovery
-  sleep_hours_range        String?
-  fatigue_level            String?
-  muscle_pain_zones        Json        @default("[]")
-  recovery_notes           String?
+  sleep_hours_range String?
+  fatigue_level     String?
+  muscle_pain_zones Json    @default("[]")
+  recovery_notes    String?
 
   // Step 4: General feelings
-  mood                     String?
-  stress_enabled           Boolean     @default(false)
-  stress_level             Int?
-  general_notes            String?
+  mood           String?
+  stress_enabled Boolean @default(false)
+  stress_level   Int?
+  general_notes  String?
 
   // Improvement section
   improvement_app_rating     Int?
@@ -418,13 +420,13 @@ model Challenge {
 }
 
 model ChallengeClient {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   challenge_id  String
   client_id     String
-  current_value Float    @default(0)
-  is_completed  Boolean  @default(false)
+  current_value Float     @default(0)
+  is_completed  Boolean   @default(false)
   completed_at  DateTime?
-  assigned_at   DateTime @default(now())
+  assigned_at   DateTime  @default(now())
 
   challenge Challenge @relation(fields: [challenge_id], references: [id], onDelete: Cascade)
   client    User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
@@ -436,13 +438,13 @@ model ChallengeClient {
 // ─── Achievements ─────────────────────────────────────────────────────────────
 
 model Achievement {
-  id              String   @id @default(uuid())
-  name            String
-  description     String
-  icon_url        String?
-  criteria_type   String
-  criteria_value  Float
-  created_at      DateTime @default(now())
+  id             String   @id @default(uuid())
+  name           String
+  description    String
+  icon_url       String?
+  criteria_type  String
+  criteria_value Float
+  created_at     DateTime @default(now())
 
   userAchievements UserAchievement[]
 

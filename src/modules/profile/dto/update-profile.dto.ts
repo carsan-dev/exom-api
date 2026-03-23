@@ -30,6 +30,11 @@ export class UpdateProfileDto {
   @IsString()
   main_goal?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  muscle_mass_goal?: number;
+
   @ApiPropertyOptional({ enum: Level })
   @IsOptional()
   @IsEnum(Level)

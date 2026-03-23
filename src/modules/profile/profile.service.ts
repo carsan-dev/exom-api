@@ -23,21 +23,40 @@ export class ProfileService {
     });
   }
 
-  async getMyProfile(userId: string) {
-    const profile = await this.prisma.profile.findUnique({
-      where: { user_id: userId },
-      include: {
-        user: {
-          select: { email: true, role: true },
+  private async buildProfileResponse(userId: string) {
+    const [profile, totalTrainings] = await Promise.all([
+      this.prisma.profile.findUnique({
+        where: { user_id: userId },
+        include: {
+          user: {
+            select: {
+              email: true,
+              role: true,
+              streak: {
+                select: { current_days: true },
+              },
+            },
+          },
         },
-      },
-    });
+      }),
+      this.prisma.dayProgress.count({
+        where: { client_id: userId, training_completed: true },
+      }),
+    ]);
 
     if (!profile) {
       throw new NotFoundException('Perfil no encontrado');
     }
 
-    return profile;
+    return {
+      ...profile,
+      streakDays: profile.user.streak?.current_days ?? 0,
+      totalTrainings,
+    };
+  }
+
+  async getMyProfile(userId: string) {
+    return this.buildProfileResponse(userId);
   }
 
   async updateMyProfile(userId: string, dto: UpdateProfileDto) {
@@ -49,7 +68,7 @@ export class ProfileService {
       throw new NotFoundException('Perfil no encontrado');
     }
 
-    return this.prisma.profile.update({
+    await this.prisma.profile.update({
       where: { user_id: userId },
       data: {
         ...(dto.avatar_url !== undefined && { avatar_url: dto.avatar_url }),
@@ -57,6 +76,9 @@ export class ProfileService {
         ...(dto.last_name !== undefined && { last_name: dto.last_name }),
         ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
         ...(dto.level !== undefined && { level: dto.level }),
+        ...(dto.muscle_mass_goal !== undefined && {
+          muscle_mass_goal: dto.muscle_mass_goal,
+        }),
         ...(dto.target_calories !== undefined && {
           target_calories: dto.target_calories,
         }),
@@ -66,12 +88,9 @@ export class ProfileService {
         ...(dto.height !== undefined && { height: dto.height }),
         ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
       },
-      include: {
-        user: {
-          select: { email: true, role: true },
-        },
-      },
     });
+
+    return this.buildProfileResponse(userId);
   }
 
   async getAvatarUploadUrl(userId: string) {
