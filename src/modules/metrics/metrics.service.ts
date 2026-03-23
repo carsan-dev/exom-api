@@ -24,7 +24,7 @@ export class MetricsService {
     const [data, total] = await Promise.all([
       this.prisma.bodyMetric.findMany({
         where: { client_id: clientId },
-        orderBy: { date: 'desc' },
+        orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
         skip: pagination.skip,
         take: pagination.limit,
       }),
@@ -37,7 +37,7 @@ export class MetricsService {
   async findLatest(clientId: string) {
     return this.prisma.bodyMetric.findFirst({
       where: { client_id: clientId },
-      orderBy: { date: 'desc' },
+      orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
     });
   }
 

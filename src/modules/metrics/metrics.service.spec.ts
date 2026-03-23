@@ -6,6 +6,7 @@ describe('MetricsService', () => {
   let prisma: {
     bodyMetric: {
       findMany: jest.Mock;
+      findFirst: jest.Mock;
     };
   };
 
@@ -13,6 +14,7 @@ describe('MetricsService', () => {
     prisma = {
       bodyMetric: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
       },
     };
 
@@ -50,6 +52,19 @@ describe('MetricsService', () => {
       },
       orderBy: [{ date: 'asc' }, { created_at: 'asc' }],
       select: { date: true, weight_kg: true, created_at: true },
+    });
+  });
+
+  it('requests the latest metric using date and creation time', async () => {
+    prisma.bodyMetric.findFirst.mockResolvedValue({ id: 'metric-2' });
+
+    await expect(service.findLatest('client-1')).resolves.toEqual({
+      id: 'metric-2',
+    });
+
+    expect(prisma.bodyMetric.findFirst).toHaveBeenCalledWith({
+      where: { client_id: 'client-1' },
+      orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
     });
   });
 });
