@@ -28,6 +28,13 @@ export class CalendarService {
           client_id: clientId,
           date: { gte: firstDay, lte: lastDay },
         },
+        include: {
+          diet: {
+            select: {
+              meals: { select: { id: true } },
+            },
+          },
+        },
       }),
       this.prisma.dayProgress.findMany({
         where: {
@@ -38,17 +45,11 @@ export class CalendarService {
     ]);
 
     const assignmentMap = new Map(
-      assignments.map((a) => [
-        new Date(a.date).toISOString().split('T')[0],
-        a,
-      ]),
+      assignments.map((a) => [new Date(a.date).toISOString().split('T')[0], a]),
     );
 
     const progressMap = new Map(
-      progresses.map((p) => [
-        new Date(p.date).toISOString().split('T')[0],
-        p,
-      ]),
+      progresses.map((p) => [new Date(p.date).toISOString().split('T')[0], p]),
     );
 
     const days: CalendarDay[] = [];
@@ -60,6 +61,7 @@ export class CalendarService {
       const progress = progressMap.get(dateStr);
 
       const mealsCompletedCount = progress?.meals_completed?.length ?? 0;
+      const assignedMealsCount = assignment?.diet?.meals?.length ?? 0;
 
       days.push({
         date: dateStr,
@@ -67,7 +69,8 @@ export class CalendarService {
         has_diet: !!assignment?.diet_id,
         is_rest_day: assignment?.is_rest_day ?? false,
         training_completed: progress?.training_completed ?? false,
-        diet_completed: mealsCompletedCount > 0,
+        diet_completed:
+          assignedMealsCount > 0 && mealsCompletedCount >= assignedMealsCount,
       });
     }
 

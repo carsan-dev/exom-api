@@ -1,11 +1,12 @@
 import {
   CanActivate,
   ExecutionContext,
+  HttpException,
+  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ConfigService } from '@nestjs/config';
 import * as admin from 'firebase-admin';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -14,7 +15,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class FirebaseAuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -51,32 +51,9 @@ export class FirebaseAuthGuard implements CanActivate {
       });
 
       if (!user) {
-        // Auto-provision: create CLIENT user on first authenticated request
-        const newUser = await this.prisma.user.create({
-          data: {
-            email: decoded.email ?? '',
-            firebase_uid: decoded.uid,
-            role: 'CLIENT',
-            auth_provider: 'email',
-            profile: {
-              create: {
-                first_name: decoded.name?.split(' ')[0] ?? '',
-                last_name: decoded.name?.split(' ').slice(1).join(' ') ?? '',
-                avatar_url: decoded.picture ?? null,
-              },
-            },
-          },
-          select: {
-            id: true,
-            email: true,
-            role: true,
-            firebase_uid: true,
-            is_active: true,
-            is_locked: true,
-          },
-        });
-        request.user = newUser;
-        return true;
+        throw new UnauthorizedException(
+          'Tu cuenta no está autorizada. Contacta con tu entrenador.',
+        );
       }
 
       if (!user.is_active) {
@@ -84,13 +61,21 @@ export class FirebaseAuthGuard implements CanActivate {
       }
 
       if (user.is_locked) {
-        throw new UnauthorizedException('Cuenta bloqueada — contacta a tu entrenador');
+        throw new HttpException(
+          'Cuenta bloqueada — contacta a tu entrenador',
+          HttpStatus.LOCKED,
+        );
       }
 
       request.user = user;
       return true;
     } catch (err) {
-      if (err instanceof UnauthorizedException) throw err;
+      if (
+        err instanceof UnauthorizedException ||
+        err instanceof HttpException
+      ) {
+        throw err;
+      }
       throw new UnauthorizedException('Token inválido o expirado');
     }
   }

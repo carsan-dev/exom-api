@@ -14,7 +14,11 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { ProgressService } from './progress.service';
-import { MarkExerciseDto, MarkMealDto } from './dto/mark-completed.dto';
+import {
+  CompleteTrainingDto,
+  MarkExerciseDto,
+  MarkMealDto,
+} from './dto/mark-completed.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -29,7 +33,12 @@ export class ProgressController {
 
   @Get()
   @ApiOperation({ summary: "Get client's day progress for a given date" })
-  @ApiQuery({ name: 'date', required: true, type: String, description: 'YYYY-MM-DD' })
+  @ApiQuery({
+    name: 'date',
+    required: true,
+    type: String,
+    description: 'YYYY-MM-DD',
+  })
   getDayProgress(
     @CurrentUser() user: AuthenticatedUser,
     @Query('date') date: string,
@@ -46,9 +55,23 @@ export class ProgressController {
     return this.progressService.markExerciseCompleted(user.id, dto);
   }
 
+  @Post('trainings/complete')
+  @ApiOperation({ summary: 'Mark the assigned training as completed' })
+  completeTraining(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CompleteTrainingDto,
+  ) {
+    return this.progressService.completeTraining(user.id, dto);
+  }
+
   @Delete('exercises/:exerciseId')
   @ApiOperation({ summary: 'Unmark an exercise as completed' })
-  @ApiQuery({ name: 'date', required: true, type: String, description: 'YYYY-MM-DD' })
+  @ApiQuery({
+    name: 'date',
+    required: true,
+    type: String,
+    description: 'YYYY-MM-DD',
+  })
   unmarkExercise(
     @CurrentUser() user: AuthenticatedUser,
     @Param('exerciseId') exerciseId: string,
@@ -68,7 +91,12 @@ export class ProgressController {
 
   @Delete('meals/:mealId')
   @ApiOperation({ summary: 'Unmark a meal as completed' })
-  @ApiQuery({ name: 'date', required: true, type: String, description: 'YYYY-MM-DD' })
+  @ApiQuery({
+    name: 'date',
+    required: true,
+    type: String,
+    description: 'YYYY-MM-DD',
+  })
   unmarkMeal(
     @CurrentUser() user: AuthenticatedUser,
     @Param('mealId') mealId: string,

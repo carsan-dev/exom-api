@@ -25,3 +25,14 @@ export class MarkMealDto {
   @IsString()
   meal_id: string;
 }
+
+export class CompleteTrainingDto {
+  @ApiProperty()
+  @IsString()
+  date: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
