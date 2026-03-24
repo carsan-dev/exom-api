@@ -1,7 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsOptional, Min } from 'class-validator';
+import { IsISO8601, IsNumber, IsOptional, Min } from 'class-validator';
 
 export class CreateBodyMetricDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsISO8601()
+  date?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()

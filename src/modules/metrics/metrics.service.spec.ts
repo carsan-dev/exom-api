@@ -5,6 +5,7 @@ describe('MetricsService', () => {
   let service: MetricsService;
   let prisma: {
     bodyMetric: {
+      create: jest.Mock;
       findMany: jest.Mock;
       findFirst: jest.Mock;
     };
@@ -13,6 +14,7 @@ describe('MetricsService', () => {
   beforeEach(() => {
     prisma = {
       bodyMetric: {
+        create: jest.fn(),
         findMany: jest.fn(),
         findFirst: jest.fn(),
       },
@@ -65,6 +67,43 @@ describe('MetricsService', () => {
     expect(prisma.bodyMetric.findFirst).toHaveBeenCalledWith({
       where: { client_id: 'client-1' },
       orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
+    });
+  });
+
+  it('creates metrics using the provided date when present', async () => {
+    prisma.bodyMetric.create.mockResolvedValue({ id: 'metric-3' });
+
+    await expect(
+      service.create('client-1', {
+        date: '2026-03-22',
+        sleep_hours: 7.5,
+      }),
+    ).resolves.toEqual({ id: 'metric-3' });
+
+    expect(prisma.bodyMetric.create).toHaveBeenCalledWith({
+      data: {
+        client_id: 'client-1',
+        date: new Date(2026, 2, 22),
+        sleep_hours: 7.5,
+      },
+    });
+  });
+
+  it('finds the latest metric for a specific date', async () => {
+    prisma.bodyMetric.findFirst.mockResolvedValue({ id: 'metric-4' });
+
+    await expect(service.findLatest('client-1', '2026-03-22')).resolves.toEqual(
+      {
+        id: 'metric-4',
+      },
+    );
+
+    expect(prisma.bodyMetric.findFirst).toHaveBeenCalledWith({
+      where: {
+        client_id: 'client-1',
+        date: new Date(2026, 2, 22),
+      },
+      orderBy: [{ created_at: 'desc' }],
     });
   });
 });

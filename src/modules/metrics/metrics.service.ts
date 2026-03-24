@@ -7,15 +7,27 @@ import { CreateBodyMetricDto } from './dto/create-metric.dto';
 export class MetricsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private normalizeMetricDate(date?: string) {
+    const target =
+      date != null
+        ? (() => {
+            const [year, month, day] = date.split('-').map(Number);
+            return new Date(year, month - 1, day);
+          })()
+        : new Date();
+    target.setHours(0, 0, 0, 0);
+    return target;
+  }
+
   async create(clientId: string, dto: CreateBodyMetricDto) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const { date, ...metricData } = dto;
+    const targetDate = this.normalizeMetricDate(date);
 
     return this.prisma.bodyMetric.create({
       data: {
         client_id: clientId,
-        date: today,
-        ...dto,
+        date: targetDate,
+        ...metricData,
       },
     });
   }
@@ -34,10 +46,18 @@ export class MetricsService {
     return paginate(data, total, pagination);
   }
 
-  async findLatest(clientId: string) {
+  async findLatest(clientId: string, date?: string) {
+    const normalizedDate = date ? this.normalizeMetricDate(date) : undefined;
+
     return this.prisma.bodyMetric.findFirst({
-      where: { client_id: clientId },
-      orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
+      where: {
+        client_id: clientId,
+        ...(normalizedDate != null ? { date: normalizedDate } : {}),
+      },
+      orderBy:
+        normalizedDate == null
+          ? [{ date: 'desc' }, { created_at: 'desc' }]
+          : [{ created_at: 'desc' }],
     });
   }
 

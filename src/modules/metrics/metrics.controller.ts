@@ -26,8 +26,11 @@ export class MetricsController {
 
   @Get('latest')
   @ApiOperation({ summary: 'Get most recent body metric record' })
-  findLatest(@CurrentUser() user: AuthenticatedUser) {
-    return this.metricsService.findLatest(user.id);
+  findLatest(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('date') date?: string,
+  ) {
+    return this.metricsService.findLatest(user.id, date);
   }
 
   @Get('weight-history')
