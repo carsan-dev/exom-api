@@ -13,34 +13,48 @@ export class RecapsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(clientId: string, dto: CreateRecapDto) {
-    return this.prisma.weeklyRecap.create({
-      data: {
+    const weekStart = new Date(dto.week_start_date);
+    const weekEnd = new Date(dto.week_end_date);
+
+    const data = {
+      week_end_date: weekEnd,
+      training_effort: dto.training_effort,
+      training_sessions: dto.training_sessions,
+      training_progress: dto.training_progress,
+      training_notes: dto.training_notes,
+      nutrition_quality: dto.nutrition_quality,
+      hydration_enabled: dto.hydration_enabled,
+      hydration_level: dto.hydration_level,
+      food_quality: dto.food_quality,
+      nutrition_notes: dto.nutrition_notes,
+      sleep_hours_range: dto.sleep_hours_range,
+      fatigue_level: dto.fatigue_level,
+      muscle_pain_zones: dto.muscle_pain_zones ?? [],
+      recovery_notes: dto.recovery_notes,
+      mood: dto.mood,
+      stress_enabled: dto.stress_enabled,
+      stress_level: dto.stress_level,
+      general_notes: dto.general_notes,
+      improvement_app_rating: dto.improvement_app_rating,
+      improvement_service_rating: dto.improvement_service_rating,
+      improvement_areas: dto.improvement_areas ?? [],
+      improvement_feedback_text: dto.improvement_feedback_text,
+    };
+
+    return this.prisma.weeklyRecap.upsert({
+      where: {
+        client_id_week_start_date: {
+          client_id: clientId,
+          week_start_date: weekStart,
+        },
+      },
+      create: {
         client_id: clientId,
-        week_start_date: new Date(dto.week_start_date),
-        week_end_date: new Date(dto.week_end_date),
-        training_effort: dto.training_effort,
-        training_sessions: dto.training_sessions,
-        training_progress: dto.training_progress,
-        training_notes: dto.training_notes,
-        nutrition_quality: dto.nutrition_quality,
-        hydration_enabled: dto.hydration_enabled,
-        hydration_level: dto.hydration_level,
-        food_quality: dto.food_quality,
-        nutrition_notes: dto.nutrition_notes,
-        sleep_hours_range: dto.sleep_hours_range,
-        fatigue_level: dto.fatigue_level,
-        muscle_pain_zones: dto.muscle_pain_zones ?? [],
-        recovery_notes: dto.recovery_notes,
-        mood: dto.mood,
-        stress_enabled: dto.stress_enabled,
-        stress_level: dto.stress_level,
-        general_notes: dto.general_notes,
-        improvement_app_rating: dto.improvement_app_rating,
-        improvement_service_rating: dto.improvement_service_rating,
-        improvement_areas: dto.improvement_areas ?? [],
-        improvement_feedback_text: dto.improvement_feedback_text,
+        week_start_date: weekStart,
+        ...data,
         status: RecapStatus.DRAFT,
       },
+      update: data,
     });
   }
 
