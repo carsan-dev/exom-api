@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMealDto } from '../diets/dto/create-diet.dto';
 import { CreateMealBodyDto } from './dto/create-meal.dto';
@@ -29,7 +33,8 @@ export class MealsService {
     return meal;
   }
 
-  async createFromBody(dto: CreateMealBodyDto) {
+  async createFromBody(dto: CreateMealBodyDto, adminId: string) {
+    await this.validateDietOwnership(dto.diet_id, adminId);
     return this.create(dto.diet_id, dto);
   }
 
@@ -58,7 +63,9 @@ export class MealsService {
     });
   }
 
-  async updateFromDto(id: string, dto: UpdateMealDto) {
+  async updateFromDto(id: string, dto: UpdateMealDto, adminId: string) {
+    const meal = await this.findOne(id);
+    await this.validateDietOwnership(meal.diet_id, adminId);
     return this.update(id, dto);
   }
 
@@ -84,8 +91,34 @@ export class MealsService {
     });
   }
 
+  async removeWithAuth(id: string, adminId: string) {
+    const meal = await this.findOne(id);
+    await this.validateDietOwnership(meal.diet_id, adminId);
+    await this.prisma.meal.delete({ where: { id } });
+  }
+
   async remove(id: string) {
     await this.findOne(id);
     await this.prisma.meal.delete({ where: { id } });
+  }
+
+  private async validateDietOwnership(
+    dietId: string,
+    adminId: string,
+  ): Promise<void> {
+    const diet = await this.prisma.diet.findUnique({
+      where: { id: dietId },
+      select: { created_by: true },
+    });
+
+    if (!diet) {
+      throw new NotFoundException('Dieta no encontrada');
+    }
+
+    if (diet.created_by !== adminId) {
+      throw new ForbiddenException(
+        'No tienes permiso para modificar esta dieta',
+      );
+    }
   }
 }
