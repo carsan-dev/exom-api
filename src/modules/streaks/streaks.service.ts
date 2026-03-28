@@ -24,9 +24,18 @@ export class StreaksService {
   }
 
   async resetStreak(clientId: string) {
-    return this.prisma.streak.update({
+    return this.prisma.streak.upsert({
       where: { client_id: clientId },
-      data: { current_days: 0 },
+      update: {
+        current_days: 0,
+        last_active_date: null,
+      },
+      create: {
+        client_id: clientId,
+        current_days: 0,
+        longest_days: 0,
+        last_active_date: null,
+      },
     });
   }
 }
