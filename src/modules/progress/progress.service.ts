@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -21,6 +21,8 @@ interface AssignmentContext {
 
 @Injectable()
 export class ProgressService {
+  private readonly logger = new Logger(ProgressService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   private parseExercisesCompleted(
@@ -120,15 +122,21 @@ export class ProgressService {
     const date = this.parseDate(dto.date);
     const assignment = await this.getAssignmentContext(clientId, date);
 
+    this.logger.debug(
+      `markExerciseCompleted: clientId=${clientId}, dto.date=${dto.date}, ` +
+      `parsedDate=${date.toISOString()}, exercise_id=${dto.exercise_id}, ` +
+      `assignedExerciseIds=[${[...assignment.trainingExerciseIds].join(',')}]`,
+    );
+
     if (!assignment.trainingExerciseIds.size) {
       throw new ForbiddenException(
-        'No tienes entrenamiento asignado para esa fecha',
+        `No tienes entrenamiento asignado para esa fecha (date=${dto.date}, parsed=${date.toISOString()})`,
       );
     }
 
     if (!assignment.trainingExerciseIds.has(dto.exercise_id)) {
       throw new ForbiddenException(
-        'Ese ejercicio no pertenece al entrenamiento asignado',
+        `Ese ejercicio no pertenece al entrenamiento asignado (exercise_id=${dto.exercise_id}, assigned=[${[...assignment.trainingExerciseIds].join(',')}])`,
       );
     }
 
