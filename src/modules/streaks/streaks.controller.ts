@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Post, Param, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { StreaksService } from './streaks.service';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -17,5 +17,13 @@ export class StreaksController {
   @ApiOperation({ summary: 'Get current client streak' })
   getStreak(@CurrentUser() user: AuthenticatedUser) {
     return this.streaksService.getStreak(user.id);
+  }
+
+  @Post(':clientId/reset')
+  @Roles(Role.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reset streak of a client (ADMIN only)' })
+  resetStreak(@Param('clientId') clientId: string) {
+    return this.streaksService.resetStreak(clientId);
   }
 }
