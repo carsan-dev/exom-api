@@ -46,7 +46,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Listar usuarios' })
   @ApiQuery({ name: 'role', required: false, enum: Role })
   @ApiResponse({ status: 200, description: 'Listado global de usuarios obtenido correctamente' })
-  @ApiResponse({ status: 400, description: 'Parametros de consulta invalidos' })
+  @ApiResponse({ status: 400, description: 'Parámetros de consulta inválidos' })
   findAll(@Query() query: AdminUsersQueryDto) {
     return this.usersService.findAll(query.role, query);
   }
@@ -55,7 +55,7 @@ export class UsersController {
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'Dar de alta un cliente' })
   @ApiResponse({ status: 201, description: 'Cliente creado correctamente' })
-  @ApiResponse({ status: 409, description: 'El email ya esta registrado' })
+  @ApiResponse({ status: 409, description: 'El email ya está registrado' })
   createClient(@CurrentUser() admin: AuthenticatedUser, @Body() dto: CreateClientDto) {
     return this.usersService.createClient(admin.id, dto);
   }
@@ -90,7 +90,7 @@ export class UsersController {
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'Ver perfil completo de un cliente' })
   @ApiResponse({ status: 200, description: 'Perfil de cliente obtenido correctamente' })
-  @ApiResponse({ status: 403, description: 'El cliente no esta asignado al admin actual' })
+  @ApiResponse({ status: 403, description: 'El cliente no está asignado al admin actual' })
   @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
   getClientProfile(@CurrentUser() admin: AuthenticatedUser, @Param('id') clientId: string) {
     return this.usersService.getClientProfile(admin.id, admin.role, clientId);
