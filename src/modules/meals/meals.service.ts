@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateMealDto } from '../diets/dto/create-diet.dto';
+import { CreateMealBodyDto } from './dto/create-meal.dto';
+import { UpdateMealDto } from './dto/update-meal.dto';
 
 const mealInclude = {
   ingredients: {
@@ -27,6 +29,10 @@ export class MealsService {
     return meal;
   }
 
+  async createFromBody(dto: CreateMealBodyDto) {
+    return this.create(dto.diet_id, dto);
+  }
+
   async create(dietId: string, dto: CreateMealDto) {
     return this.prisma.meal.create({
       data: {
@@ -50,6 +56,10 @@ export class MealsService {
       },
       include: mealInclude,
     });
+  }
+
+  async updateFromDto(id: string, dto: UpdateMealDto) {
+    return this.update(id, dto);
   }
 
   async update(id: string, dto: Partial<CreateMealDto>) {
