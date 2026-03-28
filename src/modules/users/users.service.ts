@@ -33,7 +33,7 @@ export class UsersService {
           created_at: true,
           profile: { select: { first_name: true, last_name: true, avatar_url: true } },
         },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.user.count({ where }),
     ]);
@@ -97,7 +97,9 @@ export class UsersService {
 
   async unlockUser(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (!user || user.role !== Role.CLIENT) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
 
     await this.prisma.user.update({
       where: { id },
@@ -116,9 +118,20 @@ export class UsersService {
   }
 
   async getMyClients(adminId: string, pagination: PaginationDto = new PaginationDto()) {
+    const where = {
+      admin_id: adminId,
+      is_active: true,
+      client: {
+        is: {
+          role: Role.CLIENT,
+        },
+      },
+    };
+
     const [assignments, total] = await Promise.all([
       this.prisma.adminClientAssignment.findMany({
-        where: { admin_id: adminId, is_active: true },
+        where,
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
         skip: pagination.skip,
         take: pagination.limit,
         include: {
@@ -135,8 +148,9 @@ export class UsersService {
           },
         },
       }),
-      this.prisma.adminClientAssignment.count({ where: { admin_id: adminId, is_active: true } }),
+      this.prisma.adminClientAssignment.count({ where }),
     ]);
+
     return paginate(
       assignments.map((a) => a.client),
       total,
@@ -152,12 +166,7 @@ export class UsersService {
     return { message: 'FCM token updated' };
   }
 
-  async getClientProfile(adminId: string, clientId: string) {
-    const assignment = await this.prisma.adminClientAssignment.findFirst({
-      where: { admin_id: adminId, client_id: clientId, is_active: true },
-    });
-    if (!assignment) throw new ForbiddenException('Este cliente no está asignado a ti');
-
+  async getClientProfile(currentUserId: string, currentUserRole: string, clientId: string) {
     const client = await this.prisma.user.findUnique({
       where: { id: clientId },
       include: {
@@ -168,6 +177,31 @@ export class UsersService {
     });
 
     if (!client) throw new NotFoundException('Cliente no encontrado');
+
+    if (client.role !== Role.CLIENT) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    await this.assertClientAccess(currentUserId, currentUserRole, clientId);
+
     return client;
+  }
+
+  private async assertClientAccess(currentUserId: string, currentUserRole: string, clientId: string) {
+    if (currentUserRole === Role.SUPER_ADMIN) {
+      return;
+    }
+
+    if (currentUserRole !== Role.ADMIN) {
+      throw new ForbiddenException('No tienes permisos para acceder a este cliente');
+    }
+
+    const assignment = await this.prisma.adminClientAssignment.findFirst({
+      where: { admin_id: currentUserId, client_id: clientId, is_active: true },
+    });
+
+    if (!assignment) {
+      throw new ForbiddenException('Este cliente no está asignado a ti');
+    }
   }
 }
