@@ -16,6 +16,37 @@ const trainingExercisesInclude = {
 export class TrainingsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async findAllTags() {
+    const trainings = await this.prisma.training.findMany({
+      where: { is_active: true },
+      select: { tags: true },
+    });
+
+    const uniqueTags = new Map<string, string>();
+
+    for (const training of trainings) {
+      for (const tag of training.tags) {
+        const normalizedTag = tag.trim();
+
+        if (!normalizedTag) {
+          continue;
+        }
+
+        const normalizedKey = normalizedTag.toLocaleLowerCase();
+
+        if (!uniqueTags.has(normalizedKey)) {
+          uniqueTags.set(normalizedKey, normalizedTag);
+        }
+      }
+    }
+
+    return {
+      tags: Array.from(uniqueTags.values()).sort((left, right) =>
+        left.localeCompare(right, 'es', { sensitivity: 'base' }),
+      ),
+    };
+  }
+
   async findAll(pagination: PaginationDto) {
     const [data, total] = await Promise.all([
       this.prisma.training.findMany({

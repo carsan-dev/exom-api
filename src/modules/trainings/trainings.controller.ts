@@ -14,9 +14,11 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
+  ApiOkResponse,
 } from '@nestjs/swagger';
 import { TrainingsService } from './trainings.service';
 import { CreateTrainingDto, UpdateTrainingDto } from './dto/create-training.dto';
+import { TrainingTagsResponseDto } from './dto/training-tags-response.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -45,6 +47,14 @@ export class TrainingsController {
   ) {
     const date = dateStr ? new Date(dateStr) : undefined;
     return this.trainingsService.findToday(user.id, date);
+  }
+
+  @Get('tags')
+  @ApiOperation({ summary: 'List all unique tags used by active trainings' })
+  @ApiOkResponse({ type: TrainingTagsResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  findAllTags() {
+    return this.trainingsService.findAllTags();
   }
 
   @Get(':id')
