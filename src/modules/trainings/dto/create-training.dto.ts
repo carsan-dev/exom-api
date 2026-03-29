@@ -5,17 +5,18 @@ import {
   IsOptional,
   IsNumber,
   IsArray,
-  IsUUID,
   ValidateNested,
   IsInt,
   Min,
+  IsNotEmpty,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Level, TrainingType } from '@prisma/client';
 
 export class TrainingExerciseDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
   exercise_id: string;
 
   @ApiProperty()
