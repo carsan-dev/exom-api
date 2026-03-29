@@ -14,16 +14,15 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
-  ApiQuery,
 } from '@nestjs/swagger';
 import { IngredientsService } from './ingredients.service';
 import {
   CreateIngredientDto,
   UpdateIngredientDto,
 } from './dto/create-ingredient.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '@prisma/client';
+import { IngredientsQueryDto } from './dto/ingredients-query.dto';
 
 @ApiTags('Ingredients')
 @ApiBearerAuth()
@@ -33,12 +32,8 @@ export class IngredientsController {
 
   @Get()
   @ApiOperation({ summary: 'List ingredients with optional search' })
-  @ApiQuery({ name: 'search', required: false, type: String })
-  findAll(
-    @Query('search') search: string | undefined,
-    @Query() pagination: PaginationDto,
-  ) {
-    return this.ingredientsService.findAll(search, pagination);
+  findAll(@Query() query: IngredientsQueryDto) {
+    return this.ingredientsService.findAll(query.search, query);
   }
 
   @Get(':id')

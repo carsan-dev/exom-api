@@ -6,16 +6,42 @@ import {
   UpdateIngredientDto,
 } from './dto/create-ingredient.dto';
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase('es-ES')
+    .normalize('NFD')
+    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
+    .normalize('NFC');
+}
+
 @Injectable()
 export class IngredientsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(search: string | undefined, pagination: PaginationDto) {
+    const normalizedSearch = search?.trim();
+
+    if (normalizedSearch) {
+      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
+      const ingredients = await this.prisma.ingredient.findMany({
+        where: { is_active: true },
+        orderBy: { name: 'asc' },
+      });
+
+      const filteredIngredients = ingredients.filter((ingredient) =>
+        normalizeSearchText(ingredient.name).includes(normalizedSearchTerm),
+      );
+
+      const pageData = filteredIngredients.slice(
+        pagination.skip,
+        pagination.skip + (pagination.limit ?? 20),
+      );
+
+      return paginate(pageData, filteredIngredients.length, pagination);
+    }
+
     const where = {
       is_active: true,
-      ...(search
-        ? { name: { contains: search, mode: 'insensitive' as const } }
-        : {}),
     };
 
     const [data, total] = await Promise.all([
