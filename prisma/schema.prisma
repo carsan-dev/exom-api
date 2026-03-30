@@ -132,6 +132,7 @@ model AdminClientAssignment {
   client User @relation("ClientAssignments", fields: [client_id], references: [id], onDelete: Cascade)
 
   @@index([admin_id, is_active, created_at, id])
+  @@index([client_id, is_active, created_at, id])
   @@index([admin_id, client_id, is_active])
   @@unique([admin_id, client_id])
   @@map("admin_client_assignments")

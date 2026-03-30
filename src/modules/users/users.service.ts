@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ConflictException,
@@ -9,7 +10,22 @@ import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
+
+type ClientAssignmentRecord = {
+  client_id: string;
+  created_at: Date;
+  admin: {
+    id: string;
+    email: string;
+    profile: {
+      first_name: string | null;
+      last_name: string | null;
+      avatar_url: string | null;
+    } | null;
+  };
+};
 
 @Injectable()
 export class UsersService {
@@ -117,9 +133,40 @@ export class UsersService {
     return { message: 'Rol actualizado exitosamente' };
   }
 
-  async getMyClients(adminId: string, pagination: PaginationDto = new PaginationDto()) {
+  async getMyClients(
+    currentUserId: string,
+    currentUserRole: string,
+    pagination: PaginationDto = new PaginationDto(),
+  ) {
+    const clientSelect = {
+      id: true,
+      email: true,
+      role: true,
+      is_active: true,
+      is_locked: true,
+      created_at: true,
+      profile: true,
+    } as const;
+
+    if (currentUserRole === Role.SUPER_ADMIN) {
+      const where = { role: Role.CLIENT };
+
+      const [clients, total] = await Promise.all([
+        this.prisma.user.findMany({
+          where,
+          skip: pagination.skip,
+          take: pagination.limit,
+          select: clientSelect,
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.user.count({ where }),
+      ]);
+
+      return paginate(clients, total, pagination);
+    }
+
     const where = {
-      admin_id: adminId,
+      admin_id: currentUserId,
       is_active: true,
       client: {
         is: {
@@ -136,15 +183,7 @@ export class UsersService {
         take: pagination.limit,
         include: {
           client: {
-            select: {
-              id: true,
-              email: true,
-              role: true,
-              is_active: true,
-              is_locked: true,
-              created_at: true,
-              profile: true,
-            },
+            select: clientSelect,
           },
         },
       }),
@@ -187,6 +226,84 @@ export class UsersService {
     return client;
   }
 
+  async getClientAssignments(currentUserId: string, currentUserRole: string, clientId: string) {
+    this.assertSuperAdminAccess(currentUserId, currentUserRole);
+    await this.assertClientExists(clientId);
+
+    const assignments = await this.prisma.adminClientAssignment.findMany({
+      where: { client_id: clientId, is_active: true },
+      orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+      select: {
+        client_id: true,
+        created_at: true,
+        admin: {
+          select: {
+            id: true,
+            email: true,
+            profile: {
+              select: {
+                first_name: true,
+                last_name: true,
+                avatar_url: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return this.serializeClientAssignments(clientId, assignments);
+  }
+
+  async updateClientAssignments(
+    currentUserId: string,
+    currentUserRole: string,
+    clientId: string,
+    dto: UpdateClientAssignmentsDto,
+  ) {
+    this.assertSuperAdminAccess(currentUserId, currentUserRole);
+    await this.assertClientExists(clientId);
+
+    const desiredAdminIds = [...new Set(dto.admin_ids)];
+    if (desiredAdminIds.length === 0) {
+      throw new BadRequestException('El cliente debe tener al menos un admin activo');
+    }
+
+    await this.assertAdminUsersExist(desiredAdminIds);
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.syncClientAssignments(tx, clientId, desiredAdminIds);
+
+      const assignments = await tx.adminClientAssignment.findMany({
+        where: { client_id: clientId, is_active: true },
+        orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+        select: {
+          client_id: true,
+          created_at: true,
+          admin: {
+            select: {
+              id: true,
+              email: true,
+              profile: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  avatar_url: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (assignments.length === 0) {
+        throw new BadRequestException('El cliente debe tener al menos un admin activo');
+      }
+
+      return this.serializeClientAssignments(clientId, assignments);
+    });
+  }
+
   private async assertClientAccess(currentUserId: string, currentUserRole: string, clientId: string) {
     if (currentUserRole === Role.SUPER_ADMIN) {
       return;
@@ -203,5 +320,103 @@ export class UsersService {
     if (!assignment) {
       throw new ForbiddenException('Este cliente no está asignado a ti');
     }
+  }
+
+  private assertSuperAdminAccess(currentUserId: string, currentUserRole: string) {
+    if (currentUserRole === Role.SUPER_ADMIN) {
+      return;
+    }
+
+    this.logger.warn(
+      `User ${currentUserId} attempted to manage client assignments without SUPER_ADMIN role`,
+    );
+    throw new ForbiddenException('Solo un super admin puede gestionar asignaciones de clientes');
+  }
+
+  private async assertClientExists(clientId: string) {
+    const client = await this.prisma.user.findUnique({
+      where: { id: clientId },
+      select: { id: true, role: true },
+    });
+
+    if (!client || client.role !== Role.CLIENT) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    return client;
+  }
+
+  private async assertAdminUsersExist(adminIds: string[]) {
+    const admins = await this.prisma.user.findMany({
+      where: {
+        id: { in: adminIds },
+        role: Role.ADMIN,
+      },
+      select: { id: true },
+    });
+
+    if (admins.length !== adminIds.length) {
+      throw new NotFoundException('Uno o más administradores no existen');
+    }
+
+    return admins;
+  }
+
+  private serializeClientAssignments(clientId: string, assignments: ClientAssignmentRecord[]) {
+    return {
+      client_id: clientId,
+      active_admins: assignments.map((assignment) => ({
+        id: assignment.admin.id,
+        email: assignment.admin.email,
+        profile: assignment.admin.profile,
+        assigned_at: assignment.created_at,
+      })),
+    };
+  }
+
+  private async syncClientAssignments(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    desiredAdminIds: string[],
+  ) {
+    const currentAssignments = await tx.adminClientAssignment.findMany({
+      where: { client_id: clientId },
+      select: { id: true, admin_id: true, is_active: true },
+    });
+
+    const desiredAdminIdSet = new Set(desiredAdminIds);
+    const assignmentsByAdminId = new Map(
+      currentAssignments.map((assignment) => [assignment.admin_id, assignment]),
+    );
+    const assignmentsToDeactivate = currentAssignments.filter(
+      (assignment) => assignment.is_active && !desiredAdminIdSet.has(assignment.admin_id),
+    );
+    const assignmentsToReactivate = currentAssignments.filter(
+      (assignment) => !assignment.is_active && desiredAdminIdSet.has(assignment.admin_id),
+    );
+    const adminIdsToCreate = desiredAdminIds.filter((adminId) => !assignmentsByAdminId.has(adminId));
+
+    await Promise.all([
+      assignmentsToDeactivate.length > 0
+        ? tx.adminClientAssignment.updateMany({
+            where: { id: { in: assignmentsToDeactivate.map((assignment) => assignment.id) } },
+            data: { is_active: false },
+          })
+        : Promise.resolve(),
+      assignmentsToReactivate.length > 0
+        ? tx.adminClientAssignment.updateMany({
+            where: { id: { in: assignmentsToReactivate.map((assignment) => assignment.id) } },
+            data: { is_active: true },
+          })
+        : Promise.resolve(),
+      adminIdsToCreate.length > 0
+        ? tx.adminClientAssignment.createMany({
+            data: adminIdsToCreate.map((adminId) => ({
+              admin_id: adminId,
+              client_id: clientId,
+            })),
+          })
+        : Promise.resolve(),
+    ]);
   }
 }

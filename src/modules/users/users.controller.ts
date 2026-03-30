@@ -12,7 +12,9 @@ import { ApiBearerAuth, ApiOperation, ApiProperty, ApiQuery, ApiResponse, ApiTag
 import { IsString } from 'class-validator';
 import { UsersService } from './users.service';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
+import { ClientAssignmentResponseDto } from './dto/client-assignment-response.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
+import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -80,10 +82,43 @@ export class UsersController {
 
   @Get('clients')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
-  @ApiOperation({ summary: 'Listar mis clientes' })
-  @ApiResponse({ status: 200, description: 'Listado de clientes asignados obtenido correctamente' })
+  @ApiOperation({ summary: 'Listar clientes visibles para la sesión actual' })
+  @ApiResponse({ status: 200, description: 'Listado de clientes obtenido correctamente' })
   getMyClients(@CurrentUser() admin: AuthenticatedUser, @Query() pagination?: PaginationDto) {
-    return this.usersService.getMyClients(admin.id, pagination);
+    return this.usersService.getMyClients(admin.id, admin.role, pagination);
+  }
+
+  @Get('clients/:id/assignments')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Obtener admins activos asignados a un cliente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Asignaciones activas del cliente obtenidas correctamente',
+    type: ClientAssignmentResponseDto,
+  })
+  @ApiResponse({ status: 403, description: 'Solo SUPER_ADMIN puede consultar asignaciones' })
+  @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
+  getClientAssignments(@CurrentUser() admin: AuthenticatedUser, @Param('id') clientId: string) {
+    return this.usersService.getClientAssignments(admin.id, admin.role, clientId);
+  }
+
+  @Put('clients/:id/assignments')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Actualizar de forma atomica los admins activos de un cliente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Asignaciones del cliente actualizadas correctamente',
+    type: ClientAssignmentResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'El payload es invalido o deja al cliente sin admins' })
+  @ApiResponse({ status: 403, description: 'Solo SUPER_ADMIN puede actualizar asignaciones' })
+  @ApiResponse({ status: 404, description: 'Cliente o admin no encontrado' })
+  updateClientAssignments(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Body() dto: UpdateClientAssignmentsDto,
+  ) {
+    return this.usersService.updateClientAssignments(admin.id, admin.role, clientId, dto);
   }
 
   @Get('clients/:id')
