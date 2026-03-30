@@ -1,4 +1,5 @@
 import {
+  ParseUUIDPipe,
   Controller,
   Get,
   Post,
@@ -11,12 +12,18 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
+  ApiCreatedResponse,
   ApiTags,
   ApiBearerAuth,
+  ApiNoContentResponse,
+  ApiNotFoundResponse,
   ApiOperation,
+  ApiOkResponse,
 } from '@nestjs/swagger';
 import { DietsService } from './diets.service';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
+import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -30,31 +37,42 @@ export class DietsController {
   constructor(private readonly dietsService: DietsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all active diets (paginated)' })
+  @ApiOperation({ summary: 'List active diets for the admin catalog (paginated)' })
+  @ApiOkResponse({ description: 'Diets listed successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid pagination parameters' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   findAll(@Query() pagination: PaginationDto) {
     return this.dietsService.findAll(pagination);
   }
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
   @Get('today')
-  @ApiOperation({ summary: "Get diet for the current client on a given date (defaults to today)" })
+  @ApiOperation({ summary: 'Get the diet assigned to the current client for a given date' })
+  @ApiOkResponse({ description: 'Assigned diet fetched successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid date parameter' })
   @Roles(Role.CLIENT)
   findToday(
     @CurrentUser() user: AuthenticatedUser,
-    @Query('date') dateStr?: string,
+    @Query() query: FindTodayDietQueryDto,
   ) {
-    const date = dateStr ? new Date(dateStr) : undefined;
+    const date = query.date ? new Date(query.date) : undefined;
     return this.dietsService.findToday(user.id, date);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a single diet by ID' })
-  findOne(@Param('id') id: string) {
+  @ApiOperation({ summary: 'Get diet detail from the admin catalog' })
+  @ApiOkResponse({ description: 'Diet fetched successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid diet identifier' })
+  @ApiNotFoundResponse({ description: 'Diet not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.dietsService.findOne(id);
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create a new diet with meals (admin only)' })
+  @ApiOperation({ summary: 'Create a diet with meals and ingredients' })
+  @ApiCreatedResponse({ description: 'Diet created successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid diet payload' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -64,17 +82,23 @@ export class DietsController {
   }
 
   @Put(':id')
-  @ApiOperation({ summary: 'Update a diet (admin only)' })
+  @ApiOperation({ summary: 'Update a complete diet from the admin catalog' })
+  @ApiOkResponse({ description: 'Diet updated successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid diet payload' })
+  @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  update(@Param('id') id: string, @Body() dto: UpdateDietDto) {
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDietDto) {
     return this.dietsService.update(id, dto);
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Soft-delete a diet (admin only)' })
+  @ApiOperation({ summary: 'Soft-delete a diet from the admin catalog' })
+  @ApiNoContentResponse({ description: 'Diet deleted successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid diet identifier' })
+  @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.dietsService.remove(id);
   }
 }
