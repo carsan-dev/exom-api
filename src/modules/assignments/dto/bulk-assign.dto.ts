@@ -6,11 +6,14 @@ import {
   IsArray,
   IsOptional,
   IsBoolean,
+  IsNotEmpty,
+  IsString,
 } from 'class-validator';
 
 export class BulkAssignmentDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty({ description: 'Client identifier' })
+  @IsString()
+  @IsNotEmpty()
   client_id: string;
 
   @ApiProperty({ type: [String], description: 'ISO date strings YYYY-MM-DD' })
@@ -36,8 +39,9 @@ export class BulkAssignmentDto {
 }
 
 export class CopyWeekDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty({ description: 'Client identifier' })
+  @IsString()
+  @IsNotEmpty()
   client_id: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })

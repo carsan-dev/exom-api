@@ -1,9 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsUUID } from 'class-validator';
+import { IsDateString, IsNotEmpty, IsString } from 'class-validator';
 
 export class GetWeekAssignmentsQueryDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty({ description: 'Client identifier' })
+  @IsString()
+  @IsNotEmpty()
   client_id: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })
