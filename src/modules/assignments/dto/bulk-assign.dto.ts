@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  ArrayMinSize,
+  IsDateString,
   IsUUID,
   IsArray,
-  IsString,
   IsOptional,
   IsBoolean,
 } from 'class-validator';
@@ -14,18 +15,19 @@ export class BulkAssignmentDto {
 
   @ApiProperty({ type: [String], description: 'ISO date strings YYYY-MM-DD' })
   @IsArray()
-  @IsString({ each: true })
+  @ArrayMinSize(1)
+  @IsDateString({}, { each: true })
   dates: string[];
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
   @IsOptional()
   @IsUUID()
-  training_id?: string;
+  training_id?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({ format: 'uuid', nullable: true })
   @IsOptional()
   @IsUUID()
-  diet_id?: string;
+  diet_id?: string | null;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()
@@ -39,10 +41,10 @@ export class CopyWeekDto {
   client_id: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })
-  @IsString()
+  @IsDateString()
   source_week_start: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })
-  @IsString()
+  @IsDateString()
   target_week_start: string;
 }
