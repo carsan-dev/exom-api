@@ -2,10 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsEnum,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
   Min,
 } from 'class-validator';
 import { ChallengeType } from '@prisma/client';
@@ -50,7 +50,8 @@ export class CreateChallengeDto {
 
 export class AssignChallengeDto {
   @ApiProperty()
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   client_id: string;
 }
 

@@ -5,7 +5,6 @@ import {
   IsOptional,
   IsNumber,
   IsArray,
-  IsUUID,
   ValidateNested,
   IsInt,
   Min,
@@ -17,8 +16,9 @@ import { MealType, MeasureUnit } from '@prisma/client';
 import { MealIngredientDto } from '../../diets/dto/create-diet.dto';
 
 export class CreateMealBodyDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
   diet_id: string;
 
   @ApiProperty({ enum: MealType })

@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsDateString, IsOptional, IsUUID } from 'class-validator';
+import { IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class UpdateAssignmentDto {
   @ApiPropertyOptional({ description: 'ISO date string YYYY-MM-DD', nullable: true })
@@ -7,14 +7,16 @@ export class UpdateAssignmentDto {
   @IsDateString()
   date?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   training_id?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   diet_id?: string | null;
 
   @ApiPropertyOptional({ default: false })

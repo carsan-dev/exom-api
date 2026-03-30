@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ArrayMinSize, ArrayUnique, IsArray, IsUUID } from 'class-validator';
+import { ArrayMinSize, ArrayUnique, IsArray, IsNotEmpty, IsString } from 'class-validator';
 
 export class UpdateClientAssignmentsDto {
   @ApiProperty({
@@ -10,6 +10,7 @@ export class UpdateClientAssignmentsDto {
   @IsArray()
   @ArrayMinSize(1)
   @ArrayUnique()
-  @IsUUID(undefined, { each: true })
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
   admin_ids: string[];
 }

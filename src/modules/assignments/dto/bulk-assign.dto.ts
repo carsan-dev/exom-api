@@ -2,7 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMinSize,
   IsDateString,
-  IsUUID,
   IsArray,
   IsOptional,
   IsBoolean,
@@ -22,14 +21,16 @@ export class BulkAssignmentDto {
   @IsDateString({}, { each: true })
   dates: string[];
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   training_id?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   diet_id?: string | null;
 
   @ApiPropertyOptional({ default: false })

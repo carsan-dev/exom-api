@@ -1,11 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { MediaType } from '@prisma/client';
 
 export class CreateFeedbackDto {
   @ApiPropertyOptional({ description: 'Exercise ID (optional)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @IsNotEmpty()
   exercise_id?: string;
 
   @ApiProperty({ enum: MediaType })
