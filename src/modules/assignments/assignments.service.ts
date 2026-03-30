@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
 import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
+import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -64,6 +66,17 @@ export interface AssignmentRecord {
   diet: AssignmentDietSummary | null;
 }
 
+interface AssignmentRange {
+  start: Date;
+  end: Date;
+  dates: Date[];
+}
+
+interface AssignmentMonthRange extends AssignmentRange {
+  year: number;
+  month: number;
+}
+
 @Injectable()
 export class AssignmentsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -95,6 +108,14 @@ export class AssignmentsService {
     return result;
   }
 
+  private buildDateRange(start: Date, totalDays: number): AssignmentRange {
+    return {
+      start,
+      end: this.addDays(start, totalDays - 1),
+      dates: Array.from({ length: totalDays }, (_, index) => this.addDays(start, index)),
+    };
+  }
+
   private buildWeekRange(weekStart: string) {
     const start = this.parseDate(weekStart);
 
@@ -102,10 +123,17 @@ export class AssignmentsService {
       throw new BadRequestException('La semana debe comenzar en lunes');
     }
 
+    return this.buildDateRange(start, 7);
+  }
+
+  private buildMonthRange(year: number, month: number): AssignmentMonthRange {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const totalDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
     return {
-      start,
-      end: this.addDays(start, 6),
-      dates: Array.from({ length: 7 }, (_, index) => this.addDays(start, index)),
+      ...this.buildDateRange(start, totalDays),
+      year,
+      month,
     };
   }
 
@@ -215,37 +243,74 @@ export class AssignmentsService {
     };
   }
 
-  private serializeWeekAssignments(
+  private serializeRangeAssignments(
     clientId: string,
-    weekRange: ReturnType<AssignmentsService['buildWeekRange']>,
+    range: AssignmentRange,
     assignments: AssignmentRecord[],
   ) {
     const assignmentMap = new Map(
       assignments.map((assignment) => [this.formatDate(assignment.date), assignment]),
     );
 
+    return range.dates.map((date) => {
+      const dateKey = this.formatDate(date);
+      const assignment = assignmentMap.get(dateKey);
+
+      if (!assignment) {
+        return {
+          id: null,
+          client_id: clientId,
+          date: dateKey,
+          is_rest_day: false,
+          training: null,
+          diet: null,
+        };
+      }
+
+      return this.serializeAssignment(assignment);
+    });
+  }
+
+  private serializeWeekAssignments(
+    clientId: string,
+    weekRange: ReturnType<AssignmentsService['buildWeekRange']>,
+    assignments: AssignmentRecord[],
+  ) {
     return {
       client_id: clientId,
       week_start: this.formatDate(weekRange.start),
       week_end: this.formatDate(weekRange.end),
-      days: weekRange.dates.map((date) => {
-        const dateKey = this.formatDate(date);
-        const assignment = assignmentMap.get(dateKey);
-
-        if (!assignment) {
-          return {
-            id: null,
-            client_id: clientId,
-            date: dateKey,
-            is_rest_day: false,
-            training: null,
-            diet: null,
-          };
-        }
-
-        return this.serializeAssignment(assignment);
-      }),
+      days: this.serializeRangeAssignments(clientId, weekRange, assignments),
     };
+  }
+
+  private serializeMonthAssignments(
+    clientId: string,
+    monthRange: AssignmentMonthRange,
+    assignments: AssignmentRecord[],
+  ) {
+    return {
+      client_id: clientId,
+      year: monthRange.year,
+      month: monthRange.month,
+      month_start: this.formatDate(monthRange.start),
+      month_end: this.formatDate(monthRange.end),
+      days: this.serializeRangeAssignments(clientId, monthRange, assignments),
+    };
+  }
+
+  private getAssignmentsForRange(clientId: string, range: AssignmentRange) {
+    return this.prisma.planAssignment.findMany({
+      where: {
+        client_id: clientId,
+        date: {
+          gte: range.start,
+          lte: range.end,
+        },
+      },
+      include: assignmentInclude,
+      orderBy: { date: 'asc' },
+    });
   }
 
   async bulkAssign(user: AuthenticatedUser, dto: BulkAssignmentDto) {
@@ -284,6 +349,71 @@ export class AssignmentsService {
           include: assignmentInclude,
         });
       }),
+    );
+
+    return results.map((assignment) => this.serializeAssignment(assignment));
+  }
+
+  async batchAssign(user: AuthenticatedUser, dto: BatchAssignDaysDto) {
+    await this.assertClientAccess(user, dto.client_id);
+
+    const uniqueDays = Array.from(
+      dto.days.reduce(
+        (daysMap, day) => {
+          const date = this.parseDate(day.date);
+          const normalizedInput = this.normalizeAssignmentInput(day);
+
+          daysMap.set(this.formatDate(date), {
+            date,
+            ...normalizedInput,
+          });
+
+          return daysMap;
+        },
+        new Map<
+          string,
+          {
+            date: Date;
+            training_id: string | null;
+            diet_id: string | null;
+            is_rest_day: boolean;
+          }
+        >(),
+      ).values(),
+    ).sort((left, right) => left.date.getTime() - right.date.getTime());
+
+    await Promise.all(
+      uniqueDays.map((day) =>
+        this.validatePlanReferences(day.training_id, day.diet_id),
+      ),
+    );
+
+    const results = await this.prisma.$transaction(
+      uniqueDays.map((day) =>
+        this.prisma.planAssignment.upsert({
+          where: {
+            client_id_date: {
+              client_id: dto.client_id,
+              date: day.date,
+            },
+          },
+          create: {
+            client_id: dto.client_id,
+            admin_id: user.id,
+            date: day.date,
+            training_id: day.training_id,
+            diet_id: day.diet_id,
+            is_rest_day: day.is_rest_day,
+          },
+          update: {
+            admin_id: user.id,
+            training_id: day.training_id,
+            diet_id: day.diet_id,
+            is_rest_day: day.is_rest_day,
+          },
+          include: assignmentInclude,
+        }),
+      ),
     );
 
     return results.map((assignment) => this.serializeAssignment(assignment));
@@ -370,20 +500,18 @@ export class AssignmentsService {
     await this.assertClientAccess(user, query.client_id);
 
     const weekRange = this.buildWeekRange(query.week_start);
-
-    const assignments = await this.prisma.planAssignment.findMany({
-      where: {
-        client_id: query.client_id,
-        date: {
-          gte: weekRange.start,
-          lte: weekRange.end,
-        },
-      },
-      include: assignmentInclude,
-      orderBy: { date: 'asc' },
-    });
+    const assignments = await this.getAssignmentsForRange(query.client_id, weekRange);
 
     return this.serializeWeekAssignments(query.client_id, weekRange, assignments);
+  }
+
+  async getMonth(user: AuthenticatedUser, query: GetMonthAssignmentsQueryDto) {
+    await this.assertClientAccess(user, query.client_id);
+
+    const monthRange = this.buildMonthRange(query.year, query.month);
+    const assignments = await this.getAssignmentsForRange(query.client_id, monthRange);
+
+    return this.serializeMonthAssignments(query.client_id, monthRange, assignments);
   }
 
   async updateAssignment(

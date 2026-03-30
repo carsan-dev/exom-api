@@ -19,7 +19,9 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { AssignmentsService } from './assignments.service';
+import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
 import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
+import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -32,6 +34,20 @@ import { Role } from '@prisma/client';
 @Controller('assignments')
 export class AssignmentsController {
   constructor(private readonly assignmentsService: AssignmentsService) {}
+
+  @Post('batch')
+  @ApiOperation({ summary: 'Assign training/diet/rest day combinations per date' })
+  @ApiOkResponse({ description: 'Assignments created or updated successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid batch assignment payload' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiNotFoundResponse({ description: 'Client, training, or diet not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  batchAssign(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: BatchAssignDaysDto,
+  ) {
+    return this.assignmentsService.batchAssign(user, dto);
+  }
 
   @Post('bulk')
   @ApiOperation({ summary: 'Bulk-assign training/diet to a client for multiple dates' })
@@ -73,6 +89,20 @@ export class AssignmentsController {
     @Query() query: GetWeekAssignmentsQueryDto,
   ) {
     return this.assignmentsService.getWeek(user, query);
+  }
+
+  @Get('month')
+  @ApiOperation({ summary: 'Get monthly assignments for a client' })
+  @ApiOkResponse({ description: 'Month assignments fetched successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid month query parameters' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiNotFoundResponse({ description: 'Client not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  getMonth(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: GetMonthAssignmentsQueryDto,
+  ) {
+    return this.assignmentsService.getMonth(user, query);
   }
 
   @Put(':id')
