@@ -2,10 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { CreateBodyMetricDto } from './dto/create-metric.dto';
+import { ChallengesService } from '../challenges/challenges.service';
 
 @Injectable()
 export class MetricsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly challengesService: ChallengesService,
+  ) {}
 
   private normalizeMetricDate(date?: string) {
     const target =
@@ -23,13 +27,17 @@ export class MetricsService {
     const { date, ...metricData } = dto;
     const targetDate = this.normalizeMetricDate(date);
 
-    return this.prisma.bodyMetric.create({
+    const metric = await this.prisma.bodyMetric.create({
       data: {
         client_id: clientId,
         date: targetDate,
         ...metricData,
       },
     });
+
+    await this.challengesService.recalculateAutomaticProgress(clientId);
+
+    return metric;
   }
 
   async findAll(clientId: string, pagination: PaginationDto) {

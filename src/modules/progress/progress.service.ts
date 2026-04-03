@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChallengesService } from '../challenges/challenges.service';
 import {
   CompleteTrainingDto,
   MarkExerciseDto,
@@ -21,7 +22,10 @@ interface AssignmentContext {
 
 @Injectable()
 export class ProgressService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly challengesService: ChallengesService,
+  ) {}
 
   private parseExercisesCompleted(
     value: Prisma.JsonValue | null,
@@ -173,6 +177,7 @@ export class ProgressService {
     });
 
     await this.updateStreak(clientId, date);
+    await this.challengesService.recalculateAutomaticProgress(clientId);
 
     return progress;
   }
@@ -226,6 +231,7 @@ export class ProgressService {
     });
 
     await this.updateStreak(clientId, date);
+    await this.challengesService.recalculateAutomaticProgress(clientId);
 
     return progress;
   }
@@ -269,6 +275,7 @@ export class ProgressService {
     });
 
     await this.updateStreak(clientId, date);
+    await this.challengesService.recalculateAutomaticProgress(clientId);
 
     return progress;
   }
@@ -298,7 +305,7 @@ export class ProgressService {
       (entry) => entry.exercise_id !== exerciseId,
     );
 
-    return this.prisma.dayProgress.update({
+    const progress = await this.prisma.dayProgress.update({
       where: { client_id_date: { client_id: clientId, date } },
       data: {
         exercises_completed: this.serializeExercisesCompleted(filtered),
@@ -308,6 +315,10 @@ export class ProgressService {
         ),
       },
     });
+
+    await this.challengesService.recalculateAutomaticProgress(clientId);
+
+    return progress;
   }
 
   async unmarkMeal(clientId: string, dateStr: string, mealId: string) {
@@ -334,10 +345,14 @@ export class ProgressService {
 
     const filtered = existing.meals_completed.filter((id) => id !== mealId);
 
-    return this.prisma.dayProgress.update({
+    const progress = await this.prisma.dayProgress.update({
       where: { client_id_date: { client_id: clientId, date } },
       data: { meals_completed: filtered },
     });
+
+    await this.challengesService.recalculateAutomaticProgress(clientId);
+
+    return progress;
   }
 
   private async updateStreak(clientId: string, date: Date) {

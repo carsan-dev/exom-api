@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChallengesService } from '../challenges/challenges.service';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { Prisma, Role } from '@prisma/client';
@@ -32,7 +33,10 @@ type ClientAssignmentRecord = {
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly challengesService: ChallengesService,
+  ) {}
 
   async findAll(roleFilter?: Role, pagination: PaginationDto = new PaginationDto()) {
     const where = roleFilter ? { role: roleFilter } : {};
@@ -97,6 +101,12 @@ export class UsersService {
       await tx.adminClientAssignment.create({
         data: { admin_id: adminId, client_id: newUser.id },
       });
+
+      await this.challengesService.syncGlobalChallengesForCreatorClient(
+        adminId,
+        newUser.id,
+        tx,
+      );
 
       return newUser;
     });
@@ -273,7 +283,28 @@ export class UsersService {
     await this.assertAdminUsersExist(desiredAdminIds);
 
     return this.prisma.$transaction(async (tx) => {
+      const currentActiveAssignments = await tx.adminClientAssignment.findMany({
+        where: { client_id: clientId, is_active: true },
+        select: { admin_id: true },
+      });
+      const adminIdsToSync = [
+        ...new Set([
+          ...currentActiveAssignments.map((assignment) => assignment.admin_id),
+          ...desiredAdminIds,
+        ]),
+      ];
+
       await this.syncClientAssignments(tx, clientId, desiredAdminIds);
+
+      await Promise.all(
+        adminIdsToSync.map((adminId) =>
+          this.challengesService.syncGlobalChallengesForCreatorClient(
+            adminId,
+            clientId,
+            tx,
+          ),
+        ),
+      );
 
       const assignments = await tx.adminClientAssignment.findMany({
         where: { client_id: clientId, is_active: true },

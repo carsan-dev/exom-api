@@ -1,10 +1,14 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Role } from '@prisma/client';
+import { ChallengesService } from '../challenges/challenges.service';
 
 @Injectable()
 export class StreaksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly challengesService: ChallengesService,
+  ) {}
 
   async getStreak(clientId: string) {
     const existing = await this.prisma.streak.findUnique({
@@ -35,7 +39,7 @@ export class StreaksService {
       }
     }
 
-    return this.prisma.streak.upsert({
+    const streak = await this.prisma.streak.upsert({
       where: { client_id: clientId },
       update: {
         current_days: 0,
@@ -48,5 +52,9 @@ export class StreaksService {
         last_active_date: null,
       },
     });
+
+    await this.challengesService.recalculateAutomaticProgress(clientId);
+
+    return streak;
   }
 }

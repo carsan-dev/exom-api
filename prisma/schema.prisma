@@ -54,6 +54,11 @@ enum ChallengeType {
   MAIN_GOAL
 }
 
+enum ChallengeAssignmentSource {
+  MANUAL
+  GLOBAL
+}
+
 enum RecapStatus {
   DRAFT
   SUBMITTED
@@ -421,28 +426,34 @@ model Challenge {
   is_manual    Boolean       @default(false)
   is_global    Boolean       @default(false)
   deadline     DateTime?     @db.Date
+  rule_key     String?
+  rule_config  Json?
   created_by   String?
   created_at   DateTime      @default(now())
   updated_at   DateTime      @updatedAt
 
   clients ChallengeClient[]
 
+  @@index([created_by, is_global, is_manual, type, created_at])
   @@map("challenges")
 }
 
 model ChallengeClient {
-  id            String    @id @default(uuid())
-  challenge_id  String
-  client_id     String
-  current_value Float     @default(0)
-  is_completed  Boolean   @default(false)
-  completed_at  DateTime?
-  assigned_at   DateTime  @default(now())
+  id                String                    @id @default(uuid())
+  challenge_id      String
+  client_id         String
+  assignment_source ChallengeAssignmentSource @default(MANUAL)
+  current_value     Float                     @default(0)
+  is_completed      Boolean                   @default(false)
+  completed_at      DateTime?
+  assigned_at       DateTime                  @default(now())
 
   challenge Challenge @relation(fields: [challenge_id], references: [id], onDelete: Cascade)
   client    User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
   @@unique([challenge_id, client_id])
+  @@index([client_id, is_completed, assigned_at])
+  @@index([challenge_id, assignment_source, client_id])
   @@map("challenge_clients")
 }
 
