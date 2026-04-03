@@ -6,6 +6,9 @@ import { ADMIN_RECAP_STATUSES, AdminRecapQueryDto } from './dto/admin-recap-quer
 
 describe('RecapsService', () => {
   let service: RecapsService;
+  let notificationsService: {
+    sendToUser: jest.Mock;
+  };
   let prisma: {
     user: {
       findMany: jest.Mock;
@@ -46,7 +49,14 @@ describe('RecapsService', () => {
       },
     };
 
-    service = new RecapsService(prisma as unknown as PrismaService);
+    notificationsService = {
+      sendToUser: jest.fn().mockResolvedValue({ success: true, message: 'queued' }),
+    };
+
+    service = new RecapsService(
+      prisma as unknown as PrismaService,
+      notificationsService as any,
+    );
   });
 
   it('rejects overwriting a reviewed recap from create', async () => {
@@ -128,6 +138,83 @@ describe('RecapsService', () => {
       }),
     });
     expect(prisma.weeklyRecap.update.mock.calls[0][0].data.general_notes).toBeUndefined();
+    expect(notificationsService.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('stores client feedback metadata and sends a push after a successful review update', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      status: RecapStatus.SUBMITTED,
+      archived_at: null,
+      client_feedback_text: null,
+      client: {
+        id: 'client-1',
+        email: 'client-1@exom.dev',
+        profile: null,
+      },
+    });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+    prisma.weeklyRecap.update.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      status: RecapStatus.REVIEWED,
+    });
+
+    await service.review('admin-1', Role.ADMIN, 'recap-1', {
+      client_feedback_text: 'Revisa la movilidad de cadera esta semana',
+    });
+
+    expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
+      where: { id: 'recap-1' },
+      data: expect.objectContaining({
+        status: RecapStatus.REVIEWED,
+        reviewed_at: expect.any(Date),
+        client_feedback_text: 'Revisa la movilidad de cadera esta semana',
+        client_feedback_sent_at: expect.any(Date),
+        client_feedback_read_at: null,
+      }),
+    });
+    expect(notificationsService.sendToUser).toHaveBeenCalledWith(
+      'client-1',
+      'Tu entrenador te ha dejado un comentario',
+      'Abre tu recap semanal para leer el feedback de tu entrenador.',
+      {
+        type: 'recap_feedback',
+        route: '/recap/recap-1',
+      },
+    );
+  });
+
+  it('clears client feedback metadata when the visible comment is removed', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      status: RecapStatus.REVIEWED,
+      archived_at: null,
+      client_feedback_text: 'Comentario previo',
+      client: {
+        id: 'client-1',
+        email: 'client-1@exom.dev',
+        profile: null,
+      },
+    });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+    prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1', status: RecapStatus.REVIEWED });
+
+    await service.review('admin-1', Role.ADMIN, 'recap-1', {
+      client_feedback_text: '   ',
+    });
+
+    expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
+      where: { id: 'recap-1' },
+      data: {
+        client_feedback_text: null,
+        client_feedback_sent_at: null,
+        client_feedback_read_at: null,
+      },
+    });
+    expect(notificationsService.sendToUser).not.toHaveBeenCalled();
   });
 
   it('rejects reviewing a draft recap', async () => {
@@ -280,5 +367,39 @@ describe('RecapsService', () => {
     await expect(service.getAdminRecapById('admin-1', Role.ADMIN, 'missing')).rejects.toThrow(
       new NotFoundException('Recap not found'),
     );
+  });
+
+  it('marks visible client feedback as read', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      client_feedback_text: 'Comentario visible',
+      client_feedback_read_at: null,
+    });
+    prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1' });
+
+    await expect(service.markClientFeedbackAsRead('client-1', 'recap-1')).resolves.toEqual({
+      success: true,
+    });
+
+    expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
+      where: { id: 'recap-1' },
+      data: { client_feedback_read_at: expect.any(Date) },
+    });
+  });
+
+  it('keeps mark-as-read as a no-op when there is no visible feedback', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      client_feedback_text: null,
+      client_feedback_read_at: null,
+    });
+
+    await expect(service.markClientFeedbackAsRead('client-1', 'recap-1')).resolves.toEqual({
+      success: true,
+    });
+
+    expect(prisma.weeklyRecap.update).not.toHaveBeenCalled();
   });
 });

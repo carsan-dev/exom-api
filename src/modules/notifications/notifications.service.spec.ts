@@ -105,4 +105,49 @@ describe('NotificationsService', () => {
       },
     });
   });
+
+  it('preserves an explicit deep link route from the payload', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'cliente@exom.dev',
+      firebase_uid: 'firebase-uid',
+      fcm_token: 'token-123',
+    });
+    sendMock.mockResolvedValue('message-id-456');
+
+    await service.sendToUser('user-1', 'Nuevo feedback', 'Abre tu recap', {
+      type: 'recap_feedback',
+      route: '/recap/recap-1',
+    });
+
+    expect(sendMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: {
+          type: 'recap_feedback',
+          route: '/recap/recap-1',
+        },
+      }),
+    );
+  });
+
+  it('falls back to the recap route when recap feedback has no direct deep link', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'cliente@exom.dev',
+      firebase_uid: 'firebase-uid',
+      fcm_token: 'token-123',
+    });
+    sendMock.mockResolvedValue('message-id-789');
+
+    await service.sendToUser('user-1', 'Nuevo feedback', 'Abre tu recap', {
+      type: 'recap_feedback',
+    });
+
+    expect(sendMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: {
+          type: 'recap_feedback',
+          route: '/recap',
+        },
+      }),
+    );
+  });
 });

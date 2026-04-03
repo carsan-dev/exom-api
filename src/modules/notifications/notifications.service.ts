@@ -18,6 +18,7 @@ export class NotificationsService {
     switch (data?.type?.toLowerCase()) {
       case 'recap_reminder':
       case 'recap':
+      case 'recap_feedback':
         return '/recap';
       case 'training':
       case 'training_reminder':

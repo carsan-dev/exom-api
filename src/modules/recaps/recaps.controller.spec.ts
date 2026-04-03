@@ -11,6 +11,8 @@ describe('RecapsController', () => {
   const recapsService = {
     create: jest.fn(),
     findMyRecaps: jest.fn(),
+    getMyRecapById: jest.fn(),
+    markClientFeedbackAsRead: jest.fn(),
     findForAdmin: jest.fn(),
     getStats: jest.fn(),
     getAdminRecapById: jest.fn(),
@@ -115,5 +117,15 @@ describe('RecapsController', () => {
       .expect(400);
 
     expect(recapsService.review).not.toHaveBeenCalled();
+  });
+
+  it('routes mark-feedback requests through the client endpoint', async () => {
+    recapsService.markClientFeedbackAsRead.mockResolvedValue({ success: true });
+
+    await request(app.getHttpServer())
+      .post('/recaps/my/recap-1/read-feedback')
+      .expect(200);
+
+    expect(recapsService.markClientFeedbackAsRead).toHaveBeenCalledWith('admin-1', 'recap-1');
   });
 });

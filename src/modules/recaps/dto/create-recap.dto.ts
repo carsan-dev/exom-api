@@ -142,10 +142,17 @@ export class CreateRecapDto {
 export class UpdateRecapDto extends PartialType(CreateRecapDto) {}
 
 export class ReviewRecapDto {
-  @ApiPropertyOptional({ maxLength: 1000 })
+  @ApiPropertyOptional({ maxLength: 1000, description: 'Internal note — not visible to client' })
   @IsOptional()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MaxLength(1000)
   admin_comments?: string;
+
+  @ApiPropertyOptional({ maxLength: 1000, description: 'Visible feedback for the client — triggers push notification when changed' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(1000)
+  client_feedback_text?: string;
 }
