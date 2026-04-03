@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Role } from '@prisma/client';
 
 @Injectable()
 export class StreaksService {
@@ -23,7 +24,17 @@ export class StreaksService {
     });
   }
 
-  async resetStreak(clientId: string) {
+  async resetStreak(adminId: string, adminRole: string, clientId: string) {
+    if (adminRole !== Role.SUPER_ADMIN) {
+      const assignment = await this.prisma.adminClientAssignment.findFirst({
+        where: { admin_id: adminId, client_id: clientId, is_active: true },
+      });
+
+      if (!assignment) {
+        throw new ForbiddenException('Este cliente no está asignado a ti');
+      }
+    }
+
     return this.prisma.streak.upsert({
       where: { client_id: clientId },
       update: {

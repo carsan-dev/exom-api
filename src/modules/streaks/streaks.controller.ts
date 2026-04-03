@@ -20,10 +20,13 @@ export class StreaksController {
   }
 
   @Post(':clientId/reset')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Reset streak of a client (ADMIN only)' })
-  resetStreak(@Param('clientId') clientId: string) {
-    return this.streaksService.resetStreak(clientId);
+  @ApiOperation({ summary: 'Reset streak of a client (ADMIN/SUPER_ADMIN)' })
+  resetStreak(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('clientId') clientId: string,
+  ) {
+    return this.streaksService.resetStreak(admin.id, admin.role, clientId);
   }
 }

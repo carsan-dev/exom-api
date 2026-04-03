@@ -12,6 +12,7 @@ import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { Prisma, Role } from '@prisma/client';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
+import type { BodyField } from './dto/admin-client-metrics-query.dto';
 
 type ClientAssignmentRecord = {
   client_id: string;
@@ -373,6 +374,188 @@ export class UsersService {
       })),
     };
   }
+
+  // ─── Admin Progress Endpoints ─────────────────────────────────────────────
+
+  async getClientDayProgress(adminId: string, adminRole: string, clientId: string, date: string) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const progress = await this.prisma.dayProgress.findFirst({
+      where: { client_id: clientId, date: new Date(date) },
+    });
+
+    return progress;
+  }
+
+  async getClientCalendarMonth(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    year: number,
+    month: number,
+  ) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+
+    const [assignments, progress] = await Promise.all([
+      this.prisma.planAssignment.findMany({
+        where: {
+          client_id: clientId,
+          date: { gte: startDate, lte: endDate },
+        },
+      }),
+      this.prisma.dayProgress.findMany({
+        where: {
+          client_id: clientId,
+          date: { gte: startDate, lte: endDate },
+        },
+      }),
+    ]);
+
+    const assignmentByDate = new Map(
+      assignments.map((a) => [a.date.toISOString().split('T')[0], a]),
+    );
+    const progressByDate = new Map(
+      progress.map((p) => [p.date.toISOString().split('T')[0], p]),
+    );
+
+    const days: Array<{
+      date: string;
+      has_training: boolean;
+      has_diet: boolean;
+      is_rest_day: boolean;
+      training_completed: boolean;
+      diet_completed: boolean;
+    }> = [];
+
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
+      const assignment = assignmentByDate.get(dateStr);
+      const dayProgress = progressByDate.get(dateStr);
+
+      days.push({
+        date: dateStr,
+        has_training: Boolean(assignment?.training_id),
+        has_diet: Boolean(assignment?.diet_id),
+        is_rest_day: assignment ? assignment.is_rest_day : true,
+        training_completed: dayProgress?.training_completed ?? false,
+        diet_completed: dayProgress ? dayProgress.meals_completed.length > 0 : false,
+      });
+    }
+
+    return days;
+  }
+
+  async getClientWeekSummary(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    weekStart: string,
+  ) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const start = new Date(weekStart);
+    const end = new Date(weekStart);
+    end.setDate(end.getDate() + 6);
+
+    const [assignments, progress] = await Promise.all([
+      this.prisma.planAssignment.findMany({
+        where: {
+          client_id: clientId,
+          date: { gte: start, lte: end },
+        },
+        include: { diet: { include: { meals: true } } },
+      }),
+      this.prisma.dayProgress.findMany({
+        where: {
+          client_id: clientId,
+          date: { gte: start, lte: end },
+        },
+      }),
+    ]);
+
+    const progressByDate = new Map(
+      progress.map((p) => [p.date.toISOString().split('T')[0], p]),
+    );
+
+    let trainingsAssigned = 0;
+    let trainingsCompleted = 0;
+    let totalMeals = 0;
+    let mealsCompleted = 0;
+
+    for (const assignment of assignments) {
+      if (assignment.is_rest_day) continue;
+
+      const dateStr = assignment.date.toISOString().split('T')[0];
+      const dayProgress = progressByDate.get(dateStr);
+
+      if (assignment.training_id) {
+        trainingsAssigned += 1;
+        if (dayProgress?.training_completed) trainingsCompleted += 1;
+      }
+
+      if (assignment.diet_id) {
+        const mealCount = assignment.diet?.meals?.length ?? 0;
+        totalMeals += mealCount;
+        mealsCompleted += dayProgress?.meals_completed?.length ?? 0;
+      }
+    }
+
+    return {
+      week_start: weekStart,
+      trainings_assigned: trainingsAssigned,
+      trainings_completed: trainingsCompleted,
+      total_meals: totalMeals,
+      meals_completed: mealsCompleted,
+    };
+  }
+
+  async getClientMetrics(adminId: string, adminRole: string, clientId: string, pagination: PaginationDto) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const [data, total] = await Promise.all([
+      this.prisma.bodyMetric.findMany({
+        where: { client_id: clientId },
+        orderBy: { date: 'desc' },
+        skip: pagination.skip,
+        take: pagination.limit,
+      }),
+      this.prisma.bodyMetric.count({ where: { client_id: clientId } }),
+    ]);
+
+    return paginate(data, total, pagination);
+  }
+
+  async getClientWeightHistory(adminId: string, adminRole: string, clientId: string) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const metrics = await this.prisma.bodyMetric.findMany({
+      where: { client_id: clientId, weight_kg: { not: null } },
+      orderBy: { date: 'asc' },
+      select: { date: true, weight_kg: true },
+    });
+
+    return metrics.map((m) => ({ date: m.date.toISOString().split('T')[0], value: m.weight_kg }));
+  }
+
+  async getClientBodyHistory(adminId: string, adminRole: string, clientId: string, field: BodyField) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const metrics = await this.prisma.bodyMetric.findMany({
+      where: { client_id: clientId, [field]: { not: null } },
+      orderBy: { date: 'asc' },
+      select: { date: true, [field]: true },
+    });
+
+    return metrics.map((m) => ({
+      date: (m.date as Date).toISOString().split('T')[0],
+      value: m[field as keyof typeof m] as number,
+    }));
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
 
   private async syncClientAssignments(
     tx: Prisma.TransactionClient,

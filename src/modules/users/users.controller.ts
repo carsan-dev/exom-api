@@ -20,6 +20,12 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { Role } from '@prisma/client';
+import { AdminClientProgressQueryDto } from './dto/admin-client-progress-query.dto';
+import {
+  AdminClientCalendarMonthQueryDto,
+  AdminClientCalendarWeekQueryDto,
+} from './dto/admin-client-calendar-query.dto';
+import { AdminClientBodyHistoryQueryDto } from './dto/admin-client-metrics-query.dto';
 
 class UpdateFcmTokenDto {
   @ApiProperty()
@@ -129,5 +135,77 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
   getClientProfile(@CurrentUser() admin: AuthenticatedUser, @Param('id') clientId: string) {
     return this.usersService.getClientProfile(admin.id, admin.role, clientId);
+  }
+
+  @Get('clients/:id/progress')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Progreso diario de un cliente' })
+  @ApiResponse({ status: 200, description: 'Progreso del día obtenido correctamente' })
+  @ApiResponse({ status: 403, description: 'Sin acceso a este cliente' })
+  getClientDayProgress(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: AdminClientProgressQueryDto,
+  ) {
+    return this.usersService.getClientDayProgress(admin.id, admin.role, clientId, query.date);
+  }
+
+  @Get('clients/:id/calendar/month')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Calendario mensual de cumplimiento de un cliente' })
+  @ApiResponse({ status: 200, description: 'Calendario mensual obtenido correctamente' })
+  getClientCalendarMonth(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: AdminClientCalendarMonthQueryDto,
+  ) {
+    return this.usersService.getClientCalendarMonth(admin.id, admin.role, clientId, query.year, query.month);
+  }
+
+  @Get('clients/:id/calendar/week-summary')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Resumen semanal de un cliente' })
+  @ApiResponse({ status: 200, description: 'Resumen semanal obtenido correctamente' })
+  getClientWeekSummary(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: AdminClientCalendarWeekQueryDto,
+  ) {
+    return this.usersService.getClientWeekSummary(admin.id, admin.role, clientId, query.week_start);
+  }
+
+  @Get('clients/:id/metrics')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Métricas paginadas de un cliente' })
+  @ApiResponse({ status: 200, description: 'Métricas del cliente obtenidas correctamente' })
+  getClientMetrics(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.usersService.getClientMetrics(admin.id, admin.role, clientId, pagination);
+  }
+
+  @Get('clients/:id/metrics/weight-history')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Historial de peso de un cliente para gráfica' })
+  @ApiResponse({ status: 200, description: 'Historial de peso obtenido correctamente' })
+  getClientWeightHistory(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+  ) {
+    return this.usersService.getClientWeightHistory(admin.id, admin.role, clientId);
+  }
+
+  @Get('clients/:id/metrics/body-history')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Historial de una medida corporal de un cliente' })
+  @ApiResponse({ status: 200, description: 'Historial de medida obtenido correctamente' })
+  getClientBodyHistory(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: AdminClientBodyHistoryQueryDto,
+  ) {
+    return this.usersService.getClientBodyHistory(admin.id, admin.role, clientId, query.field);
   }
 }
