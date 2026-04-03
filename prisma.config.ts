@@ -10,6 +10,7 @@ export default defineConfig({
     seed: "ts-node prisma/seed.ts",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // Allow CLI-only overrides without affecting the runtime pooled connection.
+    url: process.env["PRISMA_DATABASE_URL"] ?? process.env["DATABASE_URL"],
   },
 });
