@@ -1,20 +1,108 @@
 import {
+  ForbiddenException,
   Injectable,
   NotFoundException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { CreateRecapDto, UpdateRecapDto, ReviewRecapDto } from './dto/create-recap.dto';
-import { RecapStatus } from '@prisma/client';
+import { ADMIN_RECAP_STATUSES, AdminRecapQueryDto } from './dto/admin-recap-query.dto';
+import { RecapStatus, Role } from '@prisma/client';
 
 @Injectable()
 export class RecapsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async resolveAccessibleClientIds(currentUserId: string, currentUserRole: string) {
+    if (currentUserRole === Role.SUPER_ADMIN) {
+      const clients = await this.prisma.user.findMany({
+        where: { role: Role.CLIENT },
+        select: { id: true },
+      });
+
+      return clients.map((client) => client.id);
+    }
+
+    if (currentUserRole !== Role.ADMIN) {
+      return [];
+    }
+
+    const assignments = await this.prisma.adminClientAssignment.findMany({
+      where: { admin_id: currentUserId, is_active: true },
+      select: { client_id: true },
+    });
+
+    return assignments.map((assignment) => assignment.client_id);
+  }
+
+  private async assertAdminRecapAccess(id: string, adminId: string, adminRole: string) {
+    const recap = await this.prisma.weeklyRecap.findUnique({
+      where: { id },
+      include: {
+        client: {
+          select: {
+            id: true,
+            email: true,
+            profile: {
+              select: {
+                first_name: true,
+                last_name: true,
+                avatar_url: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!recap) {
+      throw new NotFoundException('Recap not found');
+    }
+
+    if (adminRole === Role.SUPER_ADMIN) {
+      return recap;
+    }
+
+    if (adminRole !== Role.ADMIN) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    const assignment = await this.prisma.adminClientAssignment.findFirst({
+      where: {
+        admin_id: adminId,
+        client_id: recap.client_id,
+        is_active: true,
+      },
+    });
+
+    if (!assignment) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    return recap;
+  }
+
   async create(clientId: string, dto: CreateRecapDto) {
     const weekStart = new Date(dto.week_start_date);
     const weekEnd = new Date(dto.week_end_date);
+    const recapLookup = {
+      client_id_week_start_date: {
+        client_id: clientId,
+        week_start_date: weekStart,
+      },
+    };
+
+    const existingRecap = await this.prisma.weeklyRecap.findUnique({
+      where: recapLookup,
+    });
+
+    if (existingRecap?.archived_at) {
+      throw new ForbiddenException('Cannot overwrite an archived recap');
+    }
+
+    if (existingRecap && existingRecap.status !== RecapStatus.DRAFT) {
+      throw new ForbiddenException('Only draft recaps can be overwritten');
+    }
 
     const data = {
       week_end_date: weekEnd,
@@ -41,20 +129,20 @@ export class RecapsService {
       improvement_feedback_text: dto.improvement_feedback_text,
     };
 
-    return this.prisma.weeklyRecap.upsert({
-      where: {
-        client_id_week_start_date: {
-          client_id: clientId,
-          week_start_date: weekStart,
-        },
-      },
-      create: {
+    if (existingRecap) {
+      return this.prisma.weeklyRecap.update({
+        where: { id: existingRecap.id },
+        data,
+      });
+    }
+
+    return this.prisma.weeklyRecap.create({
+      data: {
         client_id: clientId,
         week_start_date: weekStart,
         ...data,
         status: RecapStatus.DRAFT,
       },
-      update: data,
     });
   }
 
@@ -98,9 +186,16 @@ export class RecapsService {
       throw new ForbiddenException('Access denied');
     }
 
+    if (recap.status === RecapStatus.REVIEWED) {
+      throw new ForbiddenException('Cannot submit a reviewed recap');
+    }
+
     return this.prisma.weeklyRecap.update({
       where: { id },
-      data: { status: RecapStatus.SUBMITTED },
+      data: {
+        status: RecapStatus.SUBMITTED,
+        submitted_at: new Date(),
+      },
     });
   }
 
@@ -118,67 +213,147 @@ export class RecapsService {
     return paginate(data, total, pagination);
   }
 
-  async findForAdmin(adminId: string, pagination: PaginationDto) {
-    const clientAssignments = await this.prisma.adminClientAssignment.findMany({
-      where: { admin_id: adminId, is_active: true },
-      select: { client_id: true },
-    });
+  async getStats(adminId: string, adminRole: string) {
+    const accessibleClientIds = await this.resolveAccessibleClientIds(adminId, adminRole);
 
-    const clientIds = clientAssignments.map((a) => a.client_id);
+    if (accessibleClientIds.length === 0) {
+      return { total: 0, submitted: 0, reviewed: 0, archived: 0 };
+    }
+
+    const where = {
+      client_id: { in: accessibleClientIds },
+      status: { in: [RecapStatus.SUBMITTED, RecapStatus.REVIEWED] },
+    };
+
+    const [total, submitted, reviewed, archived] = await Promise.all([
+      this.prisma.weeklyRecap.count({ where }),
+      this.prisma.weeklyRecap.count({
+        where: {
+          ...where,
+          status: RecapStatus.SUBMITTED,
+        },
+      }),
+      this.prisma.weeklyRecap.count({
+        where: {
+          ...where,
+          status: RecapStatus.REVIEWED,
+        },
+      }),
+      this.prisma.weeklyRecap.count({
+        where: {
+          ...where,
+          archived_at: { not: null },
+        },
+      }),
+    ]);
+
+    return { total, submitted, reviewed, archived };
+  }
+
+  async findForAdmin(adminId: string, adminRole: string, query: AdminRecapQueryDto) {
+    const accessibleClientIds = await this.resolveAccessibleClientIds(adminId, adminRole);
+
+    if (accessibleClientIds.length === 0) {
+      return paginate([], 0, query);
+    }
+
+    if (query.client_id && !accessibleClientIds.includes(query.client_id)) {
+      return paginate([], 0, query);
+    }
+
+    const clientIds = query.client_id ? [query.client_id] : accessibleClientIds;
+    const statusFilter =
+      query.status === RecapStatus.SUBMITTED || query.status === RecapStatus.REVIEWED
+        ? query.status
+        : { in: [...ADMIN_RECAP_STATUSES] };
+    const where = {
+      client_id: { in: clientIds },
+      status: statusFilter,
+      archived_at: query.archived ? { not: null } : null,
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.weeklyRecap.findMany({
-        where: {
-          client_id: { in: clientIds },
-          status: { in: [RecapStatus.SUBMITTED, RecapStatus.REVIEWED] },
-        },
+        where,
         orderBy: { week_start_date: 'desc' },
-        skip: pagination.skip,
-        take: pagination.limit,
+        skip: query.skip,
+        take: query.limit,
         include: {
           client: {
             select: {
               id: true,
               email: true,
-              profile: { select: { first_name: true, last_name: true } },
+              profile: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                  avatar_url: true,
+                },
+              },
             },
           },
         },
       }),
-      this.prisma.weeklyRecap.count({
-        where: {
-          client_id: { in: clientIds },
-          status: { in: [RecapStatus.SUBMITTED, RecapStatus.REVIEWED] },
-        },
-      }),
+      this.prisma.weeklyRecap.count({ where }),
     ]);
 
-    return paginate(data, total, pagination);
+    return paginate(data, total, query);
   }
 
-  async findOne(id: string) {
-    const recap = await this.prisma.weeklyRecap.findUnique({ where: { id } });
+  async getAdminRecapById(adminId: string, adminRole: string, id: string) {
+    return this.assertAdminRecapAccess(id, adminId, adminRole);
+  }
 
-    if (!recap) {
-      throw new NotFoundException('Recap not found');
+  async review(adminId: string, adminRole: string, id: string, dto: ReviewRecapDto) {
+    const recap = await this.assertAdminRecapAccess(id, adminId, adminRole);
+
+    if (recap.archived_at) {
+      throw new ForbiddenException('Cannot review an archived recap');
     }
 
-    return recap;
-  }
+    if (recap.status === RecapStatus.DRAFT) {
+      throw new ForbiddenException('Cannot review a draft recap');
+    }
 
-  async review(adminId: string, id: string, dto: ReviewRecapDto) {
-    const recap = await this.prisma.weeklyRecap.findUnique({ where: { id } });
+    if (recap.status === RecapStatus.REVIEWED) {
+      if (dto.admin_comments === undefined) {
+        return recap;
+      }
 
-    if (!recap) {
-      throw new NotFoundException('Recap not found');
+      return this.prisma.weeklyRecap.update({
+        where: { id },
+        data: {
+          admin_comments: dto.admin_comments || null,
+        },
+      });
     }
 
     return this.prisma.weeklyRecap.update({
       where: { id },
       data: {
         status: RecapStatus.REVIEWED,
-        ...(dto.notes ? { general_notes: dto.notes } : {}),
+        reviewed_at: new Date(),
+        ...(dto.admin_comments !== undefined
+          ? { admin_comments: dto.admin_comments || null }
+          : {}),
       },
+    });
+  }
+
+  async archive(adminId: string, adminRole: string, id: string) {
+    const recap = await this.assertAdminRecapAccess(id, adminId, adminRole);
+
+    if (recap.archived_at) {
+      return recap;
+    }
+
+    if (recap.status !== RecapStatus.REVIEWED) {
+      throw new ForbiddenException('Only reviewed recaps can be archived');
+    }
+
+    return this.prisma.weeklyRecap.update({
+      where: { id },
+      data: { archived_at: new Date() },
     });
   }
 }

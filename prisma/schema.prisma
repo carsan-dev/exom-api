@@ -359,6 +359,7 @@ model WeeklyRecap {
   client_id       String
   week_start_date DateTime @db.Date
   week_end_date   DateTime @db.Date
+  submitted_at    DateTime?
 
   // Step 1: Training
   training_effort   Int?
@@ -390,14 +391,18 @@ model WeeklyRecap {
   improvement_service_rating Int?
   improvement_areas          String[]
   improvement_feedback_text  String?
+  admin_comments             String?
 
-  status     RecapStatus @default(DRAFT)
-  created_at DateTime    @default(now())
-  updated_at DateTime    @updatedAt
+  status      RecapStatus @default(DRAFT)
+  reviewed_at DateTime?
+  archived_at DateTime?
+  created_at  DateTime    @default(now())
+  updated_at  DateTime    @updatedAt
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
   @@unique([client_id, week_start_date])
+  @@index([client_id, status, archived_at, week_start_date])
   @@map("weekly_recaps")
 }
 

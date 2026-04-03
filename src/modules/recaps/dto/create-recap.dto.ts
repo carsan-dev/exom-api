@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PartialType } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -7,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -140,8 +142,10 @@ export class CreateRecapDto {
 export class UpdateRecapDto extends PartialType(CreateRecapDto) {}
 
 export class ReviewRecapDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ maxLength: 1000 })
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  notes?: string;
+  @MaxLength(1000)
+  admin_comments?: string;
 }
