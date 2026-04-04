@@ -110,6 +110,34 @@ describe('RecapsService', () => {
     });
   });
 
+  it('rejects editing a submitted recap', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      status: RecapStatus.SUBMITTED,
+    });
+
+    await expect(
+      service.update('client-1', 'recap-1', { training_notes: 'No debería guardar cambios' }),
+    ).rejects.toThrow(new ForbiddenException('Only draft recaps can be edited'));
+
+    expect(prisma.weeklyRecap.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects submitting a recap that is already submitted', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      status: RecapStatus.SUBMITTED,
+    });
+
+    await expect(service.submit('client-1', 'recap-1')).rejects.toThrow(
+      new ForbiddenException('Only draft recaps can be submitted'),
+    );
+
+    expect(prisma.weeklyRecap.update).not.toHaveBeenCalled();
+  });
+
   it('stores admin comments without overwriting client notes', async () => {
     prisma.weeklyRecap.findUnique.mockResolvedValue({
       id: 'recap-1',
@@ -176,6 +204,7 @@ describe('RecapsService', () => {
       }),
     });
     expect(notificationsService.sendToUser).toHaveBeenCalledWith(
+      'admin-1',
       'client-1',
       'Tu entrenador te ha dejado un comentario',
       'Abre tu recap semanal para leer el feedback de tu entrenador.',

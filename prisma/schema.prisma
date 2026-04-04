@@ -75,6 +75,11 @@ enum MediaType {
   IMAGE
 }
 
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
@@ -101,6 +106,8 @@ model User {
   clientChallenges ChallengeClient[]
   userAchievements UserAchievement[]
   feedbackMedia    FeedbackMedia[]
+  sentNotifications     Notification[] @relation("SentNotifications")
+  receivedNotifications Notification[] @relation("ReceivedNotifications")
 
   @@map("users")
 }
@@ -141,6 +148,26 @@ model AdminClientAssignment {
   @@index([admin_id, client_id, is_active])
   @@unique([admin_id, client_id])
   @@map("admin_client_assignments")
+}
+
+model Notification {
+  id           String             @id @default(uuid())
+  sender_id    String
+  recipient_id String
+  title        String
+  body         String
+  data         Json?
+  status       NotificationStatus @default(SENT)
+  error        String?
+  read_at      DateTime?
+  created_at   DateTime           @default(now())
+
+  sender    User @relation("SentNotifications", fields: [sender_id], references: [id], onDelete: Cascade)
+  recipient User @relation("ReceivedNotifications", fields: [recipient_id], references: [id], onDelete: Cascade)
+
+  @@index([sender_id, created_at])
+  @@index([recipient_id, read_at, created_at])
+  @@map("notifications")
 }
 
 // ─── Training & Exercise ──────────────────────────────────────────────────────
@@ -383,6 +410,7 @@ model WeeklyRecap {
   sleep_hours_range String?
   fatigue_level     String?
   muscle_pain_zones Json    @default("[]")
+  pain_intensity    String?
   recovery_notes    String?
 
   // Step 4: General feelings

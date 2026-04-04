@@ -34,6 +34,7 @@ const CLIENT_RECAP_SELECT = {
   sleep_hours_range: true,
   fatigue_level: true,
   muscle_pain_zones: true,
+  pain_intensity: true,
   recovery_notes: true,
   mood: true,
   stress_enabled: true,
@@ -173,9 +174,10 @@ export class RecapsService {
     };
   }
 
-  private notifyClientFeedback(clientId: string, recapId: string) {
+  private notifyClientFeedback(adminId: string, clientId: string, recapId: string) {
     this.notificationsService
       .sendToUser(
+        adminId,
         clientId,
         'Tu entrenador te ha dejado un comentario',
         'Abre tu recap semanal para leer el feedback de tu entrenador.',
@@ -228,6 +230,7 @@ export class RecapsService {
       sleep_hours_range: dto.sleep_hours_range,
       fatigue_level: dto.fatigue_level,
       muscle_pain_zones: dto.muscle_pain_zones ?? [],
+      pain_intensity: dto.pain_intensity,
       recovery_notes: dto.recovery_notes,
       mood: dto.mood,
       stress_enabled: dto.stress_enabled,
@@ -267,8 +270,8 @@ export class RecapsService {
       throw new ForbiddenException('Access denied');
     }
 
-    if (recap.status === RecapStatus.REVIEWED) {
-      throw new ForbiddenException('Cannot edit a reviewed recap');
+    if (recap.status !== RecapStatus.DRAFT) {
+      throw new ForbiddenException('Only draft recaps can be edited');
     }
 
     const updateData: Record<string, unknown> = { ...dto };
@@ -296,8 +299,8 @@ export class RecapsService {
       throw new ForbiddenException('Access denied');
     }
 
-    if (recap.status === RecapStatus.REVIEWED) {
-      throw new ForbiddenException('Cannot submit a reviewed recap');
+    if (recap.status !== RecapStatus.DRAFT) {
+      throw new ForbiddenException('Only draft recaps can be submitted');
     }
 
     return this.prisma.weeklyRecap.update({
@@ -490,7 +493,7 @@ export class RecapsService {
       });
 
       if (shouldNotifyClientFeedback) {
-        this.notifyClientFeedback(recap.client_id, recap.id);
+        this.notifyClientFeedback(adminId, recap.client_id, recap.id);
       }
 
       return updatedRecap;
@@ -509,7 +512,7 @@ export class RecapsService {
     });
 
     if (shouldNotifyClientFeedback) {
-      this.notifyClientFeedback(recap.client_id, recap.id);
+      this.notifyClientFeedback(adminId, recap.client_id, recap.id);
     }
 
     return updatedRecap;

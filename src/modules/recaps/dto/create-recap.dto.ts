@@ -90,6 +90,11 @@ export class CreateRecapDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  pain_intensity?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   recovery_notes?: string;
 
   @ApiPropertyOptional()
