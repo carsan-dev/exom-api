@@ -115,9 +115,10 @@ export class UsersController {
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Cambiar rol de usuario' })
   @ApiResponse({ status: 200, description: 'Rol actualizado correctamente' })
+  @ApiResponse({ status: 403, description: 'No puedes cambiar tu propio rol' })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-    return this.usersService.updateRole(id, dto);
+  updateRole(@CurrentUser() admin: AuthenticatedUser, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    return this.usersService.updateRole(admin.id, id, dto);
   }
 
   @Get('clients')

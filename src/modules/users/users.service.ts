@@ -163,7 +163,7 @@ export class UsersService {
   }
 
   async updateUser(id: string, dto: UpdateUserDto) {
-    const user = await this.getManageableUserOrFail(id);
+    const user = await this.getManageableUserOrFail(id, true);
     const email = this.normalizeEmail(dto.email);
     const firstName = dto.first_name.trim();
     const lastName = dto.last_name.trim();
@@ -195,7 +195,7 @@ export class UsersService {
   }
 
   async updateUserStatus(currentUserId: string, id: string, dto: UpdateUserStatusDto) {
-    const user = await this.getManageableUserOrFail(id);
+    const user = await this.getManageableUserOrFail(id, true);
 
     if (!dto.is_active && user.id === currentUserId) {
       throw new ForbiddenException('No puedes desactivar tu propia cuenta');
@@ -225,7 +225,7 @@ export class UsersService {
   }
 
   async unlockUser(currentUserId: string, currentUserRole: string, id: string) {
-    const user = await this.getManageableUserOrFail(id);
+    const user = await this.getManageableUserOrFail(id, currentUserRole === Role.SUPER_ADMIN);
 
     if (currentUserRole === Role.ADMIN) {
       if (user.role !== Role.CLIENT) {
@@ -243,9 +243,12 @@ export class UsersService {
     return { message: 'Cuenta desbloqueada exitosamente' };
   }
 
-  async updateRole(id: string, dto: UpdateRoleDto) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Usuario no encontrado');
+  async updateRole(currentUserId: string, id: string, dto: UpdateRoleDto) {
+    const user = await this.getManageableUserOrFail(id, true);
+
+    if (user.id === currentUserId && dto.role !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException('No puedes cambiar tu propio rol');
+    }
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data: { role: dto.role } });
@@ -552,7 +555,7 @@ export class UsersService {
     return admins;
   }
 
-  private async getManageableUserOrFail(id: string) {
+  private async getManageableUserOrFail(id: string, includeSuperAdmin = false) {
     const user = await this.prisma.user.findUnique({
       where: { id },
       include: {
@@ -566,7 +569,7 @@ export class UsersService {
       },
     });
 
-    if (!user || user.role === Role.SUPER_ADMIN) {
+    if (!user || (!includeSuperAdmin && user.role === Role.SUPER_ADMIN)) {
       throw new NotFoundException('Usuario no encontrado');
     }
 
