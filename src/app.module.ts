@@ -25,6 +25,7 @@ import { StreaksModule } from './modules/streaks/streaks.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     FeedbackModule,
     UploadsModule,
     NotificationsModule,
+    DashboardModule,
   ],
   providers: [
     {
