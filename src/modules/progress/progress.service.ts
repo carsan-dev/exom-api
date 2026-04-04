@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import {
   CompleteTrainingDto,
@@ -25,6 +26,7 @@ export class ProgressService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
+    private readonly achievementsService: AchievementsService,
   ) {}
 
   private parseExercisesCompleted(
@@ -178,6 +180,7 @@ export class ProgressService {
 
     await this.updateStreak(clientId, date);
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return progress;
   }
@@ -232,6 +235,7 @@ export class ProgressService {
 
     await this.updateStreak(clientId, date);
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return progress;
   }
@@ -276,6 +280,7 @@ export class ProgressService {
 
     await this.updateStreak(clientId, date);
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return progress;
   }
@@ -317,6 +322,7 @@ export class ProgressService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return progress;
   }
@@ -351,6 +357,7 @@ export class ProgressService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return progress;
   }

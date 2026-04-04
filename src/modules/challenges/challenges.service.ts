@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
+import { AchievementsService } from '../achievements/achievements.service';
 import {
   CreateChallengeDto,
   AssignChallengeDto,
@@ -76,7 +77,20 @@ type ChallengeClientRecord = Prisma.ChallengeClientGetPayload<{
 
 @Injectable()
 export class ChallengesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly achievementsService: AchievementsService,
+  ) {}
+
+  private async evaluateAchievementsForClient(
+    clientId: string,
+    prisma: PrismaClientLike = this.prisma,
+  ) {
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+      prisma,
+    );
+  }
 
   private normalizeDate(date: Date) {
     const normalized = new Date(date);
@@ -895,6 +909,7 @@ export class ChallengesService {
 
   async findMyChallenges(clientId: string) {
     await this.recalculateAutomaticProgress(clientId);
+    await this.evaluateAchievementsForClient(clientId);
 
     return this.prisma.challengeClient.findMany({
       where: { client_id: clientId },
@@ -925,6 +940,11 @@ export class ChallengesService {
               this.recalculateAutomaticProgress(clientId, tx, [challenge.id]),
             ),
           );
+          await Promise.all(
+            visibleClientIds.map((clientId) =>
+              this.evaluateAchievementsForClient(clientId, tx),
+            ),
+          );
         }
       }
 
@@ -934,6 +954,15 @@ export class ChallengesService {
           challenge.target_value,
           tx,
         );
+
+        if (challenge.is_global) {
+          const assignedClientIds = await this.getAssignedClientIds(challenge.id, tx);
+          await Promise.all(
+            assignedClientIds.map((clientId) =>
+              this.evaluateAchievementsForClient(clientId, tx),
+            ),
+          );
+        }
       }
 
       return this.serializeChallengeWithCurrentCounts(challenge, tx);
@@ -962,12 +991,23 @@ export class ChallengesService {
 
       if (updatedChallenge.is_manual) {
         await this.refreshManualAssignments(id, updatedChallenge.target_value, tx);
+        const assignedClientIds = await this.getAssignedClientIds(id, tx);
+        await Promise.all(
+          assignedClientIds.map((clientId) =>
+            this.evaluateAchievementsForClient(clientId, tx),
+          ),
+        );
       } else {
         const assignmentClientIds = await this.getAssignedClientIds(id, tx);
 
         await Promise.all(
           assignmentClientIds.map((clientId) =>
             this.recalculateAutomaticProgress(clientId, tx, [id]),
+          ),
+        );
+        await Promise.all(
+          assignmentClientIds.map((clientId) =>
+            this.evaluateAchievementsForClient(clientId, tx),
           ),
         );
       }
@@ -1008,10 +1048,20 @@ export class ChallengesService {
 
       if (challenge.is_manual) {
         await this.refreshManualAssignments(challengeId, challenge.target_value, tx);
+        await Promise.all(
+          clientIds.map((clientId) =>
+            this.evaluateAchievementsForClient(clientId, tx),
+          ),
+        );
       } else {
         await Promise.all(
           clientIds.map((clientId) =>
             this.recalculateAutomaticProgress(clientId, tx, [challengeId]),
+          ),
+        );
+        await Promise.all(
+          clientIds.map((clientId) =>
+            this.evaluateAchievementsForClient(clientId, tx),
           ),
         );
       }
@@ -1103,6 +1153,8 @@ export class ChallengesService {
         this.refreshManualAssignments(challenge.id, challenge.target_value, prisma),
       ),
     );
+
+    await this.evaluateAchievementsForClient(clientId, prisma);
   }
 
   async recalculateAutomaticProgress(
@@ -1234,7 +1286,7 @@ export class ChallengesService {
 
     const isCompleted = dto.current_value >= record.challenge.target_value;
 
-    return this.prisma.challengeClient.update({
+    const updatedRecord = await this.prisma.challengeClient.update({
       where: {
         challenge_id_client_id: {
           challenge_id: challengeId,
@@ -1249,5 +1301,9 @@ export class ChallengesService {
           : null,
       },
     });
+
+    await this.evaluateAchievementsForClient(clientId);
+
+    return updatedRecord;
   }
 }

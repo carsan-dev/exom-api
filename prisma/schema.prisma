@@ -466,10 +466,12 @@ model Achievement {
   icon_url       String?
   criteria_type  String
   criteria_value Float
+  rule_config    Json?
   created_at     DateTime @default(now())
 
   userAchievements UserAchievement[]
 
+  @@index([criteria_type])
   @@map("achievements")
 }
 

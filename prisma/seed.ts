@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -585,12 +585,109 @@ async function main() {
 
   // ── Achievements ───────────────────────────────────────────────────────────
   await Promise.all([
-    prisma.achievement.upsert({ where: { id: 'ach-first-workout' }, update: {}, create: { id: 'ach-first-workout', name: 'Primer entrenamiento', description: 'Completaste tu primer entrenamiento', criteria_type: 'trainings_completed', criteria_value: 1 } }),
-    prisma.achievement.upsert({ where: { id: 'ach-week-streak' }, update: {}, create: { id: 'ach-week-streak', name: 'Racha semanal', description: 'Mantuviste una racha de 7 días', criteria_type: 'streak_days', criteria_value: 7 } }),
-    prisma.achievement.upsert({ where: { id: 'ach-month-streak' }, update: {}, create: { id: 'ach-month-streak', name: 'Mes de constancia', description: 'Mantuviste una racha de 30 días', criteria_type: 'streak_days', criteria_value: 30 } }),
-    prisma.achievement.upsert({ where: { id: 'ach-10-workouts' }, update: {}, create: { id: 'ach-10-workouts', name: 'En forma', description: 'Completaste 10 entrenamientos', criteria_type: 'trainings_completed', criteria_value: 10 } }),
-    prisma.achievement.upsert({ where: { id: 'ach-5-streak' }, update: {}, create: { id: 'ach-5-streak', name: 'Constancia inicial', description: 'Mantuviste una racha de 5 días', criteria_type: 'streak_days', criteria_value: 5 } }),
-    prisma.achievement.upsert({ where: { id: 'ach-hiit-warrior' }, update: {}, create: { id: 'ach-hiit-warrior', name: 'Guerrero HIIT', description: 'Completaste 3 sesiones de HIIT', criteria_type: 'hiit_completed', criteria_value: 3 } }),
+    prisma.achievement.upsert({
+      where: { id: 'ach-first-workout' },
+      update: {
+        name: 'Primer entrenamiento',
+        description: 'Completaste tu primer entrenamiento',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 1,
+        rule_config: Prisma.DbNull,
+      },
+      create: {
+        id: 'ach-first-workout',
+        name: 'Primer entrenamiento',
+        description: 'Completaste tu primer entrenamiento',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 1,
+      },
+    }),
+    prisma.achievement.upsert({
+      where: { id: 'ach-week-streak' },
+      update: {
+        name: 'Racha semanal',
+        description: 'Mantuviste una racha de 7 días',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 7,
+        rule_config: Prisma.DbNull,
+      },
+      create: {
+        id: 'ach-week-streak',
+        name: 'Racha semanal',
+        description: 'Mantuviste una racha de 7 días',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 7,
+      },
+    }),
+    prisma.achievement.upsert({
+      where: { id: 'ach-month-streak' },
+      update: {
+        name: 'Mes de constancia',
+        description: 'Mantuviste una racha de 30 días',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 30,
+        rule_config: Prisma.DbNull,
+      },
+      create: {
+        id: 'ach-month-streak',
+        name: 'Mes de constancia',
+        description: 'Mantuviste una racha de 30 días',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 30,
+      },
+    }),
+    prisma.achievement.upsert({
+      where: { id: 'ach-10-workouts' },
+      update: {
+        name: 'En forma',
+        description: 'Completaste 10 entrenamientos',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 10,
+        rule_config: Prisma.DbNull,
+      },
+      create: {
+        id: 'ach-10-workouts',
+        name: 'En forma',
+        description: 'Completaste 10 entrenamientos',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 10,
+      },
+    }),
+    prisma.achievement.upsert({
+      where: { id: 'ach-5-streak' },
+      update: {
+        name: 'Constancia inicial',
+        description: 'Mantuviste una racha de 5 días',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 5,
+        rule_config: Prisma.DbNull,
+      },
+      create: {
+        id: 'ach-5-streak',
+        name: 'Constancia inicial',
+        description: 'Mantuviste una racha de 5 días',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 5,
+      },
+    }),
+    prisma.achievement.upsert({
+      where: { id: 'ach-hiit-warrior' },
+      update: {
+        name: 'Guerrero HIIT',
+        description: 'Completaste 3 sesiones de HIIT',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 3,
+        rule_config: { training_type: 'HIIT' },
+      },
+      create: {
+        id: 'ach-hiit-warrior',
+        name: 'Guerrero HIIT',
+        description: 'Completaste 3 sesiones de HIIT',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 3,
+        rule_config: { training_type: 'HIIT' },
+      },
+    }),
   ]);
 
   console.log('✅ Achievements seeded');

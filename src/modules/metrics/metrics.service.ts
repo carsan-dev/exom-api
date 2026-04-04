@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
+import { AchievementsService } from '../achievements/achievements.service';
 import { CreateBodyMetricDto } from './dto/create-metric.dto';
 import { ChallengesService } from '../challenges/challenges.service';
 
@@ -9,6 +10,7 @@ export class MetricsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
+    private readonly achievementsService: AchievementsService,
   ) {}
 
   private normalizeMetricDate(date?: string) {
@@ -36,6 +38,7 @@ export class MetricsService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return metric;
   }

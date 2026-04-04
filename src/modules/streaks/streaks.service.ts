@@ -1,6 +1,7 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Role } from '@prisma/client';
+import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class StreaksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
+    private readonly achievementsService: AchievementsService,
   ) {}
 
   async getStreak(clientId: string) {
@@ -54,6 +56,7 @@ export class StreaksService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return streak;
   }

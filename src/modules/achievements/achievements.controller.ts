@@ -6,6 +6,7 @@ import { UpdateAchievementDto } from './dto/update-achievement.dto';
 import {
   AchievementFiltersDto,
   AchievementUsersQueryDto,
+  RecomputeAchievementsDto,
   RevokeAchievementDto,
 } from './dto/achievement-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -29,8 +30,10 @@ export class AchievementsController {
   }
 
   @Get('my')
+  @Roles(Role.CLIENT)
   @ApiOperation({ summary: "Get current user's unlocked achievements" })
   @ApiResponse({ status: 200, description: 'Logros desbloqueados del usuario obtenidos correctamente' })
+  @ApiResponse({ status: 403, description: 'Acceso restringido a clientes' })
   findMyAchievements(@CurrentUser() user: AuthenticatedUser) {
     return this.achievementsService.findMyAchievements(user.id);
   }
@@ -49,8 +52,8 @@ export class AchievementsController {
   @ApiOperation({ summary: 'Create a new achievement' })
   @ApiResponse({ status: 201, description: 'Logro creado correctamente' })
   @ApiResponse({ status: 400, description: 'Payload de logro inválido' })
-  create(@Body() dto: CreateAchievementDto) {
-    return this.achievementsService.create(dto);
+  create(@Body() dto: CreateAchievementDto, @CurrentUser() admin: AuthenticatedUser) {
+    return this.achievementsService.create(dto, admin);
   }
 
   @Put(':id')
@@ -59,8 +62,12 @@ export class AchievementsController {
   @ApiResponse({ status: 200, description: 'Logro actualizado correctamente' })
   @ApiResponse({ status: 400, description: 'Payload de logro inválido' })
   @ApiResponse({ status: 404, description: 'Logro no encontrado' })
-  update(@Param('id') id: string, @Body() dto: UpdateAchievementDto) {
-    return this.achievementsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateAchievementDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.achievementsService.update(id, dto, admin);
   }
 
   @Delete(':id')
@@ -80,8 +87,9 @@ export class AchievementsController {
   grantToUser(
     @Param('id') id: string,
     @Body() dto: GrantAchievementDto,
+    @CurrentUser() admin: AuthenticatedUser,
   ) {
-    return this.achievementsService.grantToUser(id, dto);
+    return this.achievementsService.grantToUser(id, dto, admin);
   }
 
   @Delete(':id/revoke')
@@ -92,7 +100,20 @@ export class AchievementsController {
   revokeFromUser(
     @Param('id') id: string,
     @Body() dto: RevokeAchievementDto,
+    @CurrentUser() admin: AuthenticatedUser,
   ) {
-    return this.achievementsService.revokeFromUser(id, dto);
+    return this.achievementsService.revokeFromUser(id, dto, admin);
+  }
+
+  @Post('recompute')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Recompute automatic achievements for visible clients or a selected batch' })
+  @ApiResponse({ status: 200, description: 'Recálculo histórico ejecutado correctamente' })
+  @ApiResponse({ status: 400, description: 'Payload de recálculo inválido' })
+  recompute(
+    @Body() dto: RecomputeAchievementsDto,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    return this.achievementsService.recomputeAchievements(dto, admin);
   }
 }

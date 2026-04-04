@@ -1,4 +1,6 @@
 import { PrismaService } from '../../prisma/prisma.service';
+import { AchievementsService } from '../achievements/achievements.service';
+import { ChallengesService } from '../challenges/challenges.service';
 import { MetricsService } from './metrics.service';
 
 describe('MetricsService', () => {
@@ -7,8 +9,14 @@ describe('MetricsService', () => {
     bodyMetric: {
       create: jest.Mock;
       findMany: jest.Mock;
-      findFirst: jest.Mock;
-    };
+        findFirst: jest.Mock;
+      };
+  };
+  let challengesService: {
+    recalculateAutomaticProgress: jest.Mock;
+  };
+  let achievementsService: {
+    evaluateAutomaticAchievementsForUser: jest.Mock;
   };
 
   beforeEach(() => {
@@ -19,8 +27,18 @@ describe('MetricsService', () => {
         findFirst: jest.fn(),
       },
     };
+    challengesService = {
+      recalculateAutomaticProgress: jest.fn(),
+    };
+    achievementsService = {
+      evaluateAutomaticAchievementsForUser: jest.fn(),
+    };
 
-    service = new MetricsService(prisma as unknown as PrismaService);
+    service = new MetricsService(
+      prisma as unknown as PrismaService,
+      challengesService as unknown as ChallengesService,
+      achievementsService as unknown as AchievementsService,
+    );
   });
 
   it('deduplicates weight history by day keeping the latest value', async () => {
@@ -87,6 +105,12 @@ describe('MetricsService', () => {
         sleep_hours: 7.5,
       },
     });
+    expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
+      'client-1',
+    );
+    expect(
+      achievementsService.evaluateAutomaticAchievementsForUser,
+    ).toHaveBeenCalledWith('client-1');
   });
 
   it('finds the latest metric for a specific date', async () => {
