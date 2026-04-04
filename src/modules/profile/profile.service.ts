@@ -1,27 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UploadsService } from '../uploads/uploads.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class ProfileService {
-  private readonly s3Client: S3Client;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-  ) {
-    this.s3Client = new S3Client({
-      region: 'auto',
-      endpoint: this.config.get<string>('R2_ENDPOINT'),
-      credentials: {
-        accessKeyId: this.config.get<string>('R2_ACCESS_KEY_ID', ''),
-        secretAccessKey: this.config.get<string>('R2_SECRET_ACCESS_KEY', ''),
-      },
-    });
-  }
+    private readonly uploadsService: UploadsService,
+  ) {}
 
   private async buildProfileResponse(userId: string) {
     const [profile, totalTrainings] = await Promise.all([
@@ -94,24 +83,7 @@ export class ProfileService {
   }
 
   async getAvatarUploadUrl(userId: string) {
-    const bucket = this.config.get<string>('R2_BUCKET_NAME', '');
-    const publicUrl = this.config.get<string>('R2_PUBLIC_URL', '');
     const key = `avatars/${userId}/${Date.now()}.jpg`;
-
-    const command = new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ContentType: 'image/jpeg',
-    });
-
-    const upload_url = await getSignedUrl(this.s3Client, command, {
-      expiresIn: 900,
-    });
-
-    return {
-      upload_url,
-      file_url: `${publicUrl}/${key}`,
-      key,
-    };
+    return this.uploadsService.getPresignedUrl(key, 'image/jpeg');
   }
 }
