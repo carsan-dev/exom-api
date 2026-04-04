@@ -14,6 +14,7 @@ import { UsersService } from './users.service';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import { ClientAssignmentResponseDto } from './dto/client-assignment-response.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
+import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -59,22 +60,55 @@ export class UsersController {
     return this.usersService.findAll(query.role, query);
   }
 
+  @Post('users/admins')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Dar de alta un admin' })
+  @ApiResponse({ status: 201, description: 'Admin creado correctamente' })
+  @ApiResponse({ status: 409, description: 'El email ya está registrado' })
+  createAdmin(@Body() dto: CreateAdminDto) {
+    return this.usersService.createAdmin(dto);
+  }
+
   @Post('users')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'Dar de alta un cliente' })
   @ApiResponse({ status: 201, description: 'Cliente creado correctamente' })
   @ApiResponse({ status: 409, description: 'El email ya está registrado' })
   createClient(@CurrentUser() admin: AuthenticatedUser, @Body() dto: CreateClientDto) {
-    return this.usersService.createClient(admin.id, dto);
+    return this.usersService.createClient(admin.id, admin.role, dto);
+  }
+
+  @Put('users/:id')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Actualizar datos básicos de un usuario' })
+  @ApiResponse({ status: 200, description: 'Usuario actualizado correctamente' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  @ApiResponse({ status: 409, description: 'El email ya está registrado' })
+  updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+    return this.usersService.updateUser(id, dto);
+  }
+
+  @Put('users/:id/status')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Activar o desactivar una cuenta' })
+  @ApiResponse({ status: 200, description: 'Estado actualizado correctamente' })
+  @ApiResponse({ status: 403, description: 'No puedes desactivar tu propia cuenta' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  updateUserStatus(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserStatusDto,
+  ) {
+    return this.usersService.updateUserStatus(admin.id, id, dto);
   }
 
   @Put('users/:id/unlock')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
-  @ApiOperation({ summary: 'Desbloquear cuenta de cliente' })
+  @ApiOperation({ summary: 'Desbloquear cuenta de usuario' })
   @ApiResponse({ status: 200, description: 'Cuenta desbloqueada correctamente' })
-  @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
-  unlockUser(@Param('id') id: string) {
-    return this.usersService.unlockUser(id);
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  unlockUser(@CurrentUser() admin: AuthenticatedUser, @Param('id') id: string) {
+    return this.usersService.unlockUser(admin.id, admin.role, id);
   }
 
   @Put('users/:id/role')
@@ -116,7 +150,7 @@ export class UsersController {
     description: 'Asignaciones del cliente actualizadas correctamente',
     type: ClientAssignmentResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'El payload es invalido o deja al cliente sin admins' })
+  @ApiResponse({ status: 400, description: 'El payload es inválido' })
   @ApiResponse({ status: 403, description: 'Solo SUPER_ADMIN puede actualizar asignaciones' })
   @ApiResponse({ status: 404, description: 'Cliente o admin no encontrado' })
   updateClientAssignments(

@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Injectable,
   NotFoundException,
   ConflictException,
@@ -10,6 +9,7 @@ import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
+import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { Prisma, Role } from '@prisma/client';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
@@ -27,6 +27,23 @@ type ClientAssignmentRecord = {
       avatar_url: string | null;
     } | null;
   };
+};
+
+type ManagedUserRecord = {
+  id: string;
+  email: string;
+  role: Role;
+  is_active: boolean;
+  is_locked: boolean;
+  created_at: Date;
+  login_attempts?: number;
+  locked_at?: Date | null;
+  firebase_uid?: string;
+  profile: {
+    first_name: string;
+    last_name: string;
+    avatar_url: string | null;
+  } | null;
 };
 
 @Injectable()
@@ -61,35 +78,64 @@ export class UsersService {
     return paginate(data, total, pagination);
   }
 
-  async createClient(adminId: string, dto: CreateClientDto) {
-    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (existing) throw new ConflictException('El email ya está registrado');
+  async createAdmin(dto: CreateAdminDto) {
+    const email = this.normalizeEmail(dto.email);
+    const firstName = dto.first_name.trim();
+    const lastName = dto.last_name.trim();
 
-    let firebaseUser: admin.auth.UserRecord;
-    try {
-      firebaseUser = await admin.auth().createUser({
-        email: dto.email,
-        password: dto.password,
-        displayName: `${dto.first_name} ${dto.last_name}`,
-      });
-    } catch (err: any) {
-      if (err.code === 'auth/email-already-exists') {
-        throw new ConflictException('El email ya está registrado en Firebase');
-      }
-      throw err;
-    }
+    await this.assertEmailAvailable(email);
+
+    const firebaseUser = await this.createFirebaseEmailUser(
+      email,
+      dto.password,
+      firstName,
+      lastName,
+    );
+
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        firebase_uid: firebaseUser.uid,
+        role: Role.ADMIN,
+        auth_provider: 'email',
+        profile: {
+          create: {
+            first_name: firstName,
+            last_name: lastName,
+          },
+        },
+      },
+      include: { profile: true },
+    });
+
+    return this.serializeUserSummary(user);
+  }
+
+  async createClient(adminId: string, currentUserRole: string, dto: CreateClientDto) {
+    const email = this.normalizeEmail(dto.email);
+    const firstName = dto.first_name.trim();
+    const lastName = dto.last_name.trim();
+
+    await this.assertEmailAvailable(email);
+
+    const firebaseUser = await this.createFirebaseEmailUser(
+      email,
+      dto.password,
+      firstName,
+      lastName,
+    );
 
     const user = await this.prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
-          email: dto.email,
+          email,
           firebase_uid: firebaseUser.uid,
           role: Role.CLIENT,
           auth_provider: 'email',
           profile: {
             create: {
-              first_name: dto.first_name,
-              last_name: dto.last_name,
+              first_name: firstName,
+              last_name: lastName,
               level: dto.level ?? 'PRINCIPIANTE',
               main_goal: dto.main_goal ?? null,
             },
@@ -98,34 +144,95 @@ export class UsersService {
         include: { profile: true },
       });
 
-      await tx.adminClientAssignment.create({
-        data: { admin_id: adminId, client_id: newUser.id },
-      });
+      if (currentUserRole === Role.ADMIN) {
+        await tx.adminClientAssignment.create({
+          data: { admin_id: adminId, client_id: newUser.id },
+        });
 
-      await this.challengesService.syncGlobalChallengesForCreatorClient(
-        adminId,
-        newUser.id,
-        tx,
-      );
+        await this.challengesService.syncGlobalChallengesForCreatorClient(
+          adminId,
+          newUser.id,
+          tx,
+        );
+      }
 
       return newUser;
     });
 
+    return this.serializeUserSummary(user);
+  }
+
+  async updateUser(id: string, dto: UpdateUserDto) {
+    const user = await this.getManageableUserOrFail(id);
+    const email = this.normalizeEmail(dto.email);
+    const firstName = dto.first_name.trim();
+    const lastName = dto.last_name.trim();
+
+    await this.assertEmailAvailable(email, user.id);
+    await this.updateFirebaseEmailUser(user.firebase_uid, email, firstName, lastName);
+
+    const updatedUser = await this.prisma.user.update({
+      where: { id },
+      data: {
+        email,
+        profile: {
+          upsert: {
+            create: {
+              first_name: firstName,
+              last_name: lastName,
+            },
+            update: {
+              first_name: firstName,
+              last_name: lastName,
+            },
+          },
+        },
+      },
+      include: { profile: true },
+    });
+
+    return this.serializeUserSummary(updatedUser);
+  }
+
+  async updateUserStatus(currentUserId: string, id: string, dto: UpdateUserStatusDto) {
+    const user = await this.getManageableUserOrFail(id);
+
+    if (!dto.is_active && user.id === currentUserId) {
+      throw new ForbiddenException('No puedes desactivar tu propia cuenta');
+    }
+
+    await admin.auth().updateUser(user.firebase_uid, { disabled: !dto.is_active });
+
+    if (!dto.is_active) {
+      await admin.auth().revokeRefreshTokens(user.firebase_uid);
+    }
+
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        is_active: dto.is_active,
+        is_locked: dto.is_active ? user.is_locked : false,
+        login_attempts: dto.is_active ? user.login_attempts : 0,
+        locked_at: dto.is_active ? user.locked_at ?? null : null,
+      },
+    });
+
     return {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      is_active: user.is_active,
-      is_locked: user.is_locked,
-      created_at: user.created_at,
-      profile: user.profile,
+      message: dto.is_active
+        ? 'Cuenta reactivada exitosamente'
+        : 'Cuenta desactivada exitosamente',
     };
   }
 
-  async unlockUser(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user || user.role !== Role.CLIENT) {
-      throw new NotFoundException('Cliente no encontrado');
+  async unlockUser(currentUserId: string, currentUserRole: string, id: string) {
+    const user = await this.getManageableUserOrFail(id);
+
+    if (currentUserRole === Role.ADMIN) {
+      if (user.role !== Role.CLIENT) {
+        throw new ForbiddenException('Solo puedes desbloquear clientes asignados a tu cuenta');
+      }
+
+      await this.assertClientAccess(currentUserId, currentUserRole, id);
     }
 
     await this.prisma.user.update({
@@ -140,7 +247,17 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
 
-    await this.prisma.user.update({ where: { id }, data: { role: dto.role } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id }, data: { role: dto.role } });
+
+      if (user.role === Role.ADMIN && dto.role !== Role.ADMIN) {
+        await tx.adminClientAssignment.updateMany({
+          where: { admin_id: id, is_active: true },
+          data: { is_active: false },
+        });
+      }
+    });
+
     return { message: 'Rol actualizado exitosamente' };
   }
 
@@ -157,6 +274,18 @@ export class UsersService {
       is_locked: true,
       created_at: true,
       profile: true,
+      clientOf: {
+        where: {
+          is_active: true,
+          admin: {
+            is: {
+              role: Role.ADMIN,
+              is_active: true,
+            },
+          },
+        },
+        select: { id: true },
+      },
     } as const;
 
     if (currentUserRole === Role.SUPER_ADMIN) {
@@ -173,7 +302,14 @@ export class UsersService {
         this.prisma.user.count({ where }),
       ]);
 
-      return paginate(clients, total, pagination);
+      return paginate(
+        clients.map(({ clientOf, ...client }) => ({
+          ...client,
+          active_admins_count: clientOf.length,
+        })),
+        total,
+        pagination,
+      );
     }
 
     const where = {
@@ -202,7 +338,14 @@ export class UsersService {
     ]);
 
     return paginate(
-      assignments.map((a) => a.client),
+      assignments.map(({ client }) => {
+        const { clientOf, ...clientData } = client;
+
+        return {
+          ...clientData,
+          active_admins_count: clientOf.length,
+        };
+      }),
       total,
       pagination,
     );
@@ -242,7 +385,16 @@ export class UsersService {
     await this.assertClientExists(clientId);
 
     const assignments = await this.prisma.adminClientAssignment.findMany({
-      where: { client_id: clientId, is_active: true },
+      where: {
+        client_id: clientId,
+        is_active: true,
+        admin: {
+          is: {
+            role: Role.ADMIN,
+            is_active: true,
+          },
+        },
+      },
       orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
       select: {
         client_id: true,
@@ -276,10 +428,6 @@ export class UsersService {
     await this.assertClientExists(clientId);
 
     const desiredAdminIds = [...new Set(dto.admin_ids)];
-    if (desiredAdminIds.length === 0) {
-      throw new BadRequestException('El cliente debe tener al menos un admin activo');
-    }
-
     await this.assertAdminUsersExist(desiredAdminIds);
 
     return this.prisma.$transaction(async (tx) => {
@@ -307,7 +455,16 @@ export class UsersService {
       );
 
       const assignments = await tx.adminClientAssignment.findMany({
-        where: { client_id: clientId, is_active: true },
+        where: {
+          client_id: clientId,
+          is_active: true,
+          admin: {
+            is: {
+              role: Role.ADMIN,
+              is_active: true,
+            },
+          },
+        },
         orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
         select: {
           client_id: true,
@@ -327,10 +484,6 @@ export class UsersService {
           },
         },
       });
-
-      if (assignments.length === 0) {
-        throw new BadRequestException('El cliente debe tener al menos un admin activo');
-      }
 
       return this.serializeClientAssignments(clientId, assignments);
     });
@@ -379,19 +532,123 @@ export class UsersService {
   }
 
   private async assertAdminUsersExist(adminIds: string[]) {
+    if (adminIds.length === 0) {
+      return [];
+    }
+
     const admins = await this.prisma.user.findMany({
       where: {
         id: { in: adminIds },
         role: Role.ADMIN,
+        is_active: true,
       },
       select: { id: true },
     });
 
     if (admins.length !== adminIds.length) {
-      throw new NotFoundException('Uno o más administradores no existen');
+      throw new NotFoundException('Uno o más administradores activos no existen');
     }
 
     return admins;
+  }
+
+  private async getManageableUserOrFail(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        profile: {
+          select: {
+            first_name: true,
+            last_name: true,
+            avatar_url: true,
+          },
+        },
+      },
+    });
+
+    if (!user || user.role === Role.SUPER_ADMIN) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    return user;
+  }
+
+  private async assertEmailAvailable(email: string, ignoredUserId?: string) {
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: email,
+          mode: 'insensitive',
+        },
+        ...(ignoredUserId ? { id: { not: ignoredUserId } } : {}),
+      },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException('El email ya está registrado');
+    }
+  }
+
+  private async createFirebaseEmailUser(
+    email: string,
+    password: string,
+    firstName: string,
+    lastName: string,
+  ) {
+    try {
+      return await admin.auth().createUser({
+        email,
+        password,
+        displayName: this.buildDisplayName(firstName, lastName),
+      });
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-exists') {
+        throw new ConflictException('El email ya está registrado en Firebase');
+      }
+
+      throw err;
+    }
+  }
+
+  private async updateFirebaseEmailUser(
+    firebaseUid: string,
+    email: string,
+    firstName: string,
+    lastName: string,
+  ) {
+    try {
+      await admin.auth().updateUser(firebaseUid, {
+        email,
+        displayName: this.buildDisplayName(firstName, lastName),
+      });
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-exists') {
+        throw new ConflictException('El email ya está registrado en Firebase');
+      }
+
+      throw err;
+    }
+  }
+
+  private serializeUserSummary(user: ManagedUserRecord) {
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      is_active: user.is_active,
+      is_locked: user.is_locked,
+      created_at: user.created_at,
+      profile: user.profile,
+    };
+  }
+
+  private buildDisplayName(firstName: string, lastName: string) {
+    return `${firstName} ${lastName}`.trim();
+  }
+
+  private normalizeEmail(email: string) {
+    return email.trim().toLowerCase();
   }
 
   private serializeClientAssignments(clientId: string, assignments: ClientAssignmentRecord[]) {
