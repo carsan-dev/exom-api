@@ -1,6 +1,8 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+
+type TransactionClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import {
@@ -155,29 +157,33 @@ export class ProgressService {
       ...(dto.weight_used !== undefined && { weight_used: dto.weight_used }),
     });
 
-    const progress = await this.prisma.dayProgress.upsert({
-      where: { client_id_date: { client_id: clientId, date } },
-      create: {
-        client_id: clientId,
-        date,
-        exercises_completed: this.serializeExercisesCompleted(filtered),
-        meals_completed: existing?.meals_completed ?? [],
-        notes: existing?.notes ?? null,
-        training_completed: this.getTrainingCompletedStatus(
-          assignment.trainingExerciseIds,
-          filtered,
-        ),
-      },
-      update: {
-        exercises_completed: this.serializeExercisesCompleted(filtered),
-        training_completed: this.getTrainingCompletedStatus(
-          assignment.trainingExerciseIds,
-          filtered,
-        ),
-      },
+    const progress = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.dayProgress.upsert({
+        where: { client_id_date: { client_id: clientId, date } },
+        create: {
+          client_id: clientId,
+          date,
+          exercises_completed: this.serializeExercisesCompleted(filtered),
+          meals_completed: existing?.meals_completed ?? [],
+          notes: existing?.notes ?? null,
+          training_completed: this.getTrainingCompletedStatus(
+            assignment.trainingExerciseIds,
+            filtered,
+          ),
+        },
+        update: {
+          exercises_completed: this.serializeExercisesCompleted(filtered),
+          training_completed: this.getTrainingCompletedStatus(
+            assignment.trainingExerciseIds,
+            filtered,
+          ),
+        },
+      });
+
+      await this.updateStreak(clientId, date, tx);
+      return result;
     });
 
-    await this.updateStreak(clientId, date);
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
@@ -213,26 +219,30 @@ export class ProgressService {
         },
     );
 
-    const progress = await this.prisma.dayProgress.upsert({
-      where: { client_id_date: { client_id: clientId, date } },
-      create: {
-        client_id: clientId,
-        date,
-        exercises_completed:
-          this.serializeExercisesCompleted(completedExercises),
-        meals_completed: existing?.meals_completed ?? [],
-        notes: dto.notes?.trim() || existing?.notes || null,
-        training_completed: true,
-      },
-      update: {
-        exercises_completed:
-          this.serializeExercisesCompleted(completedExercises),
-        notes: dto.notes?.trim() || existing?.notes || null,
-        training_completed: true,
-      },
+    const progress = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.dayProgress.upsert({
+        where: { client_id_date: { client_id: clientId, date } },
+        create: {
+          client_id: clientId,
+          date,
+          exercises_completed:
+            this.serializeExercisesCompleted(completedExercises),
+          meals_completed: existing?.meals_completed ?? [],
+          notes: dto.notes?.trim() || existing?.notes || null,
+          training_completed: true,
+        },
+        update: {
+          exercises_completed:
+            this.serializeExercisesCompleted(completedExercises),
+          notes: dto.notes?.trim() || existing?.notes || null,
+          training_completed: true,
+        },
+      });
+
+      await this.updateStreak(clientId, date, tx);
+      return result;
     });
 
-    await this.updateStreak(clientId, date);
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
@@ -262,22 +272,26 @@ export class ProgressService {
       ? currentMeals
       : [...currentMeals, dto.meal_id];
 
-    const progress = await this.prisma.dayProgress.upsert({
-      where: { client_id_date: { client_id: clientId, date } },
-      create: {
-        client_id: clientId,
-        date,
-        exercises_completed: existing?.exercises_completed ?? [],
-        meals_completed: updatedMeals,
-        notes: existing?.notes ?? null,
-        training_completed: existing?.training_completed ?? false,
-      },
-      update: {
-        meals_completed: updatedMeals,
-      },
+    const progress = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.dayProgress.upsert({
+        where: { client_id_date: { client_id: clientId, date } },
+        create: {
+          client_id: clientId,
+          date,
+          exercises_completed: existing?.exercises_completed ?? [],
+          meals_completed: updatedMeals,
+          notes: existing?.notes ?? null,
+          training_completed: existing?.training_completed ?? false,
+        },
+        update: {
+          meals_completed: updatedMeals,
+        },
+      });
+
+      await this.updateStreak(clientId, date, tx);
+      return result;
     });
 
-    await this.updateStreak(clientId, date);
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
@@ -361,18 +375,19 @@ export class ProgressService {
     return progress;
   }
 
-  private async updateStreak(clientId: string, date: Date) {
+  private async updateStreak(clientId: string, date: Date, tx?: TransactionClient) {
+    const db = tx ?? this.prisma;
     const dateOnly = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
     const yesterday = new Date(dateOnly);
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
-    const streak = await this.prisma.streak.findUnique({
+    const streak = await db.streak.findUnique({
       where: { client_id: clientId },
     });
 
     if (!streak) {
-      await this.prisma.streak.create({
+      await db.streak.create({
         data: {
           client_id: clientId,
           current_days: 1,
@@ -407,7 +422,7 @@ export class ProgressService {
 
     const newLongest = Math.max(newCurrentDays, streak.longest_days);
 
-    await this.prisma.streak.update({
+    await db.streak.update({
       where: { client_id: clientId },
       data: {
         current_days: newCurrentDays,
