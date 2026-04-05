@@ -12,6 +12,7 @@ import {
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
 
 @ApiTags('Achievements')
@@ -48,18 +49,22 @@ export class AchievementsController {
   }
 
   @Post()
+  @RequiresApproval('achievement.create', 'achievement')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Create a new achievement' })
   @ApiResponse({ status: 201, description: 'Logro creado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 400, description: 'Payload de logro inválido' })
   create(@Body() dto: CreateAchievementDto, @CurrentUser() admin: AuthenticatedUser) {
     return this.achievementsService.create(dto, admin);
   }
 
   @Put(':id')
+  @RequiresApproval('achievement.update', 'achievement')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update an achievement' })
   @ApiResponse({ status: 200, description: 'Logro actualizado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 400, description: 'Payload de logro inválido' })
   @ApiResponse({ status: 404, description: 'Logro no encontrado' })
   update(
@@ -80,9 +85,11 @@ export class AchievementsController {
   }
 
   @Post(':id/grant')
+  @RequiresApproval('achievement.grant', 'achievement')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Grant an achievement to a user' })
   @ApiResponse({ status: 201, description: 'Logro otorgado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 404, description: 'Logro no encontrado' })
   grantToUser(
     @Param('id') id: string,
@@ -93,9 +100,11 @@ export class AchievementsController {
   }
 
   @Delete(':id/revoke')
+  @RequiresApproval('achievement.revoke', 'achievement')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Revoke an achievement from a user' })
   @ApiResponse({ status: 200, description: 'Logro revocado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 404, description: 'Logro o asignación no encontrada' })
   revokeFromUser(
     @Param('id') id: string,
@@ -106,9 +115,11 @@ export class AchievementsController {
   }
 
   @Post('recompute')
+  @RequiresApproval('achievement.recompute', 'achievement')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Recompute automatic achievements for visible clients or a selected batch' })
   @ApiResponse({ status: 200, description: 'Recálculo histórico ejecutado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 400, description: 'Payload de recálculo inválido' })
   recompute(
     @Body() dto: RecomputeAchievementsDto,

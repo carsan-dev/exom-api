@@ -38,6 +38,10 @@ export class MealsService {
     return this.create(dto.diet_id, dto);
   }
 
+  async createFromApproval(dto: CreateMealBodyDto) {
+    return this.create(dto.diet_id, dto);
+  }
+
   async create(dietId: string, dto: CreateMealDto) {
     return this.prisma.meal.create({
       data: {
@@ -69,6 +73,10 @@ export class MealsService {
     return this.update(id, dto);
   }
 
+  async updateFromApproval(id: string, dto: UpdateMealDto) {
+    return this.update(id, dto);
+  }
+
   async update(id: string, dto: Partial<CreateMealDto>) {
     await this.findOne(id);
 
@@ -95,6 +103,10 @@ export class MealsService {
     const meal = await this.findOne(id);
     await this.validateDietOwnership(meal.diet_id, adminId);
     await this.prisma.meal.delete({ where: { id } });
+  }
+
+  async removeFromApproval(id: string) {
+    await this.remove(id);
   }
 
   async remove(id: string) {

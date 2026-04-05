@@ -4,6 +4,7 @@ import { NotificationsService } from './notifications.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { SendNotificationDto, SendToAllClientsDto } from './dto/send-notification.dto';
@@ -15,9 +16,11 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Post('send')
+  @RequiresApproval('notification.send', 'notification')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Send a notification to one or more users' })
   @ApiResponse({ status: 201, description: 'Notificacion enviada y persistida correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   send(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: SendNotificationDto,

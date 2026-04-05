@@ -159,19 +159,24 @@ export class NotificationsService {
     });
   }
 
-  private async deliverToRecipient(
+  private async deliverToUser(
     senderId: string,
     userId: string,
     title: string,
     body: string,
     data?: Record<string, string>,
+    options?: { requireClientRole?: boolean },
   ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, fcm_token: true, role: true },
     });
 
-    if (!user || user.role !== Role.CLIENT) {
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if ((options?.requireClientRole ?? true) && user.role !== Role.CLIENT) {
       throw new NotFoundException('User not found');
     }
 
@@ -248,9 +253,12 @@ export class NotificationsService {
     title: string,
     body: string,
     data?: Record<string, string>,
+    options?: { requireClientRole?: boolean },
   ) {
     const notifications = await Promise.all(
-      userIds.map((userId) => this.deliverToRecipient(senderId, userId, title, body, data)),
+      userIds.map((userId) =>
+        this.deliverToUser(senderId, userId, title, body, data, options),
+      ),
     );
 
     const sent = notifications.filter(
@@ -274,7 +282,9 @@ export class NotificationsService {
   ) {
     const [recipientId] = await this.assertAccessibleRecipientIds(senderId, [userId]);
 
-    return this.deliverToRecipient(senderId, recipientId, title, body, data);
+    return this.deliverToUser(senderId, recipientId, title, body, data, {
+      requireClientRole: true,
+    });
   }
 
   async sendToMultiple(
@@ -286,7 +296,9 @@ export class NotificationsService {
   ) {
     const recipientIds = await this.assertAccessibleRecipientIds(senderId, userIds);
 
-    return this.sendToRecipients(senderId, recipientIds, title, body, data);
+    return this.sendToRecipients(senderId, recipientIds, title, body, data, {
+      requireClientRole: true,
+    });
   }
 
   async sendToAllClients(
@@ -301,7 +313,27 @@ export class NotificationsService {
       throw new BadRequestException('No hay clientes asignados para notificar');
     }
 
-    return this.sendToRecipients(senderId, recipientIds, title, body, data);
+    return this.sendToRecipients(senderId, recipientIds, title, body, data, {
+      requireClientRole: true,
+    });
+  }
+
+  async sendInternalNotifications(
+    senderId: string,
+    userIds: string[],
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+  ) {
+    const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+
+    if (uniqueUserIds.length === 0) {
+      return { success: true, sent: 0, failed: 0 };
+    }
+
+    return this.sendToRecipients(senderId, uniqueUserIds, title, body, data, {
+      requireClientRole: false,
+    });
   }
 
   async getHistory(senderId: string, query: NotificationQueryDto) {

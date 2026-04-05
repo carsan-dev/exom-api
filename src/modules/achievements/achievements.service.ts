@@ -112,6 +112,7 @@ export class AchievementsService {
 
   private buildAchievementCreateData(
     dto: CreateAchievementDto,
+    createdBy?: string,
   ): Prisma.AchievementCreateInput {
     const normalizedRuleConfig = this.validateRuleConfig(
       dto.criteria_type,
@@ -124,6 +125,7 @@ export class AchievementsService {
       icon_url: dto.icon_url,
       criteria_type: dto.criteria_type,
       criteria_value: dto.criteria_value,
+      created_by: createdBy ?? null,
       ...(normalizedRuleConfig
         ? { rule_config: normalizedRuleConfig as Prisma.InputJsonValue }
         : {}),
@@ -659,10 +661,10 @@ export class AchievementsService {
 
   async create(
     dto: CreateAchievementDto,
-    _admin: Pick<AuthenticatedUser, 'id' | 'role'>,
+    admin: Pick<AuthenticatedUser, 'id' | 'role'>,
   ) {
     const achievement = await this.prisma.achievement.create({
-      data: this.buildAchievementCreateData(dto),
+      data: this.buildAchievementCreateData(dto, admin.id),
     });
 
     if (achievement.criteria_type !== 'CUSTOM') {

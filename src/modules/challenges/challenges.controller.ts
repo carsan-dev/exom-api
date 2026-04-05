@@ -28,6 +28,7 @@ import {
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
 
 @ApiTags('Challenges')
@@ -71,9 +72,11 @@ export class ChallengesController {
   }
 
   @Post()
+  @RequiresApproval('challenge.create', 'challenge')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Create a new challenge' })
   @ApiResponse({ status: 201, description: 'Reto creado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 400, description: 'Payload de reto inválido' })
   create(
     @CurrentUser() user: AuthenticatedUser,
@@ -83,9 +86,11 @@ export class ChallengesController {
   }
 
   @Put(':id')
+  @RequiresApproval('challenge.update', 'challenge')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update challenge metadata and scope' })
   @ApiResponse({ status: 200, description: 'Reto actualizado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 400, description: 'Payload de reto inválido' })
   @ApiResponse({ status: 403, description: 'No tienes permisos sobre este reto' })
   @ApiResponse({ status: 404, description: 'Reto no encontrado' })
@@ -98,9 +103,11 @@ export class ChallengesController {
   }
 
   @Delete(':id')
+  @RequiresApproval('challenge.delete', 'challenge')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Delete a challenge and its assignments' })
   @ApiResponse({ status: 200, description: 'Reto eliminado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 403, description: 'No tienes permisos sobre este reto' })
   @ApiResponse({ status: 404, description: 'Reto no encontrado' })
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
@@ -108,9 +115,11 @@ export class ChallengesController {
   }
 
   @Post(':id/assign')
+  @RequiresApproval('challenge.assign', 'challenge')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Assign a challenge to specific or visible clients' })
   @ApiResponse({ status: 200, description: 'Reto asignado correctamente' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiResponse({ status: 400, description: 'Payload de asignación inválido' })
   @ApiResponse({ status: 403, description: 'No tienes permisos sobre este reto o cliente' })
   @ApiResponse({ status: 404, description: 'Reto o cliente no encontrado' })

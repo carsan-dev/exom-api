@@ -20,6 +20,7 @@ import {
   ApiNotFoundResponse,
   ApiOperation,
   ApiOkResponse,
+  ApiResponse,
 } from '@nestjs/swagger';
 import { DietsService } from './diets.service';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
@@ -28,6 +29,7 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
 
 @ApiTags('Diets')
@@ -82,23 +84,34 @@ export class DietsController {
   }
 
   @Put(':id')
+  @RequiresApproval('diet.update', 'diet')
   @ApiOperation({ summary: 'Update a complete diet from the admin catalog' })
   @ApiOkResponse({ description: 'Diet updated successfully' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiBadRequestResponse({ description: 'Invalid diet payload' })
   @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDietDto) {
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateDietDto,
+    @CurrentUser() _user: AuthenticatedUser,
+  ) {
     return this.dietsService.update(id, dto);
   }
 
   @Delete(':id')
+  @RequiresApproval('diet.delete', 'diet')
   @ApiOperation({ summary: 'Soft-delete a diet from the admin catalog' })
   @ApiNoContentResponse({ description: 'Diet deleted successfully' })
+  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
   @ApiBadRequestResponse({ description: 'Invalid diet identifier' })
   @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('id', ParseUUIDPipe) id: string) {
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() _user: AuthenticatedUser,
+  ) {
     return this.dietsService.remove(id);
   }
 }

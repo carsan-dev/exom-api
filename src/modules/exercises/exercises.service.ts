@@ -33,7 +33,7 @@ export class ExercisesService {
     return exercise;
   }
 
-  async create(dto: CreateExerciseDto) {
+  async create(dto: CreateExerciseDto, userId: string) {
     return this.prisma.exercise.create({
       data: {
         name: dto.name,
@@ -46,6 +46,7 @@ export class ExercisesService {
         technique_text: dto.technique_text ?? null,
         common_errors_text: dto.common_errors_text ?? null,
         explanation_text: dto.explanation_text ?? null,
+        created_by: userId,
       },
     });
   }

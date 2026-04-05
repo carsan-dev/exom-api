@@ -69,7 +69,7 @@ export class IngredientsService {
     return ingredient;
   }
 
-  async create(dto: CreateIngredientDto) {
+  async create(dto: CreateIngredientDto, userId: string) {
     return this.prisma.ingredient.create({
       data: {
         name: dto.name,
@@ -78,6 +78,7 @@ export class IngredientsService {
         protein_per_100g: dto.protein_per_100g,
         carbs_per_100g: dto.carbs_per_100g,
         fat_per_100g: dto.fat_per_100g,
+        created_by: userId,
       },
     });
   }
