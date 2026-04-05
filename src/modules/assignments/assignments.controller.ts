@@ -97,7 +97,7 @@ export class AssignmentsController {
   @ApiBadRequestResponse({ description: 'Invalid month query parameters' })
   @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
   @ApiNotFoundResponse({ description: 'Client not found' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.CLIENT)
   getMonth(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: GetMonthAssignmentsQueryDto,

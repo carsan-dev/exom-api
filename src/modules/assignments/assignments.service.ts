@@ -454,12 +454,8 @@ export class AssignmentsService {
         const targetDate = targetWeek.dates[index];
 
         if (!source) {
-          return this.prisma.planAssignment.deleteMany({
-            where: {
-              client_id: dto.client_id,
-              date: targetDate,
-            },
-          });
+          // Skip days without source assignment — preserve existing target assignments
+          return this.prisma.$queryRaw`SELECT 1`;
         }
 
         return this.prisma.planAssignment.upsert({
