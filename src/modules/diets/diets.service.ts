@@ -36,8 +36,8 @@ export class DietsService {
   }
 
   async findToday(clientId: string, date?: Date) {
-    const target = date ?? new Date();
-    target.setHours(0, 0, 0, 0);
+    const now = date ?? new Date();
+    const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },

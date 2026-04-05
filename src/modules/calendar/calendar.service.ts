@@ -19,8 +19,8 @@ export class CalendarService {
     year: number,
     month: number,
   ): Promise<CalendarDay[]> {
-    const firstDay = new Date(year, month - 1, 1);
-    const lastDay = new Date(year, month, 0);
+    const firstDay = new Date(Date.UTC(year, month - 1, 1));
+    const lastDay = new Date(Date.UTC(year, month, 0));
 
     const [assignments, progresses] = await Promise.all([
       this.prisma.planAssignment.findMany({
@@ -53,7 +53,7 @@ export class CalendarService {
     );
 
     const days: CalendarDay[] = [];
-    const daysInMonth = lastDay.getDate();
+    const daysInMonth = lastDay.getUTCDate();
 
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -78,10 +78,10 @@ export class CalendarService {
   }
 
   async getWeekSummary(clientId: string, weekStart: string) {
-    const start = new Date(weekStart);
-    start.setHours(0, 0, 0, 0);
+    const [y, m, d] = weekStart.split('-').map(Number);
+    const start = new Date(Date.UTC(y, m - 1, d));
     const end = new Date(start);
-    end.setDate(end.getDate() + 6);
+    end.setUTCDate(end.getUTCDate() + 6);
 
     const [assignments, progresses] = await Promise.all([
       this.prisma.planAssignment.findMany({

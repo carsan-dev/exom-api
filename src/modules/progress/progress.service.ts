@@ -45,8 +45,7 @@ export class ProgressService {
 
   private parseDate(dateStr: string): Date {
     const d = new Date(dateStr);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }
 
   private async getAssignmentContext(
@@ -363,11 +362,10 @@ export class ProgressService {
   }
 
   private async updateStreak(clientId: string, date: Date) {
-    const dateOnly = new Date(date);
-    dateOnly.setHours(0, 0, 0, 0);
+    const dateOnly = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
     const yesterday = new Date(dateOnly);
-    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 
     const streak = await this.prisma.streak.findUnique({
       where: { client_id: clientId },
@@ -390,7 +388,7 @@ export class ProgressService {
       : null;
 
     if (lastActive) {
-      lastActive.setHours(0, 0, 0, 0);
+      lastActive.setUTCHours(0, 0, 0, 0);
     }
 
     const todayStr = dateOnly.toISOString().split('T')[0];
