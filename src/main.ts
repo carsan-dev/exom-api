@@ -6,6 +6,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
+import { ApprovalInterceptor } from './common/interceptors/approval.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { initFirebase } from './config/firebase.config';
 
@@ -39,7 +40,10 @@ async function bootstrap() {
 
   // Global response transform interceptor
   const reflector = app.get(Reflector);
-  app.useGlobalInterceptors(new TransformInterceptor());
+  app.useGlobalInterceptors(
+    new TransformInterceptor(),
+    app.get(ApprovalInterceptor),
+  );
 
   // Swagger
   if (process.env.NODE_ENV !== 'production') {

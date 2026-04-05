@@ -80,6 +80,13 @@ enum NotificationStatus {
   FAILED
 }
 
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FAILED
+}
+
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
@@ -108,6 +115,8 @@ model User {
   feedbackMedia    FeedbackMedia[]
   sentNotifications     Notification[] @relation("SentNotifications")
   receivedNotifications Notification[] @relation("ReceivedNotifications")
+  approvalRequestsMade     ApprovalRequest[] @relation("ApprovalRequester")
+  approvalRequestsReviewed ApprovalRequest[] @relation("ApprovalReviewer")
 
   @@map("users")
 }
@@ -170,6 +179,31 @@ model Notification {
   @@map("notifications")
 }
 
+model ApprovalRequest {
+  id               String         @id @default(uuid())
+  requester_id     String
+  reviewer_id      String?
+  action_type      String
+  resource_type    String
+  resource_id      String?
+  payload          Json
+  request_reason   String?
+  status           ApprovalStatus @default(PENDING)
+  rejection_reason String?
+  failure_reason   String?
+  resolved_at      DateTime?
+  created_at       DateTime       @default(now())
+  updated_at       DateTime       @updatedAt
+
+  requester User  @relation("ApprovalRequester", fields: [requester_id], references: [id], onDelete: Cascade)
+  reviewer  User? @relation("ApprovalReviewer", fields: [reviewer_id], references: [id], onDelete: SetNull)
+
+  @@index([requester_id, status, created_at])
+  @@index([status, created_at])
+  @@index([resource_type, resource_id, status])
+  @@map("approval_requests")
+}
+
 // ─── Training & Exercise ──────────────────────────────────────────────────────
 
 model Training {
@@ -208,6 +242,7 @@ model Exercise {
   common_errors_text String?
   explanation_text   String?
   is_active          Boolean  @default(true)
+  created_by         String?
   created_at         DateTime @default(now())
   updated_at         DateTime @updatedAt
 
@@ -283,6 +318,7 @@ model Ingredient {
   carbs_per_100g    Float
   fat_per_100g      Float
   is_active         Boolean  @default(true)
+  created_by        String?
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
 
@@ -495,6 +531,7 @@ model Achievement {
   criteria_type  String
   criteria_value Float
   rule_config    Json?
+  created_by     String?
   created_at     DateTime @default(now())
 
   userAchievements UserAchievement[]

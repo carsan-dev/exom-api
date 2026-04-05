@@ -26,6 +26,7 @@ import { FeedbackModule } from './modules/feedback/feedback.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { ApprovalRequestsModule } from './modules/approval-requests/approval-requests.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     UploadsModule,
     NotificationsModule,
     DashboardModule,
+    ApprovalRequestsModule,
   ],
   providers: [
     {
