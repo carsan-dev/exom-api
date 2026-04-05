@@ -687,8 +687,8 @@ export class UsersService {
   ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 0));
 
     const [assignments, progress] = await Promise.all([
       this.prisma.planAssignment.findMany({
@@ -721,7 +721,7 @@ export class UsersService {
       diet_completed: boolean;
     }> = [];
 
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    for (let d = new Date(startDate); d <= endDate; d.setUTCDate(d.getUTCDate() + 1)) {
       const dateStr = d.toISOString().split('T')[0];
       const assignment = assignmentByDate.get(dateStr);
       const dayProgress = progressByDate.get(dateStr);
@@ -747,9 +747,10 @@ export class UsersService {
   ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
-    const start = new Date(weekStart);
-    const end = new Date(weekStart);
-    end.setDate(end.getDate() + 6);
+    const [wy, wm, wd] = weekStart.split('-').map(Number);
+    const start = new Date(Date.UTC(wy, wm - 1, wd));
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
 
     const [assignments, progress] = await Promise.all([
       this.prisma.planAssignment.findMany({

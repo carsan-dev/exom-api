@@ -349,16 +349,15 @@ export class DashboardService {
 
   private getCurrentWeekRange() {
     const now = new Date();
-    const weekStart = new Date(now);
-    const day = weekStart.getDay();
+    const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const day = weekStart.getUTCDay();
     const diffToMonday = day === 0 ? -6 : 1 - day;
 
-    weekStart.setDate(weekStart.getDate() + diffToMonday);
-    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setUTCDate(weekStart.getUTCDate() + diffToMonday);
 
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    weekEnd.setHours(23, 59, 59, 999);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+    weekEnd.setUTCHours(23, 59, 59, 999);
 
     return { start: weekStart, end: weekEnd };
   }

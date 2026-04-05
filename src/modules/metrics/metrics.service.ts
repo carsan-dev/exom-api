@@ -14,15 +14,13 @@ export class MetricsService {
   ) {}
 
   private normalizeMetricDate(date?: string) {
-    const target =
-      date != null
-        ? (() => {
-            const [year, month, day] = date.split('-').map(Number);
-            return new Date(year, month - 1, day);
-          })()
-        : new Date();
-    target.setHours(0, 0, 0, 0);
-    return target;
+    const now = date != null
+      ? (() => {
+          const [year, month, day] = date.split('-').map(Number);
+          return new Date(Date.UTC(year, month - 1, day));
+        })()
+      : new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }
 
   async create(clientId: string, dto: CreateBodyMetricDto) {
