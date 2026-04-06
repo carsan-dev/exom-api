@@ -9,9 +9,10 @@ import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
+import { UpdateClientTierDto } from './dto/update-client-tier.dto';
 import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
-import { Prisma, Role } from '@prisma/client';
+import { ClientTier, Prisma, Role } from '@prisma/client';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import type { BodyField } from './dto/admin-client-metrics-query.dto';
 
@@ -132,6 +133,7 @@ export class UsersService {
           firebase_uid: firebaseUser.uid,
           role: Role.CLIENT,
           auth_provider: 'email',
+          tier: dto.tier ?? ClientTier.LOW_TICKET,
           profile: {
             create: {
               first_name: firstName,
@@ -262,6 +264,26 @@ export class UsersService {
     });
 
     return { message: 'Rol actualizado exitosamente' };
+  }
+
+  async updateClientTier(adminId: string, adminRole: string, clientId: string, dto: UpdateClientTierDto) {
+    const client = await this.prisma.user.findUnique({
+      where: { id: clientId },
+      select: { id: true, role: true },
+    });
+
+    if (!client || client.role !== Role.CLIENT) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    await this.prisma.user.update({
+      where: { id: clientId },
+      data: { tier: dto.tier },
+    });
+
+    return { message: 'Tier actualizado exitosamente' };
   }
 
   async getMyClients(

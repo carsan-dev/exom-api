@@ -14,6 +14,7 @@ import { UsersService } from './users.service';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import { ClientAssignmentResponseDto } from './dto/client-assignment-response.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
+import { UpdateClientTierDto } from './dto/update-client-tier.dto';
 import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -119,6 +120,20 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
   updateRole(@CurrentUser() admin: AuthenticatedUser, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
     return this.usersService.updateRole(admin.id, id, dto);
+  }
+
+  @Patch('users/:id/tier')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Cambiar el tier de un cliente' })
+  @ApiResponse({ status: 200, description: 'Tier actualizado correctamente' })
+  @ApiResponse({ status: 403, description: 'Sin acceso a este cliente' })
+  @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
+  updateClientTier(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateClientTierDto,
+  ) {
+    return this.usersService.updateClientTier(admin.id, admin.role, id, dto);
   }
 
   @Get('clients')

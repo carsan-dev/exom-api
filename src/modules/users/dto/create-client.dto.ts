@@ -7,7 +7,7 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
-import { Level, Role } from '@prisma/client';
+import { ClientTier, Level, Role } from '@prisma/client';
 
 export class CreateClientDto {
   @ApiProperty()
@@ -38,6 +38,11 @@ export class CreateClientDto {
   @IsOptional()
   @IsString()
   main_goal?: string;
+
+  @ApiPropertyOptional({ enum: ClientTier, default: 'LOW_TICKET' })
+  @IsOptional()
+  @IsEnum(ClientTier)
+  tier?: ClientTier;
 }
 
 export class UpdateRoleDto {

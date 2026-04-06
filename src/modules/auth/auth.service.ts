@@ -12,6 +12,7 @@ import { AuthProvider } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, SocialLoginDto } from './dto/login.dto';
+import { CreateTrialUserDto } from './dto/create-trial.dto';
 
 class FirebasePasswordAuthError extends Error {
   constructor(
@@ -214,6 +215,13 @@ export class AuthService {
       );
     }
 
+    if (user.trial_expires_at && new Date() > user.trial_expires_at) {
+      throw new HttpException(
+        'Tu periodo de prueba ha finalizado. Contacta con tu entrenador para acceder al plan completo.',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
     try {
       const firebaseSession = await this.signInWithFirebasePassword(
         normalizedEmail,
@@ -250,6 +258,8 @@ export class AuthService {
           id: user.id,
           email: user.email,
           role: user.role,
+          tier: user.tier,
+          trial_expires_at: user.trial_expires_at,
           profile: user.profile,
         },
       };
@@ -313,6 +323,13 @@ export class AuthService {
       );
     }
 
+    if (user.trial_expires_at && new Date() > user.trial_expires_at) {
+      throw new HttpException(
+        'Tu periodo de prueba ha finalizado. Contacta con tu entrenador para acceder al plan completo.',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
     if (user.auth_provider !== dto.provider) {
       user = await this.prisma.user.update({
         where: { id: user.id },
@@ -329,6 +346,71 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
+        tier: user.tier,
+        trial_expires_at: user.trial_expires_at,
+        profile: user.profile,
+      },
+    };
+  }
+
+  async createTrialUser(dto: CreateTrialUserDto) {
+    const email = dto.email.trim().toLowerCase();
+    const firstName = dto.first_name.trim();
+    const lastName = dto.last_name.trim();
+
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('El email ya está registrado');
+    }
+
+    let firebaseUser: admin.auth.UserRecord;
+    try {
+      firebaseUser = await admin.auth().createUser({
+        email,
+        password: dto.password,
+        displayName: `${firstName} ${lastName}`.trim(),
+      });
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-exists') {
+        throw new ConflictException('El email ya está registrado en Firebase');
+      }
+      throw err;
+    }
+
+    const trialExpiresAt = new Date();
+    trialExpiresAt.setDate(trialExpiresAt.getDate() + 14);
+
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        firebase_uid: firebaseUser.uid,
+        role: 'CLIENT',
+        auth_provider: 'email',
+        tier: 'LOW_TICKET',
+        trial_expires_at: trialExpiresAt,
+        profile: {
+          create: {
+            first_name: firstName,
+            last_name: lastName,
+          },
+        },
+      },
+      include: { profile: true },
+    });
+
+    const customToken = await admin.auth().createCustomToken(user.firebase_uid);
+
+    return {
+      access_token: customToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        tier: user.tier,
+        trial_expires_at: user.trial_expires_at,
         profile: user.profile,
       },
     };

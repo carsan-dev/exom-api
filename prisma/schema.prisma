@@ -87,6 +87,11 @@ enum ApprovalStatus {
   FAILED
 }
 
+enum ClientTier {
+  HIGH_TICKET
+  LOW_TICKET
+}
+
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
@@ -99,9 +104,11 @@ model User {
   is_locked      Boolean      @default(false)
   login_attempts Int          @default(0)
   locked_at      DateTime?
-  fcm_token      String?
-  created_at     DateTime     @default(now())
-  updated_at     DateTime     @updatedAt
+  tier             ClientTier   @default(LOW_TICKET)
+  trial_expires_at DateTime?
+  fcm_token        String?
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
 
   profile          Profile?
   adminOf          AdminClientAssignment[] @relation("AdminAssignments")

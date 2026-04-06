@@ -313,6 +313,15 @@ export class RecapsService {
   }
 
   async findMyRecaps(clientId: string, pagination: PaginationDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: clientId },
+      select: { tier: true },
+    });
+
+    if (user?.tier === 'LOW_TICKET') {
+      throw new ForbiddenException('El histórico de recaps está disponible solo en el plan premium.');
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.weeklyRecap.findMany({
         where: { client_id: clientId },

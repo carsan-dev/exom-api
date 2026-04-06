@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, SocialLoginDto, ForgotPasswordDto } from './dto/login.dto';
+import { CreateTrialUserDto } from './dto/create-trial.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -28,6 +29,15 @@ export class AuthController {
   @ApiOperation({ summary: 'Login social (Google / Apple)' })
   socialLogin(@Body() dto: SocialLoginDto) {
     return this.authService.socialLogin(dto);
+  }
+
+  @Public()
+  @Post('trial')
+  @ApiOperation({ summary: 'Auto-registro de usuario trial (14 días)' })
+  @ApiResponse({ status: 201, description: 'Usuario trial creado exitosamente' })
+  @ApiResponse({ status: 409, description: 'El email ya está registrado' })
+  createTrialUser(@Body() dto: CreateTrialUserDto) {
+    return this.authService.createTrialUser(dto);
   }
 
   @Public()
