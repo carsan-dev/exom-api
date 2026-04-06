@@ -416,6 +416,33 @@ export class AuthService {
     };
   }
 
+  async getMe(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    if (user.trial_expires_at && new Date() > user.trial_expires_at) {
+      throw new HttpException(
+        'Tu periodo de prueba ha finalizado. Contacta con tu entrenador para acceder al plan completo.',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      tier: user.tier,
+      trial_expires_at: user.trial_expires_at,
+      profile: user.profile,
+    };
+  }
+
   async forgotPassword(email: string): Promise<void> {
     try {
       await admin.auth().getUserByEmail(email);

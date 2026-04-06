@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, SocialLoginDto, ForgotPasswordDto } from './dto/login.dto';
@@ -47,6 +47,20 @@ export class AuthController {
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     await this.authService.forgotPassword(dto.email);
     return { message: 'Si el email existe, recibirás un enlace de recuperación' };
+  }
+
+  @Get('me')
+  @ApiOperation({ summary: 'Obtener datos del usuario autenticado' })
+  @ApiResponse({
+    status: 200,
+    description: 'Datos del usuario obtenidos correctamente',
+  })
+  @ApiResponse({
+    status: 402,
+    description: 'Periodo de prueba expirado',
+  })
+  getMe(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.getMe(user.id);
   }
 
   @Post('logout')
