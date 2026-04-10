@@ -1,10 +1,9 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { ClientTier, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { UsersService } from './users.service';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
-import { UpdateClientTierDto } from './dto/update-client-tier.dto';
 import { ChallengesService } from '../challenges/challenges.service';
 
 const createUserMock = jest.fn();
@@ -106,7 +105,7 @@ describe('UsersService', () => {
       is_active: true,
     });
 
-    await expect(service.createClient('admin-1', dto)).resolves.toEqual({
+    await expect(service.createClient('admin-1', Role.ADMIN, dto)).resolves.toEqual({
       id: 'client-1',
       email: dto.email,
       role: Role.CLIENT,
@@ -222,8 +221,10 @@ describe('UsersService', () => {
       is_locked: true,
     });
 
-    await expect(service.unlockUser('admin-2')).rejects.toThrow(
-      new NotFoundException('Cliente no encontrado'),
+    await expect(
+      service.unlockUser('admin-1', Role.ADMIN, 'admin-2'),
+    ).rejects.toThrow(
+      new ForbiddenException('Solo puedes desbloquear clientes asignados a tu cuenta'),
     );
 
     expect(prisma.user.update).not.toHaveBeenCalled();
@@ -266,7 +267,16 @@ describe('UsersService', () => {
     });
 
     expect(prisma.adminClientAssignment.findMany).toHaveBeenCalledWith({
-      where: { client_id: 'client-1', is_active: true },
+      where: {
+        client_id: 'client-1',
+        is_active: true,
+        admin: {
+          is: {
+            role: Role.ADMIN,
+            is_active: true,
+          },
+        },
+      },
       orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
       select: {
         client_id: true,
@@ -304,6 +314,10 @@ describe('UsersService', () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
     prisma.user.findMany.mockResolvedValue([{ id: 'admin-2' }, { id: 'admin-3' }]);
     prisma.adminClientAssignment.findMany
+      .mockResolvedValueOnce([
+        { admin_id: 'admin-1' },
+        { admin_id: 'admin-2' },
+      ])
       .mockResolvedValueOnce([
         { id: 'assignment-1', admin_id: 'admin-1', is_active: true },
         { id: 'assignment-2', admin_id: 'admin-2', is_active: false },
@@ -355,6 +369,7 @@ describe('UsersService', () => {
       where: {
         id: { in: ['admin-2', 'admin-3'] },
         role: Role.ADMIN,
+        is_active: true,
       },
       select: { id: true },
     });
@@ -379,21 +394,8 @@ describe('UsersService', () => {
       service.updateClientAssignments('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
         admin_ids: ['admin-1', 'admin-2'],
       }),
-    ).rejects.toThrow(new NotFoundException('Uno o más administradores no existen'));
+    ).rejects.toThrow(new NotFoundException('Uno o más administradores activos no existen'));
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it('rejects assignment updates when the final set is empty', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
-
-    await expect(
-      service.updateClientAssignments('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
-        admin_ids: [],
-      }),
-    ).rejects.toThrow(new BadRequestException('El cliente debe tener al menos un admin activo'));
-
-    expect(prisma.user.findMany).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -403,6 +405,12 @@ describe('UsersService', () => {
         client: {
           id: 'client-1',
           email: 'client-1@exom.dev',
+          role: Role.CLIENT,
+          is_active: true,
+          is_locked: false,
+          created_at: new Date('2024-03-02T10:00:00.000Z'),
+          profile: null,
+          clientOf: [],
         },
       },
     ]);
@@ -417,6 +425,12 @@ describe('UsersService', () => {
         {
           id: 'client-1',
           email: 'client-1@exom.dev',
+          role: Role.CLIENT,
+          is_active: true,
+          is_locked: false,
+          created_at: new Date('2024-03-02T10:00:00.000Z'),
+          profile: null,
+          active_admins_count: 0,
         },
       ],
       total: 1,
@@ -448,6 +462,18 @@ describe('UsersService', () => {
             is_locked: true,
             created_at: true,
             profile: true,
+            clientOf: {
+              where: {
+                is_active: true,
+                admin: {
+                  is: {
+                    role: Role.ADMIN,
+                    is_active: true,
+                  },
+                },
+              },
+              select: { id: true },
+            },
           },
         },
       },
@@ -500,6 +526,7 @@ describe('UsersService', () => {
         is_locked: false,
         created_at: new Date('2024-03-02T10:00:00.000Z'),
         profile: null,
+        clientOf: [],
       },
     ]);
     prisma.user.count.mockResolvedValue(1);
@@ -516,6 +543,7 @@ describe('UsersService', () => {
           is_locked: false,
           created_at: new Date('2024-03-02T10:00:00.000Z'),
           profile: null,
+          active_admins_count: 0,
         },
       ],
       total: 1,
@@ -536,6 +564,18 @@ describe('UsersService', () => {
         is_locked: true,
         created_at: true,
         profile: true,
+        clientOf: {
+          where: {
+            is_active: true,
+            admin: {
+              is: {
+                role: Role.ADMIN,
+                is_active: true,
+              },
+            },
+          },
+          select: { id: true },
+        },
       },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     });
@@ -574,199 +614,4 @@ describe('UsersService', () => {
     });
   });
 
-  // ─── Tier-related tests ──────────────────────────────────────────────────
-
-  it('creates client with LOW_TICKET tier by default', async () => {
-    const dto = {
-      email: 'client-tier@exom.dev',
-      password: 'super-secret',
-      first_name: 'Tier',
-      last_name: 'Test',
-      level: 'PRINCIPIANTE' as const,
-      main_goal: 'Test',
-    };
-
-    prisma.user.findUnique.mockResolvedValue(null);
-    createUserMock.mockResolvedValue({ uid: 'firebase-tier-1' });
-    prisma.user.create.mockResolvedValue({
-      id: 'client-tier-1',
-      email: dto.email,
-      role: Role.CLIENT,
-      tier: ClientTier.LOW_TICKET,
-      is_active: true,
-      is_locked: false,
-      created_at: new Date(),
-      profile: {
-        first_name: dto.first_name,
-        last_name: dto.last_name,
-        level: dto.level,
-        main_goal: dto.main_goal,
-      },
-    });
-    prisma.adminClientAssignment.create.mockResolvedValue({
-      id: 'assignment-tier-1',
-      admin_id: 'admin-1',
-      client_id: 'client-tier-1',
-      is_active: true,
-    });
-
-    await service.createClient('admin-1', Role.ADMIN, dto);
-
-    expect(prisma.user.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          tier: ClientTier.LOW_TICKET,
-        }),
-      }),
-    );
-  });
-
-  it('creates client with HIGH_TICKET tier when specified in DTO', async () => {
-    const dto = {
-      email: 'client-high@exom.dev',
-      password: 'super-secret',
-      first_name: 'High',
-      last_name: 'Ticket',
-      level: 'PRINCIPIANTE' as const,
-      main_goal: 'Test',
-      tier: ClientTier.HIGH_TICKET,
-    };
-
-    prisma.user.findUnique.mockResolvedValue(null);
-    createUserMock.mockResolvedValue({ uid: 'firebase-high-1' });
-    prisma.user.create.mockResolvedValue({
-      id: 'client-high-1',
-      email: dto.email,
-      role: Role.CLIENT,
-      tier: ClientTier.HIGH_TICKET,
-      is_active: true,
-      is_locked: false,
-      created_at: new Date(),
-      profile: {
-        first_name: dto.first_name,
-        last_name: dto.last_name,
-        level: dto.level,
-        main_goal: dto.main_goal,
-      },
-    });
-    prisma.adminClientAssignment.create.mockResolvedValue({
-      id: 'assignment-high-1',
-      admin_id: 'admin-1',
-      client_id: 'client-high-1',
-      is_active: true,
-    });
-
-    await service.createClient('admin-1', Role.ADMIN, dto);
-
-    expect(prisma.user.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          tier: ClientTier.HIGH_TICKET,
-        }),
-      }),
-    );
-  });
-
-  it('updates client tier successfully when admin has access', async () => {
-    const dto: UpdateClientTierDto = { tier: ClientTier.HIGH_TICKET };
-
-    prisma.user.findUnique.mockResolvedValue({
-      id: 'client-1',
-      role: Role.CLIENT,
-    });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({
-      id: 'assignment-1',
-      admin_id: 'admin-1',
-      client_id: 'client-1',
-      is_active: true,
-    });
-    prisma.user.update.mockResolvedValue({
-      id: 'client-1',
-      tier: ClientTier.HIGH_TICKET,
-    });
-
-    const result = await service.updateClientTier(
-      'admin-1',
-      Role.ADMIN,
-      'client-1',
-      dto,
-    );
-
-    expect(result).toEqual({ message: 'Tier actualizado exitosamente' });
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: 'client-1' },
-      data: { tier: ClientTier.HIGH_TICKET },
-    });
-  });
-
-  it('rejects tier update when client does not exist', async () => {
-    prisma.user.findUnique.mockResolvedValue(null);
-
-    await expect(
-      service.updateClientTier(
-        'admin-1',
-        Role.ADMIN,
-        'nonexistent',
-        { tier: ClientTier.HIGH_TICKET },
-      ),
-    ).rejects.toThrow(new NotFoundException('Cliente no encontrado'));
-  });
-
-  it('rejects tier update when target is not a client', async () => {
-    prisma.user.findUnique.mockResolvedValue({
-      id: 'admin-2',
-      role: Role.ADMIN,
-    });
-
-    await expect(
-      service.updateClientTier(
-        'admin-1',
-        Role.ADMIN,
-        'admin-2',
-        { tier: ClientTier.HIGH_TICKET },
-      ),
-    ).rejects.toThrow(new NotFoundException('Cliente no encontrado'));
-  });
-
-  it('rejects tier update when admin does not have access to client', async () => {
-    prisma.user.findUnique.mockResolvedValue({
-      id: 'client-1',
-      role: Role.CLIENT,
-    });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue(null);
-
-    await expect(
-      service.updateClientTier(
-        'admin-1',
-        Role.ADMIN,
-        'client-1',
-        { tier: ClientTier.HIGH_TICKET },
-      ),
-    ).rejects.toThrow(new ForbiddenException('Este cliente no está asignado a ti'));
-  });
-
-  it('allows super admin to update any client tier without assignment check', async () => {
-    prisma.user.findUnique.mockResolvedValue({
-      id: 'client-1',
-      role: Role.CLIENT,
-    });
-    prisma.user.update.mockResolvedValue({
-      id: 'client-1',
-      tier: ClientTier.LOW_TICKET,
-    });
-
-    const result = await service.updateClientTier(
-      'super-admin-1',
-      Role.SUPER_ADMIN,
-      'client-1',
-      { tier: ClientTier.LOW_TICKET },
-    );
-
-    expect(result).toEqual({ message: 'Tier actualizado exitosamente' });
-    expect(prisma.adminClientAssignment.findFirst).not.toHaveBeenCalled();
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: { id: 'client-1' },
-      data: { tier: ClientTier.LOW_TICKET },
-    });
-  });
 });

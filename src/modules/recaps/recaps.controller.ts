@@ -21,7 +21,6 @@ export class RecapsController {
   @Roles(Role.CLIENT)
   @ApiOperation({ summary: "Get client's own recap history" })
   @ApiResponse({ status: 200, description: 'Historial de recaps obtenido correctamente' })
-  @ApiResponse({ status: 403, description: 'Historial disponible solo en el plan premium' })
   findMyRecaps(
     @CurrentUser() user: AuthenticatedUser,
     @Query() pagination: PaginationDto,

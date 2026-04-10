@@ -32,15 +32,6 @@ export class FeedbackService {
   }
 
   async create(clientId: string, dto: CreateFeedbackDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: clientId },
-      select: { tier: true },
-    });
-
-    if (user?.tier === 'LOW_TICKET') {
-      throw new ForbiddenException('Esta función está disponible solo en el plan premium.');
-    }
-
     return this.prisma.feedbackMedia.create({
       data: {
         client_id: clientId,
