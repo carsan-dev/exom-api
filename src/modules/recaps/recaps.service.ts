@@ -86,6 +86,17 @@ export class RecapsService {
     return assignments.map((assignment) => assignment.client_id);
   }
 
+  private async assertPremiumRecapHistoryAccess(clientId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: clientId },
+      select: { tier: true },
+    });
+
+    if (user?.tier === 'LOW_TICKET') {
+      throw new ForbiddenException('El histórico de recaps está disponible solo en el plan premium.');
+    }
+  }
+
   private async assertAdminRecapAccess(id: string, adminId: string, adminRole: string) {
     const recap = await this.prisma.weeklyRecap.findUnique({
       where: { id },
@@ -313,14 +324,7 @@ export class RecapsService {
   }
 
   async findMyRecaps(clientId: string, pagination: PaginationDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: clientId },
-      select: { tier: true },
-    });
-
-    if (user?.tier === 'LOW_TICKET') {
-      throw new ForbiddenException('El histórico de recaps está disponible solo en el plan premium.');
-    }
+    await this.assertPremiumRecapHistoryAccess(clientId);
 
     const [data, total] = await Promise.all([
       this.prisma.weeklyRecap.findMany({
@@ -337,6 +341,8 @@ export class RecapsService {
   }
 
   async getMyRecapById(clientId: string, id: string) {
+    await this.assertPremiumRecapHistoryAccess(clientId);
+
     const recap = await this.prisma.weeklyRecap.findUnique({
       where: { id },
       select: CLIENT_RECAP_SELECT,
