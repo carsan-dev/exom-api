@@ -39,6 +39,15 @@ export class AchievementsController {
     return this.achievementsService.findMyAchievements(user.id);
   }
 
+  @Get('catalog')
+  @Roles(Role.CLIENT)
+  @ApiOperation({ summary: "Get current user's achievement catalog" })
+  @ApiResponse({ status: 200, description: 'Catálogo de logros obtenido correctamente' })
+  @ApiResponse({ status: 403, description: 'Acceso restringido a clientes' })
+  findCatalog() {
+    return this.achievementsService.findCatalog();
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get achievement detail with users who unlocked it' })

@@ -659,6 +659,18 @@ export class AchievementsService {
     });
   }
 
+  async findCatalog() {
+    return this.prisma.achievement.findMany({
+      orderBy: { created_at: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        icon_url: true,
+      },
+    });
+  }
+
   async create(
     dto: CreateAchievementDto,
     admin: Pick<AuthenticatedUser, 'id' | 'role'>,

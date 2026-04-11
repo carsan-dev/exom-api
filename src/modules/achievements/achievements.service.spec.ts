@@ -103,6 +103,22 @@ describe('AchievementsService', () => {
     expect(prisma.achievement.create).not.toHaveBeenCalled();
   });
 
+  it('returns the client achievement catalog with lightweight fields', async () => {
+    prisma.achievement.findMany.mockResolvedValue([{ id: 'ach-1' }]);
+
+    await expect(service.findCatalog()).resolves.toEqual([{ id: 'ach-1' }]);
+
+    expect(prisma.achievement.findMany).toHaveBeenCalledWith({
+      orderBy: { created_at: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        icon_url: true,
+      },
+    });
+  });
+
   it('recomputes automatic achievements globally when creating an automatic achievement', async () => {
     prisma.achievement.create.mockResolvedValue({
       id: 'ach-new',

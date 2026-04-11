@@ -13,6 +13,7 @@ describe('AchievementsController', () => {
   const achievementsService = {
     findAll: jest.fn(),
     findMyAchievements: jest.fn(),
+    findCatalog: jest.fn(),
     findOne: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
@@ -85,6 +86,29 @@ describe('AchievementsController', () => {
         .expect(403);
 
       expect(achievementsService.findMyAchievements).not.toHaveBeenCalled();
+    },
+  );
+
+  it('allows clients to fetch the achievements catalog', async () => {
+    achievementsService.findCatalog.mockResolvedValue([{ id: 'ach-1' }]);
+
+    await request(app.getHttpServer())
+      .get('/achievements/catalog')
+      .set('x-test-role', Role.CLIENT)
+      .expect(200);
+
+    expect(achievementsService.findCatalog).toHaveBeenCalled();
+  });
+
+  it.each([Role.ADMIN, Role.SUPER_ADMIN])(
+    'rejects %s users from fetching the achievements catalog',
+    async (role) => {
+      await request(app.getHttpServer())
+        .get('/achievements/catalog')
+        .set('x-test-role', role)
+        .expect(403);
+
+      expect(achievementsService.findCatalog).not.toHaveBeenCalled();
     },
   );
 });
