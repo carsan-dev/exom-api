@@ -54,7 +54,29 @@ export class ProfileService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Perfil no encontrado');
+      await this.prisma.profile.create({
+        data: {
+          user_id: userId,
+          first_name: dto.first_name ?? '',
+          last_name: dto.last_name ?? '',
+          ...(dto.avatar_url !== undefined && { avatar_url: dto.avatar_url }),
+          ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
+          ...(dto.level !== undefined && { level: dto.level }),
+          ...(dto.muscle_mass_goal !== undefined && {
+            muscle_mass_goal: dto.muscle_mass_goal,
+          }),
+          ...(dto.target_calories !== undefined && {
+            target_calories: dto.target_calories,
+          }),
+          ...(dto.current_weight !== undefined && {
+            current_weight: dto.current_weight,
+          }),
+          ...(dto.height !== undefined && { height: dto.height }),
+          ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
+        },
+      });
+
+      return this.buildProfileResponse(userId);
     }
 
     await this.prisma.profile.update({
