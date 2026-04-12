@@ -10,6 +10,14 @@ export class PublicConfigController {
   constructor(private readonly publicConfigService: PublicConfigService) {}
 
   @Public()
+  @Get('healthchk')
+  @ApiOperation({ summary: 'Health check' })
+  @ApiResponse({ status: 200, description: 'OK' })
+  health() {
+    return { status: 'ok' };
+  }
+
+  @Public()
   @Get('mobile-config')
   @ApiOperation({
     summary: 'Obtener configuracion publica de distribucion movil',
