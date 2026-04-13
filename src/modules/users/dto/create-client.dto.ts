@@ -34,10 +34,10 @@ export class CreateClientDto {
   @IsEnum(Level)
   level?: Level;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  main_goal?: string;
+  main_goal?: string | null;
 }
 
 export class UpdateRoleDto {

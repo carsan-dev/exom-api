@@ -26,35 +26,35 @@ export class CreateExerciseDto {
   @IsEnum(Level)
   level: Level;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  video_url?: string;
+  video_url?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  video_stream_id?: string;
+  video_stream_id?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  thumbnail_url?: string;
+  thumbnail_url?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  technique_text?: string;
+  technique_text?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  common_errors_text?: string;
+  common_errors_text?: string | null;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  explanation_text?: string;
+  explanation_text?: string | null;
 }
 
 export class UpdateExerciseDto extends PartialType(CreateExerciseDto) {}

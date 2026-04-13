@@ -49,11 +49,11 @@ export class CreateAchievementDto {
   @MaxLength(500)
   description: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @Transform(emptyStringToUndefined)
   @IsOptional()
   @IsUrl()
-  icon_url?: string;
+  icon_url?: string | null;
 
   @ApiProperty({ enum: ACHIEVEMENT_CRITERIA_TYPES })
   @IsIn(ACHIEVEMENT_CRITERIA_TYPES)

@@ -63,20 +63,20 @@ export class CreateTrainingDto {
   @IsNumber()
   estimated_calories?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  warmup_description?: string;
+  warmup_description?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   warmup_duration_min?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
-  cooldown_description?: string;
+  cooldown_description?: string | null;
 
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
