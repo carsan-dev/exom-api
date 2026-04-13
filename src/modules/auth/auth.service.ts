@@ -8,7 +8,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
-import { AuthProvider } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, SocialLoginDto } from './dto/login.dto';
@@ -158,6 +157,7 @@ export class AuthService {
 
   private async findAuthorizedUserForSocialLogin(
     decoded: admin.auth.DecodedIdToken,
+    provider: SocialLoginDto['provider'],
   ) {
     let user = await this.prisma.user.findUnique({
       where: { firebase_uid: decoded.uid },
@@ -165,20 +165,16 @@ export class AuthService {
     });
 
     if (!user && decoded.email) {
+      const normalizedEmail = decoded.email.trim().toLowerCase();
       user = await this.prisma.user.findUnique({
-        where: { email: decoded.email },
+        where: { email: normalizedEmail },
         include: { profile: true },
       });
 
       if (user) {
-        await this.ensureFirebaseUidOwnership(user.id, decoded.uid);
-        user = await this.prisma.user.update({
-          where: { id: user.id },
-          data: {
-            firebase_uid: decoded.uid,
-          },
-          include: { profile: true },
-        });
+        throw new ConflictException(
+          `Tu cuenta EXOM ya existe con otro método de acceso. Inicia sesión con tu método actual para vincular también ${provider}.`,
+        );
       }
     }
 
@@ -226,7 +222,6 @@ export class AuthService {
           where: { id: user.id },
           data: {
             firebase_uid: firebaseSession.localId,
-            auth_provider: AuthProvider.email,
             login_attempts: 0,
             locked_at: null,
           },
@@ -300,7 +295,18 @@ export class AuthService {
       throw new UnauthorizedException('Token social inválido');
     }
 
-    let user = await this.findAuthorizedUserForSocialLogin(decoded);
+    const expectedProvider = dto.provider === 'google' ? 'google.com' : 'apple.com';
+    const signInProvider = decoded.firebase?.sign_in_provider;
+    if (signInProvider !== expectedProvider) {
+      throw new UnauthorizedException(
+        'El token social no coincide con el proveedor indicado',
+      );
+    }
+
+    const user = await this.findAuthorizedUserForSocialLogin(
+      decoded,
+      dto.provider,
+    );
 
     if (!user.is_active) {
       throw new UnauthorizedException('Cuenta inactiva');
@@ -311,14 +317,6 @@ export class AuthService {
         'Cuenta bloqueada — contacta a tu entrenador',
         HttpStatus.LOCKED,
       );
-    }
-
-    if (user.auth_provider !== dto.provider) {
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: { auth_provider: dto.provider },
-        include: { profile: true },
-      });
     }
 
     const customToken = await admin.auth().createCustomToken(user.firebase_uid);

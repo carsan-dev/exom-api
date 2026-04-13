@@ -1,4 +1,9 @@
-import { HttpException, HttpStatus, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  HttpException,
+  HttpStatus,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
@@ -179,6 +184,75 @@ describe('AuthService', () => {
         avatar_url: null,
       },
     });
+  });
+
+  it('returns custom token and user payload on social login when firebase uid matches', async () => {
+    verifyIdTokenMock.mockResolvedValue({
+      uid: 'firebase-google-1',
+      email: 'client@exom.dev',
+      firebase: { sign_in_provider: 'google.com' },
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      email: 'client@exom.dev',
+      is_active: true,
+      is_locked: false,
+      firebase_uid: 'firebase-google-1',
+      role: 'CLIENT',
+      profile: {
+        first_name: 'Client',
+        last_name: 'User',
+        avatar_url: null,
+      },
+    });
+    createCustomTokenMock.mockResolvedValue('custom-social-token');
+
+    await expect(
+      service.socialLogin({ token: 'token-1', provider: 'google' }),
+    ).resolves.toEqual({
+      access_token: 'custom-social-token',
+      user: {
+        id: 'user-1',
+        email: 'client@exom.dev',
+        role: 'CLIENT',
+        profile: {
+          first_name: 'Client',
+          last_name: 'User',
+          avatar_url: null,
+        },
+      },
+    });
+  });
+
+  it('rejects social login when the email already belongs to another firebase uid', async () => {
+    verifyIdTokenMock.mockResolvedValue({
+      uid: 'firebase-google-2',
+      email: 'client@exom.dev',
+      firebase: { sign_in_provider: 'google.com' },
+    });
+    prisma.user.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'user-1',
+        email: 'client@exom.dev',
+        is_active: true,
+        is_locked: false,
+        firebase_uid: 'firebase-password-1',
+        role: 'CLIENT',
+        profile: {
+          first_name: 'Client',
+          last_name: 'User',
+          avatar_url: null,
+        },
+      });
+
+    await expect(
+      service.socialLogin({ token: 'token-2', provider: 'google' }),
+    ).rejects.toThrow(
+      new ConflictException(
+        'Tu cuenta EXOM ya existe con otro método de acceso. Inicia sesión con tu método actual para vincular también google.',
+      ),
+    );
   });
 
   it('throws when getMe cannot find the user', async () => {
