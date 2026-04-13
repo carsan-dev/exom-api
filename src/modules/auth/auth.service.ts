@@ -172,9 +172,18 @@ export class AuthService {
       });
 
       if (user) {
-        throw new ConflictException(
-          `Tu cuenta EXOM ya existe con otro método de acceso. Inicia sesión con tu método actual para vincular también ${provider}.`,
-        );
+        // User exists by email but firebase_uid differs — link the social identity
+        await this.ensureFirebaseUidOwnership(user.id, decoded.uid);
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            firebase_uid: decoded.uid,
+            auth_provider: provider,
+            login_attempts: 0,
+            locked_at: null,
+          },
+          include: { profile: true },
+        });
       }
     }
 
