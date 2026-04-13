@@ -6,6 +6,7 @@ import { ProgressService } from './progress.service';
 describe('ProgressService', () => {
   let service: ProgressService;
   let prisma: {
+    $transaction: jest.Mock;
     planAssignment: {
       findUnique: jest.Mock;
     };
@@ -23,6 +24,7 @@ describe('ProgressService', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(),
       planAssignment: {
         findUnique: jest.fn(),
       },
@@ -42,6 +44,10 @@ describe('ProgressService', () => {
       prisma as unknown as PrismaService,
       challengesService as unknown as ChallengesService,
       achievementsService as unknown as AchievementsService,
+    );
+
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
     );
 
     jest

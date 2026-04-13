@@ -821,7 +821,8 @@ async function main() {
         height_cm: 165,
         waist_cm: 72,
         hips_cm: 94,
-        thigh_cm: 57,
+        thigh_left_cm: 57,
+        thigh_right_cm: 57,
       },
     });
   }
@@ -1007,7 +1008,8 @@ async function main() {
         height_cm: 178,
         waist_cm: 83,
         chest_cm: 98,
-        arm_cm: 35,
+        arm_left_cm: 35,
+        arm_right_cm: 35,
       },
     });
   }

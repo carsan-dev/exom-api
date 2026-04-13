@@ -392,12 +392,16 @@ model BodyMetric {
   neck_cm        Float?
   shoulders_cm   Float?
   chest_cm       Float?
-  arm_cm         Float?
-  forearm_cm     Float?
+  arm_left_cm    Float?
+  arm_right_cm   Float?
+  forearm_left_cm Float?
+  forearm_right_cm Float?
   waist_cm       Float?
   hips_cm        Float?
-  thigh_cm       Float?
-  calf_cm        Float?
+  thigh_left_cm  Float?
+  thigh_right_cm Float?
+  calf_left_cm   Float?
+  calf_right_cm  Float?
   created_at     DateTime @default(now())
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)

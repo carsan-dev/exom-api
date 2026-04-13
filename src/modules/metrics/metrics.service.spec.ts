@@ -101,7 +101,7 @@ describe('MetricsService', () => {
     expect(prisma.bodyMetric.create).toHaveBeenCalledWith({
       data: {
         client_id: 'client-1',
-        date: new Date(2026, 2, 22),
+        date: new Date(Date.UTC(2026, 2, 22)),
         sleep_hours: 7.5,
       },
     });
@@ -125,7 +125,7 @@ describe('MetricsService', () => {
     expect(prisma.bodyMetric.findFirst).toHaveBeenCalledWith({
       where: {
         client_id: 'client-1',
-        date: new Date(2026, 2, 22),
+        date: new Date(Date.UTC(2026, 2, 22)),
       },
       orderBy: [{ created_at: 'desc' }],
     });

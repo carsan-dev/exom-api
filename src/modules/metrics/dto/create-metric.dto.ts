@@ -53,13 +53,25 @@ export class CreateBodyMetricDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  arm_cm?: number;
+  arm_left_cm?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   @Min(0)
-  forearm_cm?: number;
+  arm_right_cm?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  forearm_left_cm?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  forearm_right_cm?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -77,11 +89,23 @@ export class CreateBodyMetricDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
-  thigh_cm?: number;
+  thigh_left_cm?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   @Min(0)
-  calf_cm?: number;
+  thigh_right_cm?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  calf_left_cm?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  calf_right_cm?: number;
 }
