@@ -35,6 +35,20 @@ export class MetricsService {
       },
     });
 
+    if (metricData.weight_kg != null) {
+      const latestWithWeight = await this.prisma.bodyMetric.findFirst({
+        where: { client_id: clientId, weight_kg: { not: null } },
+        orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
+        select: { weight_kg: true },
+      });
+      if (latestWithWeight?.weight_kg != null) {
+        await this.prisma.profile.update({
+          where: { user_id: clientId },
+          data: { current_weight: latestWithWeight.weight_kg },
+        });
+      }
+    }
+
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
