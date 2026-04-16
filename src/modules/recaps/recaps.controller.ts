@@ -17,6 +17,14 @@ export class RecapsController {
 
   // ── Client routes (declared before :id to avoid NestJS resolving 'my' as an id) ──
 
+  @Get('my/current-week')
+  @Roles(Role.CLIENT)
+  @ApiOperation({ summary: 'Check if recap exists for current week' })
+  @ApiResponse({ status: 200, description: 'Recap de la semana actual (si existe)' })
+  checkCurrentWeekRecap(@CurrentUser() user: AuthenticatedUser) {
+    return this.recapsService.checkCurrentWeekRecap(user.id);
+  }
+
   @Get('my')
   @Roles(Role.CLIENT)
   @ApiOperation({ summary: "Get client's own recap history" })

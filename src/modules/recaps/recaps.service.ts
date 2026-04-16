@@ -212,8 +212,15 @@ export class RecapsService {
       throw new ForbiddenException('Cannot overwrite an archived recap');
     }
 
-    if (existingRecap && existingRecap.status !== RecapStatus.DRAFT) {
-      throw new ForbiddenException('Only draft recaps can be overwritten');
+    if (existingRecap) {
+      const statusLabel = existingRecap.status === RecapStatus.SUBMITTED
+        ? 'enviado'
+        : existingRecap.status === RecapStatus.REVIEWED
+          ? 'revisado'
+          : existingRecap.status;
+      throw new ForbiddenException(
+        `Ya existe un recap para esta semana (estado: ${statusLabel}). No puedes crear uno nuevo.`,
+      );
     }
 
     const data = {
@@ -310,6 +317,32 @@ export class RecapsService {
         submitted_at: new Date(),
       },
     });
+  }
+
+  async checkCurrentWeekRecap(clientId: string) {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diffToMonday);
+    monday.setHours(0, 0, 0, 0);
+
+    const recap = await this.prisma.weeklyRecap.findUnique({
+      where: {
+        client_id_week_start_date: {
+          client_id: clientId,
+          week_start_date: monday,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        week_start_date: true,
+        week_end_date: true,
+      },
+    });
+
+    return recap;
   }
 
   async findMyRecaps(clientId: string, pagination: PaginationDto) {
