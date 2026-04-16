@@ -19,7 +19,7 @@ import { MealType, MeasureUnit } from '@prisma/client';
 export class MealIngredientDto {
   @ApiProperty()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  @IsString()
+  @IsUUID()
   @IsNotEmpty()
   ingredient_id: string;
 
