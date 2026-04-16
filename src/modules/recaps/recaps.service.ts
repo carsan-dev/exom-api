@@ -212,15 +212,41 @@ export class RecapsService {
       throw new ForbiddenException('Cannot overwrite an archived recap');
     }
 
+    if (existingRecap && existingRecap.status !== RecapStatus.DRAFT) {
+      throw new ForbiddenException('Only draft recaps can be overwritten');
+    }
+
+    const data = {
+      week_end_date: weekEnd,
+      training_effort: dto.training_effort,
+      training_sessions: dto.training_sessions,
+      training_progress: dto.training_progress,
+      training_notes: dto.training_notes,
+      nutrition_quality: dto.nutrition_quality,
+      hydration_enabled: dto.hydration_enabled,
+      hydration_level: dto.hydration_level,
+      food_quality: dto.food_quality,
+      nutrition_notes: dto.nutrition_notes,
+      sleep_hours_range: dto.sleep_hours_range,
+      fatigue_level: dto.fatigue_level,
+      muscle_pain_zones: dto.muscle_pain_zones ?? [],
+      pain_intensity: dto.pain_intensity,
+      recovery_notes: dto.recovery_notes,
+      mood: dto.mood,
+      stress_enabled: dto.stress_enabled,
+      stress_level: dto.stress_level,
+      general_notes: dto.general_notes,
+      improvement_app_rating: dto.improvement_app_rating,
+      improvement_service_rating: dto.improvement_service_rating,
+      improvement_areas: dto.improvement_areas ?? [],
+      improvement_feedback_text: dto.improvement_feedback_text,
+    };
+
     if (existingRecap) {
-      const statusLabel = existingRecap.status === RecapStatus.SUBMITTED
-        ? 'enviado'
-        : existingRecap.status === RecapStatus.REVIEWED
-          ? 'revisado'
-          : existingRecap.status;
-      throw new ForbiddenException(
-        `Ya existe un recap para esta semana (estado: ${statusLabel}). No puedes crear uno nuevo.`,
-      );
+      return this.prisma.weeklyRecap.update({
+        where: { id: existingRecap.id },
+        data,
+      });
     }
 
     return this.prisma.weeklyRecap.create({
@@ -306,32 +332,6 @@ export class RecapsService {
         submitted_at: new Date(),
       },
     });
-  }
-
-  async checkCurrentWeekRecap(clientId: string) {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const monday = new Date(today);
-    monday.setDate(today.getDate() + diffToMonday);
-    monday.setHours(0, 0, 0, 0);
-
-    const recap = await this.prisma.weeklyRecap.findUnique({
-      where: {
-        client_id_week_start_date: {
-          client_id: clientId,
-          week_start_date: monday,
-        },
-      },
-      select: {
-        id: true,
-        status: true,
-        week_start_date: true,
-        week_end_date: true,
-      },
-    });
-
-    return recap;
   }
 
   async findMyRecaps(clientId: string, pagination: PaginationDto) {
