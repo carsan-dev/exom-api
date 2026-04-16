@@ -6,8 +6,15 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
-import { CreateRecapDto, UpdateRecapDto, ReviewRecapDto } from './dto/create-recap.dto';
-import { ADMIN_RECAP_STATUSES, AdminRecapQueryDto } from './dto/admin-recap-query.dto';
+import {
+  CreateRecapDto,
+  UpdateRecapDto,
+  ReviewRecapDto,
+} from './dto/create-recap.dto';
+import {
+  ADMIN_RECAP_STATUSES,
+  AdminRecapQueryDto,
+} from './dto/admin-recap-query.dto';
 import { RecapStatus, Role } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -64,7 +71,10 @@ export class RecapsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  private async resolveAccessibleClientIds(currentUserId: string, currentUserRole: string) {
+  private async resolveAccessibleClientIds(
+    currentUserId: string,
+    currentUserRole: string,
+  ) {
     if (currentUserRole === Role.SUPER_ADMIN) {
       const clients = await this.prisma.user.findMany({
         where: { role: Role.CLIENT },
@@ -86,7 +96,11 @@ export class RecapsService {
     return assignments.map((assignment) => assignment.client_id);
   }
 
-  private async assertAdminRecapAccess(id: string, adminId: string, adminRole: string) {
+  private async assertAdminRecapAccess(
+    id: string,
+    adminId: string,
+    adminRole: string,
+  ) {
     const recap = await this.prisma.weeklyRecap.findUnique({
       where: { id },
       include: {
@@ -142,7 +156,9 @@ export class RecapsService {
     return cur.length > 0 && cur !== prev;
   }
 
-  private normalizeOptionalText(value: string | null | undefined): string | null {
+  private normalizeOptionalText(
+    value: string | null | undefined,
+  ): string | null {
     const normalized = value?.trim() ?? '';
     return normalized.length > 0 ? normalized : null;
   }
@@ -161,7 +177,12 @@ export class RecapsService {
       if (!nextFeedback) {
         updates.client_feedback_sent_at = null;
         updates.client_feedback_read_at = null;
-      } else if (this.shouldNotifyClientFeedback(recap.client_feedback_text, nextFeedback)) {
+      } else if (
+        this.shouldNotifyClientFeedback(
+          recap.client_feedback_text,
+          nextFeedback,
+        )
+      ) {
         updates.client_feedback_sent_at = new Date();
         updates.client_feedback_read_at = null;
         shouldNotifyClientFeedback = true;
@@ -174,7 +195,11 @@ export class RecapsService {
     };
   }
 
-  private notifyClientFeedback(adminId: string, clientId: string, recapId: string) {
+  private notifyClientFeedback(
+    adminId: string,
+    clientId: string,
+    recapId: string,
+  ) {
     this.notificationsService
       .sendToUser(
         adminId,
@@ -213,7 +238,9 @@ export class RecapsService {
     }
 
     if (existingRecap && existingRecap.status !== RecapStatus.DRAFT) {
-      throw new ForbiddenException('Only draft recaps can be overwritten');
+      throw new ForbiddenException(
+        'You already have a submitted recap for this week',
+      );
     }
 
     const data = {
@@ -369,7 +396,12 @@ export class RecapsService {
   async markClientFeedbackAsRead(clientId: string, id: string) {
     const recap = await this.prisma.weeklyRecap.findUnique({
       where: { id },
-      select: { id: true, client_id: true, client_feedback_text: true, client_feedback_read_at: true },
+      select: {
+        id: true,
+        client_id: true,
+        client_feedback_text: true,
+        client_feedback_read_at: true,
+      },
     });
 
     if (!recap) {
@@ -393,7 +425,10 @@ export class RecapsService {
   }
 
   async getStats(adminId: string, adminRole: string) {
-    const accessibleClientIds = await this.resolveAccessibleClientIds(adminId, adminRole);
+    const accessibleClientIds = await this.resolveAccessibleClientIds(
+      adminId,
+      adminRole,
+    );
 
     if (accessibleClientIds.length === 0) {
       return { total: 0, submitted: 0, reviewed: 0, archived: 0 };
@@ -429,8 +464,15 @@ export class RecapsService {
     return { total, submitted, reviewed, archived };
   }
 
-  async findForAdmin(adminId: string, adminRole: string, query: AdminRecapQueryDto) {
-    const accessibleClientIds = await this.resolveAccessibleClientIds(adminId, adminRole);
+  async findForAdmin(
+    adminId: string,
+    adminRole: string,
+    query: AdminRecapQueryDto,
+  ) {
+    const accessibleClientIds = await this.resolveAccessibleClientIds(
+      adminId,
+      adminRole,
+    );
 
     if (accessibleClientIds.length === 0) {
       return paginate([], 0, query);
@@ -442,7 +484,8 @@ export class RecapsService {
 
     const clientIds = query.client_id ? [query.client_id] : accessibleClientIds;
     const statusFilter =
-      query.status === RecapStatus.SUBMITTED || query.status === RecapStatus.REVIEWED
+      query.status === RecapStatus.SUBMITTED ||
+      query.status === RecapStatus.REVIEWED
         ? query.status
         : { in: [...ADMIN_RECAP_STATUSES] };
     const where = {
@@ -483,7 +526,12 @@ export class RecapsService {
     return this.assertAdminRecapAccess(id, adminId, adminRole);
   }
 
-  async review(adminId: string, adminRole: string, id: string, dto: ReviewRecapDto) {
+  async review(
+    adminId: string,
+    adminRole: string,
+    id: string,
+    dto: ReviewRecapDto,
+  ) {
     const recap = await this.assertAdminRecapAccess(id, adminId, adminRole);
 
     if (recap.archived_at) {
@@ -494,13 +542,14 @@ export class RecapsService {
       throw new ForbiddenException('Cannot review a draft recap');
     }
 
-    const { data: feedbackUpdates, shouldNotifyClientFeedback } = this.buildClientFeedbackUpdate(
-      recap,
-      dto,
-    );
+    const { data: feedbackUpdates, shouldNotifyClientFeedback } =
+      this.buildClientFeedbackUpdate(recap, dto);
 
     if (recap.status === RecapStatus.REVIEWED) {
-      if (dto.admin_comments === undefined && Object.keys(feedbackUpdates).length === 0) {
+      if (
+        dto.admin_comments === undefined &&
+        Object.keys(feedbackUpdates).length === 0
+      ) {
         return recap;
       }
 
