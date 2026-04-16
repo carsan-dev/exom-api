@@ -1,5 +1,4 @@
 import {
-  ParseUUIDPipe,
   Controller,
   Get,
   Post,
@@ -39,7 +38,9 @@ export class DietsController {
   constructor(private readonly dietsService: DietsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List active diets for the admin catalog (paginated)' })
+  @ApiOperation({
+    summary: 'List active diets for the admin catalog (paginated)',
+  })
   @ApiOkResponse({ description: 'Diets listed successfully' })
   @ApiBadRequestResponse({ description: 'Invalid pagination parameters' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
@@ -49,7 +50,9 @@ export class DietsController {
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
   @Get('today')
-  @ApiOperation({ summary: 'Get the diet assigned to the current client for a given date' })
+  @ApiOperation({
+    summary: 'Get the diet assigned to the current client for a given date',
+  })
   @ApiOkResponse({ description: 'Assigned diet fetched successfully' })
   @ApiBadRequestResponse({ description: 'Invalid date parameter' })
   @Roles(Role.CLIENT)
@@ -67,7 +70,7 @@ export class DietsController {
   @ApiBadRequestResponse({ description: 'Invalid diet identifier' })
   @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Param('id') id: string) {
     return this.dietsService.findOne(id);
   }
 
@@ -76,10 +79,7 @@ export class DietsController {
   @ApiCreatedResponse({ description: 'Diet created successfully' })
   @ApiBadRequestResponse({ description: 'Invalid diet payload' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  create(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: CreateDietDto,
-  ) {
+  create(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateDietDto) {
     return this.dietsService.create(user.id, dto);
   }
 
@@ -87,12 +87,15 @@ export class DietsController {
   @RequiresApproval('diet.update', 'diet')
   @ApiOperation({ summary: 'Update a complete diet from the admin catalog' })
   @ApiOkResponse({ description: 'Diet updated successfully' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   @ApiBadRequestResponse({ description: 'Invalid diet payload' })
   @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: UpdateDietDto,
     @CurrentUser() _user: AuthenticatedUser,
   ) {
@@ -103,15 +106,15 @@ export class DietsController {
   @RequiresApproval('diet.delete', 'diet')
   @ApiOperation({ summary: 'Soft-delete a diet from the admin catalog' })
   @ApiNoContentResponse({ description: 'Diet deleted successfully' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   @ApiBadRequestResponse({ description: 'Invalid diet identifier' })
   @ApiNotFoundResponse({ description: 'Diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(
-    @Param('id', ParseUUIDPipe) id: string,
-    @CurrentUser() _user: AuthenticatedUser,
-  ) {
+  remove(@Param('id') id: string, @CurrentUser() _user: AuthenticatedUser) {
     return this.dietsService.remove(id);
   }
 }
