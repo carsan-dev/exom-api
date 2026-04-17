@@ -96,6 +96,22 @@ export class ChallengesService {
     return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   }
 
+  private isBeforeToday(date: Date) {
+    return this.normalizeDate(date).getTime() < this.normalizeDate(new Date()).getTime();
+  }
+
+  private assertDeadlineIsAssignable(deadline: Date | string | null | undefined) {
+    if (!deadline) {
+      return;
+    }
+
+    const deadlineDate = deadline instanceof Date ? deadline : new Date(deadline);
+
+    if (this.isBeforeToday(deadlineDate)) {
+      throw new BadRequestException('La fecha límite del reto no puede estar vencida');
+    }
+  }
+
   private normalizeEndOfDay(date: Date) {
     const normalized = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
     normalized.setUTCHours(23, 59, 59, 999);
@@ -476,6 +492,7 @@ export class ChallengesService {
     dto: CreateChallengeDto,
   ): Prisma.ChallengeCreateInput {
     const isManual = dto.is_manual ?? true;
+    this.assertDeadlineIsAssignable(dto.deadline);
 
     if (!isManual && !dto.rule_key) {
       throw new BadRequestException(
@@ -506,6 +523,10 @@ export class ChallengesService {
   ): Prisma.ChallengeUpdateInput {
     const isManual = dto.is_manual ?? challenge.is_manual;
     const nextRuleKey = dto.rule_key ?? challenge.rule_key;
+
+    if (dto.deadline !== undefined) {
+      this.assertDeadlineIsAssignable(dto.deadline);
+    }
 
     if (!isManual && !nextRuleKey) {
       throw new BadRequestException(
@@ -1027,6 +1048,8 @@ export class ChallengesService {
         adminRole,
         tx,
       );
+      this.assertDeadlineIsAssignable(challenge.deadline);
+
       const clientIds = await this.resolveTargetClientIds(
         adminId,
         adminRole,
