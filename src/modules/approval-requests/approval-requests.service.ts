@@ -128,6 +128,7 @@ export class ApprovalRequestsService {
     payload: unknown,
     requestReason?: string,
   ): Promise<{ approvalRequest: ApprovalRequest; alreadyExists: boolean }> {
+    const normalizedPayload = this.normalizePayload(payload);
     const existing = await this.findExistingPendingRequest(
       requesterId,
       actionType,
@@ -135,7 +136,11 @@ export class ApprovalRequestsService {
     );
 
     if (existing) {
-      return { approvalRequest: existing, alreadyExists: true };
+      return this.mergeExistingPendingRequest(
+        existing,
+        actionType,
+        normalizedPayload,
+      );
     }
 
     try {
@@ -145,7 +150,7 @@ export class ApprovalRequestsService {
           action_type: actionType,
           resource_type: resourceType,
           resource_id: resourceId ?? null,
-          payload: this.normalizePayload(payload),
+          payload: normalizedPayload,
           request_reason: requestReason ?? null,
         },
       });
@@ -165,7 +170,11 @@ export class ApprovalRequestsService {
         );
 
         if (pendingRequest) {
-          return { approvalRequest: pendingRequest, alreadyExists: true };
+          return this.mergeExistingPendingRequest(
+            pendingRequest,
+            actionType,
+            normalizedPayload,
+          );
         }
       }
 
@@ -573,6 +582,80 @@ export class ApprovalRequestsService {
     });
   }
 
+  private async mergeExistingPendingRequest(
+    existing: ApprovalRequest,
+    actionType: string,
+    payload: Prisma.InputJsonValue,
+  ) {
+    const mergedPayload = this.mergePendingPayload(
+      actionType,
+      existing.payload,
+      payload,
+    );
+
+    if (!mergedPayload) {
+      return { approvalRequest: existing, alreadyExists: true };
+    }
+
+    const approvalRequest = await this.prisma.approvalRequest.update({
+      where: { id: existing.id },
+      data: { payload: mergedPayload },
+    });
+
+    return { approvalRequest, alreadyExists: true };
+  }
+
+  private mergePendingPayload(
+    actionType: string,
+    currentPayload: unknown,
+    nextPayload: unknown,
+  ): Prisma.InputJsonValue | null {
+    const current = this.getPayloadRecord(currentPayload);
+    const next = this.getPayloadRecord(nextPayload);
+
+    if (actionType === 'challenge.assign') {
+      return {
+        ...current,
+        ...next,
+        client_ids: this.mergeStringArrays(
+          this.getStringArrayField(current, 'client_ids'),
+          this.getStringArrayField(next, 'client_ids'),
+        ),
+        apply_to_all_visible_clients:
+          this.getBooleanField(current, 'apply_to_all_visible_clients') === true ||
+          this.getBooleanField(next, 'apply_to_all_visible_clients') === true,
+      };
+    }
+
+    if (actionType === 'achievement.grant') {
+      const userIds = this.mergeStringArrays(
+        this.getTargetClientIds(current),
+        this.getTargetClientIds(next),
+      );
+
+      return {
+        ...current,
+        ...next,
+        user_id: userIds[0],
+        user_ids: userIds,
+      };
+    }
+
+    return null;
+  }
+
+  private getPayloadRecord(payload: unknown): Record<string, unknown> {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return {};
+    }
+
+    return payload as Record<string, unknown>;
+  }
+
+  private mergeStringArrays(...groups: string[][]) {
+    return [...new Set(groups.flat())];
+  }
+
   private normalizePayload(payload: unknown): Prisma.InputJsonValue {
     const safePayload = payload ?? {};
     return JSON.parse(JSON.stringify(safePayload)) as Prisma.InputJsonValue;
@@ -602,6 +685,12 @@ export class ApprovalRequestsService {
 
     if (targetUserId) {
       return targetUserId;
+    }
+
+    const targetUserIds = this.getStringArrayField(approvalRequest.payload, 'user_ids');
+
+    if (targetUserIds.length > 0) {
+      return targetUserIds.join(', ');
     }
 
     return approvalRequest.resource_id ?? 'Sin recurso asociado';
@@ -812,17 +901,17 @@ export class ApprovalRequestsService {
   }
 
   private async requiresTargetClientApproval(adminId: string, body?: unknown) {
-    const userId = this.getStringField(body, 'user_id');
+    const userIds = this.getTargetClientIds(body);
 
-    if (!userId) {
+    if (userIds.length === 0) {
       return false;
     }
 
-    if (!(await this.isValidClientId(userId))) {
+    if (!(await this.areValidClientIds(userIds))) {
       return false;
     }
 
-    return !(await this.areClientsVisibleToAdmin(adminId, [userId]));
+    return !(await this.areClientsVisibleToAdmin(adminId, userIds));
   }
 
   private async requiresNotificationRecipientApproval(
@@ -882,6 +971,15 @@ export class ApprovalRequestsService {
     }
 
     return this.getStringArrayField(body, 'user_ids');
+  }
+
+  private getTargetClientIds(body: unknown) {
+    const userId = this.getStringField(body, 'user_id');
+
+    return this.mergeStringArrays(
+      userId ? [userId] : [],
+      this.getStringArrayField(body, 'user_ids'),
+    );
   }
 
   private async areValidClientIds(clientIds: string[]) {

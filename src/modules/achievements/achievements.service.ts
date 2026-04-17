@@ -224,7 +224,17 @@ export class AchievementsService {
     admin: Pick<AuthenticatedUser, 'id' | 'role'>,
     prisma: PrismaClientLike = this.prisma,
   ) {
-    await this.assertClientIdsExist([userId], prisma);
+    await this.assertClientIdsVisibleToAdmin([userId], admin, prisma);
+  }
+
+  private async assertClientIdsVisibleToAdmin(
+    userIds: string[],
+    admin: Pick<AuthenticatedUser, 'id' | 'role'>,
+    prisma: PrismaClientLike = this.prisma,
+  ) {
+    const uniqueUserIds = [...new Set(userIds)];
+
+    await this.assertClientIdsExist(uniqueUserIds, prisma);
 
     if (admin.role === Role.SUPER_ADMIN) {
       return;
@@ -235,9 +245,15 @@ export class AchievementsService {
       admin.role,
       prisma,
     );
+    const visibleClientIdSet = new Set(visibleClientIds);
+    const inaccessibleClient = uniqueUserIds.find(
+      (userId) => !visibleClientIdSet.has(userId),
+    );
 
-    if (!visibleClientIds.includes(userId)) {
-      throw new ForbiddenException('El cliente no está visible para este admin');
+    if (inaccessibleClient) {
+      throw new ForbiddenException(
+        'Uno o más clientes no están visibles para este admin',
+      );
     }
   }
 
@@ -552,6 +568,15 @@ export class AchievementsService {
     });
   }
 
+  private resolveGrantTargetUserIds(dto: GrantAchievementDto) {
+    return [
+      ...new Set([
+        ...(dto.user_ids ?? []),
+        ...(dto.user_id ? [dto.user_id] : []),
+      ]),
+    ];
+  }
+
   async findAll(filters: AchievementFiltersDto) {
     const where: {
       OR?: { name?: { contains: string; mode: 'insensitive' }; description?: { contains: string; mode: 'insensitive' } }[];
@@ -755,21 +780,45 @@ export class AchievementsService {
       throw new NotFoundException('Achievement not found');
     }
 
-    await this.assertClientVisibleToAdmin(dto.user_id, admin);
+    const userIds = this.resolveGrantTargetUserIds(dto);
 
-    return this.prisma.userAchievement.upsert({
-      where: {
-        user_id_achievement_id: {
-          user_id: dto.user_id,
+    if (userIds.length === 0) {
+      throw new BadRequestException('Debes seleccionar al menos un cliente');
+    }
+
+    await this.assertClientIdsVisibleToAdmin(userIds, admin);
+
+    if (userIds.length === 1) {
+      const [userId] = userIds;
+
+      return this.prisma.userAchievement.upsert({
+        where: {
+          user_id_achievement_id: {
+            user_id: userId,
+            achievement_id: achievementId,
+          },
+        },
+        create: {
+          user_id: userId,
           achievement_id: achievementId,
         },
-      },
-      create: {
-        user_id: dto.user_id,
+        update: {},
+      });
+    }
+
+    const createdAchievements = await this.prisma.userAchievement.createMany({
+      data: userIds.map((userId) => ({
+        user_id: userId,
         achievement_id: achievementId,
-      },
-      update: {},
+      })),
+      skipDuplicates: true,
     });
+
+    return {
+      achievement_id: achievementId,
+      requested_users: userIds.length,
+      granted_users: createdAchievements.count,
+    };
   }
 
   async revokeFromUser(

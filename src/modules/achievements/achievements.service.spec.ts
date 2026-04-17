@@ -397,6 +397,40 @@ describe('AchievementsService', () => {
     expect(prisma.userAchievement.upsert).not.toHaveBeenCalled();
   });
 
+  it('grants an achievement to multiple visible clients in one request', async () => {
+    prisma.achievement.findUnique.mockResolvedValue({ id: 'ach-1' });
+    prisma.user.findMany.mockResolvedValue([
+      { id: 'client-1' },
+      { id: 'client-2' },
+    ]);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+      { client_id: 'client-2' },
+    ]);
+    prisma.userAchievement.createMany.mockResolvedValue({ count: 2 });
+
+    await expect(
+      service.grantToUser(
+        'ach-1',
+        { user_ids: ['client-1', 'client-2'] },
+        { id: 'admin-1', role: 'ADMIN' },
+      ),
+    ).resolves.toEqual({
+      achievement_id: 'ach-1',
+      requested_users: 2,
+      granted_users: 2,
+    });
+
+    expect(prisma.userAchievement.createMany).toHaveBeenCalledWith({
+      data: [
+        { user_id: 'client-1', achievement_id: 'ach-1' },
+        { user_id: 'client-2', achievement_id: 'ach-1' },
+      ],
+      skipDuplicates: true,
+    });
+    expect(prisma.userAchievement.upsert).not.toHaveBeenCalled();
+  });
+
   it('prevents revoking an achievement from a client outside the admin visibility', async () => {
     prisma.achievement.findUnique.mockResolvedValue({ id: 'ach-1' });
     prisma.user.findMany.mockResolvedValue([{ id: 'client-1' }]);

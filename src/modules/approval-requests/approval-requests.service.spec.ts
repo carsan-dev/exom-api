@@ -128,6 +128,119 @@ describe('ApprovalRequestsService', () => {
     expect(notificationsService.sendInternalNotifications).not.toHaveBeenCalled();
   });
 
+  it('merges assign targets into an existing pending challenge request', async () => {
+    const existingRequest = createApprovalRequest({
+      action_type: 'challenge.assign',
+      resource_type: 'challenge',
+      resource_id: 'challenge-1',
+      payload: {
+        client_ids: ['client-1'],
+        apply_to_all_visible_clients: false,
+      },
+      requester: undefined,
+      reviewer: undefined,
+    });
+    const updatedRequest = {
+      ...existingRequest,
+      payload: {
+        client_ids: ['client-1', 'client-2'],
+        apply_to_all_visible_clients: false,
+      },
+    };
+
+    prisma.approvalRequest.findFirst.mockResolvedValue(existingRequest);
+    prisma.approvalRequest.update.mockResolvedValue(updatedRequest);
+
+    await expect(
+      service.createRequest(
+        'admin-1',
+        'challenge.assign',
+        'challenge',
+        'challenge-1',
+        { client_ids: ['client-2'], apply_to_all_visible_clients: false },
+      ),
+    ).resolves.toEqual({
+      approvalRequest: updatedRequest,
+      alreadyExists: true,
+    });
+
+    expect(prisma.approvalRequest.update).toHaveBeenCalledWith({
+      where: { id: 'approval-1' },
+      data: {
+        payload: {
+          client_ids: ['client-1', 'client-2'],
+          apply_to_all_visible_clients: false,
+        },
+      },
+    });
+    expect(prisma.approvalRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('merges grant targets into an existing pending achievement request', async () => {
+    const existingRequest = createApprovalRequest({
+      action_type: 'achievement.grant',
+      resource_type: 'achievement',
+      resource_id: 'ach-1',
+      payload: { user_id: 'client-1' },
+      requester: undefined,
+      reviewer: undefined,
+    });
+    const updatedRequest = {
+      ...existingRequest,
+      payload: {
+        user_id: 'client-1',
+        user_ids: ['client-1', 'client-2'],
+      },
+    };
+
+    prisma.approvalRequest.findFirst.mockResolvedValue(existingRequest);
+    prisma.approvalRequest.update.mockResolvedValue(updatedRequest);
+
+    await expect(
+      service.createRequest(
+        'admin-1',
+        'achievement.grant',
+        'achievement',
+        'ach-1',
+        { user_ids: ['client-2'] },
+      ),
+    ).resolves.toEqual({
+      approvalRequest: updatedRequest,
+      alreadyExists: true,
+    });
+
+    expect(prisma.approvalRequest.update).toHaveBeenCalledWith({
+      where: { id: 'approval-1' },
+      data: {
+        payload: {
+          user_id: 'client-1',
+          user_ids: ['client-1', 'client-2'],
+        },
+      },
+    });
+    expect(prisma.approvalRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('requires approval when any bulk achievement grant target is outside admin visibility', async () => {
+    prisma.user.findMany.mockResolvedValue([
+      { id: 'client-1' },
+      { id: 'client-2' },
+    ]);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
+
+    await expect(
+      service.requiresApproval(
+        adminUser,
+        'achievement.grant',
+        'achievement',
+        'ach-1',
+        { user_ids: ['client-1', 'client-2'] },
+      ),
+    ).resolves.toBe(true);
+  });
+
   it('returns the existing pending request when resource_id is null', async () => {
     const existingRequest = createApprovalRequest({
       action_type: 'meal.create',

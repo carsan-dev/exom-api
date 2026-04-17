@@ -3,6 +3,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TrainingType } from '@prisma/client';
 import {
   IsIn,
+  IsArray,
   IsNotEmpty,
   IsNumber,
   IsObject,
@@ -13,6 +14,8 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ArrayNotEmpty,
+  ValidateIf,
 } from 'class-validator';
 import {
   ACHIEVEMENT_CRITERIA_TYPES,
@@ -78,8 +81,16 @@ export class CreateAchievementDto {
 }
 
 export class GrantAchievementDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ format: 'uuid', required: false })
+  @ValidateIf((dto: GrantAchievementDto) => !dto.user_ids?.length)
   @IsNotEmpty()
   @IsUUID('4')
-  user_id: string;
+  user_id?: string;
+
+  @ApiPropertyOptional({ type: [String], nullable: true })
+  @ValidateIf((dto: GrantAchievementDto) => !dto.user_id)
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  user_ids?: string[];
 }
