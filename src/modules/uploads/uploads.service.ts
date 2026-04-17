@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
@@ -72,6 +72,26 @@ export class UploadsService {
     return { file_url: `${this.publicUrl}/${fileKey}` };
   }
 
+  async deleteFileByUrl(fileUrl: string): Promise<boolean> {
+    const fileKey = this.extractFileKeyFromUrl(fileUrl);
+
+    if (!fileKey) {
+      return false;
+    }
+
+    if (this.isDev) {
+      return this.deleteFileLocal(fileKey);
+    }
+
+    const command = new DeleteObjectCommand({
+      Bucket: this.bucket,
+      Key: fileKey,
+    });
+
+    await this.s3Client.send(command);
+    return true;
+  }
+
   private async uploadFileLocal(
     buffer: Buffer,
     fileKey: string,
@@ -84,5 +104,40 @@ export class UploadsService {
 
     const port = this.config.get<number>('PORT', 3000);
     return { file_url: `http://localhost:${port}/api/v1/uploads/local/${fileKey}` };
+  }
+
+  private deleteFileLocal(fileKey: string): boolean {
+    const filePath = path.join(this.localUploadsDir, fileKey);
+
+    if (!fs.existsSync(filePath)) {
+      return false;
+    }
+
+    fs.unlinkSync(filePath);
+    return true;
+  }
+
+  private extractFileKeyFromUrl(fileUrl: string): string | null {
+    if (!fileUrl) {
+      return null;
+    }
+
+    if (fileUrl.startsWith(`${this.publicUrl}/`)) {
+      return fileUrl.slice(this.publicUrl.length + 1);
+    }
+
+    const localMarker = '/uploads/local/';
+    const markerIndex = fileUrl.indexOf(localMarker);
+    if (markerIndex >= 0) {
+      return fileUrl.slice(markerIndex + localMarker.length);
+    }
+
+    try {
+      const parsed = new URL(fileUrl);
+      const normalizedPath = parsed.pathname.replace(/^\/+/, '');
+      return normalizedPath || null;
+    } catch {
+      return null;
+    }
   }
 }

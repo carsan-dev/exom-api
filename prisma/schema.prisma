@@ -564,17 +564,19 @@ model FeedbackMedia {
   client_id      String
   exercise_id    String?
   media_type     MediaType
-  media_url      String
+  media_url      String?
   notes          String?
   admin_response String?
   status         FeedbackStatus @default(PENDING)
   reviewed_by    String?
   reviewed_at    DateTime?
+  media_deleted_at DateTime?
   created_at     DateTime       @default(now())
   updated_at     DateTime       @updatedAt
 
   client   User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
   exercise Exercise? @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
 
+  @@index([status, reviewed_at, media_deleted_at])
   @@map("feedback_media")
 }
