@@ -1,11 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class ProfileService {
+  private readonly logger = new Logger(ProfileService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -107,5 +110,62 @@ export class ProfileService {
   async getAvatarUploadUrl(userId: string) {
     const key = `avatars/${userId}/${Date.now()}.jpg`;
     return this.uploadsService.getPresignedUrl(key, 'image/jpeg');
+  }
+
+  async deleteMyAccount(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        firebase_uid: true,
+        profile: { select: { avatar_url: true } },
+        feedbackMedia: { select: { media_url: true } },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    const mediaUrls = [
+      user.profile?.avatar_url ?? null,
+      ...user.feedbackMedia.map((m) => m.media_url),
+    ].filter((url): url is string => !!url);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.planAssignment.deleteMany({ where: { client_id: userId } });
+      await tx.planAssignment.updateMany({
+        where: { admin_id: userId },
+        data: { admin_id: null },
+      });
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    await Promise.allSettled(
+      mediaUrls.map((url) =>
+        this.uploadsService
+          .deleteFileByUrl(url)
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `No se pudo eliminar archivo R2 ${url}: ${String(err)}`,
+            ),
+          ),
+      ),
+    );
+
+    if (user.firebase_uid && admin.apps.length > 0) {
+      try {
+        await admin.auth().deleteUser(user.firebase_uid);
+      } catch (err: unknown) {
+        const code = (err as { code?: string })?.code;
+        if (code !== 'auth/user-not-found') {
+          this.logger.warn(
+            `No se pudo eliminar usuario Firebase ${user.firebase_uid}: ${String(err)}`,
+          );
+        }
+      }
+    }
+
+    return { success: true };
   }
 }
