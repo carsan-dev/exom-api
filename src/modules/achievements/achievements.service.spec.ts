@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { AchievementUnlockSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from './achievements.service';
 
@@ -220,7 +221,13 @@ describe('AchievementsService', () => {
     });
 
     expect(prisma.userAchievement.createMany).toHaveBeenCalledWith({
-      data: [{ user_id: 'client-1', achievement_id: 'ach-training' }],
+      data: [
+        {
+          user_id: 'client-1',
+          achievement_id: 'ach-training',
+          unlock_source: AchievementUnlockSource.AUTOMATIC,
+        },
+      ],
       skipDuplicates: true,
     });
     expect(prisma.userAchievement.deleteMany).toHaveBeenCalledWith({
@@ -229,6 +236,39 @@ describe('AchievementsService', () => {
         achievement_id: { in: ['ach-streak'] },
       },
     });
+  });
+
+  it('keeps manually granted automatic achievements during recomputation', async () => {
+    prisma.achievement.findMany.mockResolvedValue([
+      {
+        id: 'ach-streak',
+        criteria_type: 'STREAK_DAYS',
+        criteria_value: 5,
+        rule_config: null,
+      },
+    ]);
+    prisma.dayProgress.findMany.mockResolvedValue([]);
+    prisma.planAssignment.findMany.mockResolvedValue([]);
+    prisma.challengeClient.count.mockResolvedValue(0);
+    prisma.bodyMetric.count.mockResolvedValue(0);
+    prisma.streak.findUnique.mockResolvedValue({ current_days: 1 });
+    prisma.userAchievement.findMany.mockResolvedValue([
+      {
+        achievement_id: 'ach-streak',
+        unlock_source: AchievementUnlockSource.MANUAL,
+      },
+    ]);
+
+    await expect(
+      service.evaluateAutomaticAchievementsForUser('client-1'),
+    ).resolves.toEqual({
+      user_id: 'client-1',
+      evaluated: 1,
+      granted: 0,
+      revoked: 0,
+    });
+
+    expect(prisma.userAchievement.deleteMany).not.toHaveBeenCalled();
   });
 
   it('recomputes automatic achievements for all visible clients in batch', async () => {
@@ -377,6 +417,7 @@ describe('AchievementsService', () => {
     expect(prisma.userAchievement.deleteMany).toHaveBeenCalledWith({
       where: {
         achievement_id: 'ach-1',
+        unlock_source: AchievementUnlockSource.AUTOMATIC,
       },
     });
   });
@@ -407,7 +448,17 @@ describe('AchievementsService', () => {
       { client_id: 'client-1' },
       { client_id: 'client-2' },
     ]);
-    prisma.userAchievement.createMany.mockResolvedValue({ count: 2 });
+    prisma.userAchievement.upsert
+      .mockResolvedValueOnce({
+        user_id: 'client-1',
+        achievement_id: 'ach-1',
+        unlock_source: AchievementUnlockSource.MANUAL,
+      })
+      .mockResolvedValueOnce({
+        user_id: 'client-2',
+        achievement_id: 'ach-1',
+        unlock_source: AchievementUnlockSource.MANUAL,
+      });
 
     await expect(
       service.grantToUser(
@@ -421,14 +472,38 @@ describe('AchievementsService', () => {
       granted_users: 2,
     });
 
-    expect(prisma.userAchievement.createMany).toHaveBeenCalledWith({
-      data: [
-        { user_id: 'client-1', achievement_id: 'ach-1' },
-        { user_id: 'client-2', achievement_id: 'ach-1' },
-      ],
-      skipDuplicates: true,
+    expect(prisma.userAchievement.upsert).toHaveBeenNthCalledWith(1, {
+      where: {
+        user_id_achievement_id: {
+          user_id: 'client-1',
+          achievement_id: 'ach-1',
+        },
+      },
+      create: {
+        user_id: 'client-1',
+        achievement_id: 'ach-1',
+        unlock_source: AchievementUnlockSource.MANUAL,
+      },
+      update: {
+        unlock_source: AchievementUnlockSource.MANUAL,
+      },
     });
-    expect(prisma.userAchievement.upsert).not.toHaveBeenCalled();
+    expect(prisma.userAchievement.upsert).toHaveBeenNthCalledWith(2, {
+      where: {
+        user_id_achievement_id: {
+          user_id: 'client-2',
+          achievement_id: 'ach-1',
+        },
+      },
+      create: {
+        user_id: 'client-2',
+        achievement_id: 'ach-1',
+        unlock_source: AchievementUnlockSource.MANUAL,
+      },
+      update: {
+        unlock_source: AchievementUnlockSource.MANUAL,
+      },
+    });
   });
 
   it('prevents revoking an achievement from a client outside the admin visibility', async () => {

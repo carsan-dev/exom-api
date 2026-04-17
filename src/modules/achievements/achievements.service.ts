@@ -4,7 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, Role, TrainingType } from '@prisma/client';
+import {
+  AchievementUnlockSource,
+  Prisma,
+  Role,
+  TrainingType,
+} from '@prisma/client';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
@@ -469,7 +474,7 @@ export class AchievementsService {
         user_id: userId,
         achievement_id: { in: scopedAchievementIds },
       },
-      select: { achievement_id: true },
+      select: { achievement_id: true, unlock_source: true },
     });
 
     const existingAchievementIdSet = new Set(
@@ -479,8 +484,12 @@ export class AchievementsService {
       (achievementId) => !existingAchievementIdSet.has(achievementId),
     );
     const achievementIdsToRevoke = existingAchievements
-      .map((achievement) => achievement.achievement_id)
-      .filter((achievementId) => !eligibleAchievementIdSet.has(achievementId));
+      .filter(
+        (achievement) =>
+          achievement.unlock_source !== AchievementUnlockSource.MANUAL &&
+          !eligibleAchievementIdSet.has(achievement.achievement_id),
+      )
+      .map((achievement) => achievement.achievement_id);
 
     const [createdAchievements, deletedAchievements] = await Promise.all([
       achievementIdsToGrant.length > 0
@@ -488,6 +497,7 @@ export class AchievementsService {
             data: achievementIdsToGrant.map((achievementId) => ({
               user_id: userId,
               achievement_id: achievementId,
+              unlock_source: AchievementUnlockSource.AUTOMATIC,
             })),
             skipDuplicates: true,
           })
@@ -564,7 +574,10 @@ export class AchievementsService {
     prisma: PrismaClientLike = this.prisma,
   ) {
     return prisma.userAchievement.deleteMany({
-      where: { achievement_id: achievementId },
+      where: {
+        achievement_id: achievementId,
+        unlock_source: AchievementUnlockSource.AUTOMATIC,
+      },
     });
   }
 
@@ -801,23 +814,39 @@ export class AchievementsService {
         create: {
           user_id: userId,
           achievement_id: achievementId,
+          unlock_source: AchievementUnlockSource.MANUAL,
         },
-        update: {},
+        update: {
+          unlock_source: AchievementUnlockSource.MANUAL,
+        },
       });
     }
 
-    const createdAchievements = await this.prisma.userAchievement.createMany({
-      data: userIds.map((userId) => ({
-        user_id: userId,
-        achievement_id: achievementId,
-      })),
-      skipDuplicates: true,
-    });
+    const grantedAchievements = await Promise.all(
+      userIds.map((userId) =>
+        this.prisma.userAchievement.upsert({
+          where: {
+            user_id_achievement_id: {
+              user_id: userId,
+              achievement_id: achievementId,
+            },
+          },
+          create: {
+            user_id: userId,
+            achievement_id: achievementId,
+            unlock_source: AchievementUnlockSource.MANUAL,
+          },
+          update: {
+            unlock_source: AchievementUnlockSource.MANUAL,
+          },
+        }),
+      ),
+    );
 
     return {
       achievement_id: achievementId,
       requested_users: userIds.length,
-      granted_users: createdAchievements.count,
+      granted_users: grantedAchievements.length,
     };
   }
 

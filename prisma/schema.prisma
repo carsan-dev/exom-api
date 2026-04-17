@@ -59,6 +59,11 @@ enum ChallengeAssignmentSource {
   GLOBAL
 }
 
+enum AchievementUnlockSource {
+  AUTOMATIC
+  MANUAL
+}
+
 enum RecapStatus {
   DRAFT
   SUBMITTED
@@ -545,15 +550,17 @@ model Achievement {
 }
 
 model UserAchievement {
-  id             String   @id @default(uuid())
+  id             String                  @id @default(uuid())
   user_id        String
   achievement_id String
-  unlocked_at    DateTime @default(now())
+  unlocked_at    DateTime                @default(now())
+  unlock_source  AchievementUnlockSource @default(AUTOMATIC)
 
   user        User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
   achievement Achievement @relation(fields: [achievement_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, achievement_id])
+  @@index([achievement_id, unlock_source])
   @@map("user_achievements")
 }
 
