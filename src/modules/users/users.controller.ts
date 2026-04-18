@@ -103,6 +103,15 @@ export class UsersController {
     return this.usersService.updateUserStatus(admin.id, id, dto);
   }
 
+  @Post('users/:id/resend-invitation')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Reenviar email de invitación para que el usuario fije su contraseña' })
+  @ApiResponse({ status: 201, description: 'Invitación reenviada correctamente' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
+  resendInvitation(@CurrentUser() admin: AuthenticatedUser, @Param('id') id: string) {
+    return this.usersService.resendInvitation(admin.id, admin.role, id);
+  }
+
   @Put('users/:id/unlock')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'Desbloquear cuenta de usuario' })

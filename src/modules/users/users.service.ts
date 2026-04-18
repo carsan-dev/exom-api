@@ -1,11 +1,13 @@
 import {
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
   ConflictException,
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
@@ -86,9 +88,10 @@ export class UsersService {
 
     await this.assertEmailAvailable(email);
 
+    const shouldSendInvitation = !dto.password;
     const firebaseUser = await this.createFirebaseEmailUser(
       email,
-      dto.password,
+      dto.password ?? this.generateSecureRandomPassword(),
       firstName,
       lastName,
     );
@@ -109,6 +112,10 @@ export class UsersService {
       include: { profile: true },
     });
 
+    if (shouldSendInvitation) {
+      await this.sendPasswordResetEmail(email);
+    }
+
     return this.serializeUserSummary(user);
   }
 
@@ -119,9 +126,10 @@ export class UsersService {
 
     await this.assertEmailAvailable(email);
 
+    const shouldSendInvitation = !dto.password;
     const firebaseUser = await this.createFirebaseEmailUser(
       email,
-      dto.password,
+      dto.password ?? this.generateSecureRandomPassword(),
       firstName,
       lastName,
     );
@@ -159,6 +167,10 @@ export class UsersService {
 
       return newUser;
     });
+
+    if (shouldSendInvitation) {
+      await this.sendPasswordResetEmail(email);
+    }
 
     return this.serializeUserSummary(user);
   }
@@ -626,6 +638,68 @@ export class UsersService {
     if (existing) {
       throw new ConflictException('El email ya está registrado');
     }
+  }
+
+  private generateSecureRandomPassword(): string {
+    return randomBytes(24).toString('base64url').slice(0, 32);
+  }
+
+  private async sendPasswordResetEmail(email: string): Promise<void> {
+    const apiKey = process.env.FIREBASE_WEB_API_KEY;
+    if (!apiKey) {
+      this.logger.warn(
+        `FIREBASE_WEB_API_KEY no configurado — email de invitación no enviado a ${email}`,
+      );
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+        },
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        this.logger.error(
+          `Firebase sendOobCode falló para ${email}: ${response.status} ${body}`,
+        );
+        throw new InternalServerErrorException(
+          'No se pudo enviar el email de invitación',
+        );
+      }
+
+      this.logger.log(`Email de invitación enviado a ${email}`);
+    } catch (err) {
+      if (err instanceof InternalServerErrorException) throw err;
+      this.logger.error(`Error enviando email a ${email}: ${err}`);
+      throw new InternalServerErrorException(
+        'No se pudo enviar el email de invitación',
+      );
+    }
+  }
+
+  async resendInvitation(currentUserId: string, currentUserRole: string, targetUserId: string) {
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, email: true, role: true },
+    });
+
+    if (!target) throw new NotFoundException('Usuario no encontrado');
+
+    if (currentUserRole !== Role.SUPER_ADMIN) {
+      if (target.role !== Role.CLIENT) {
+        throw new ForbiddenException('Sin permisos');
+      }
+      await this.assertClientAccess(currentUserId, currentUserRole, targetUserId);
+    }
+
+    await this.sendPasswordResetEmail(target.email);
+    return { message: 'Invitación reenviada' };
   }
 
   private async createFirebaseEmailUser(

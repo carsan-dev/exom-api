@@ -1,15 +1,16 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateAdminDto {
   @ApiProperty()
   @IsEmail()
   email: string;
 
-  @ApiProperty({ minLength: 8 })
+  @ApiPropertyOptional({ minLength: 8, description: 'Si se omite, se envía email de invitación' })
+  @IsOptional()
   @IsString()
   @MinLength(8)
-  password: string;
+  password?: string;
 
   @ApiProperty()
   @IsString()
