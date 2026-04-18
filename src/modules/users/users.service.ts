@@ -13,6 +13,7 @@ import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { Prisma, Role } from '@prisma/client';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
+import { UpdateClientProfileDto } from './dto/update-client-profile.dto';
 import type { BodyField } from './dto/admin-client-metrics-query.dto';
 
 type ClientAssignmentRecord = {
@@ -381,6 +382,40 @@ export class UsersService {
     await this.assertClientAccess(currentUserId, currentUserRole, clientId);
 
     return client;
+  }
+
+  async updateClientProfile(
+    currentUserId: string,
+    currentUserRole: string,
+    clientId: string,
+    dto: UpdateClientProfileDto,
+  ) {
+    const client = await this.prisma.user.findUnique({
+      where: { id: clientId },
+      select: { id: true, role: true, profile: { select: { id: true } } },
+    });
+
+    if (!client || client.role !== Role.CLIENT) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    await this.assertClientAccess(currentUserId, currentUserRole, clientId);
+
+    const mainGoal = dto.main_goal?.trim() || null;
+
+    await this.prisma.user.update({
+      where: { id: clientId },
+      data: {
+        profile: {
+          upsert: {
+            create: { first_name: '', last_name: '', main_goal: mainGoal },
+            update: { main_goal: mainGoal },
+          },
+        },
+      },
+    });
+
+    return this.getClientProfile(currentUserId, currentUserRole, clientId);
   }
 
   async getClientAssignments(currentUserId: string, currentUserRole: string, clientId: string) {

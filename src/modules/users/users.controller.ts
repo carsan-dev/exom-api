@@ -16,6 +16,7 @@ import { ClientAssignmentResponseDto } from './dto/client-assignment-response.dt
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
+import { UpdateClientProfileDto } from './dto/update-client-profile.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -170,6 +171,20 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
   getClientProfile(@CurrentUser() admin: AuthenticatedUser, @Param('id') clientId: string) {
     return this.usersService.getClientProfile(admin.id, admin.role, clientId);
+  }
+
+  @Patch('clients/:id/profile')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Actualizar datos del perfil de un cliente' })
+  @ApiResponse({ status: 200, description: 'Perfil actualizado correctamente' })
+  @ApiResponse({ status: 403, description: 'El cliente no está asignado al admin actual' })
+  @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
+  updateClientProfile(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Body() dto: UpdateClientProfileDto,
+  ) {
+    return this.usersService.updateClientProfile(admin.id, admin.role, clientId, dto);
   }
 
   @Get('clients/:id/progress')
