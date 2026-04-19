@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AchievementUnlockSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { AchievementsService } from './achievements.service';
 
 describe('AchievementsService', () => {
@@ -43,6 +44,10 @@ describe('AchievementsService', () => {
       findMany: jest.Mock;
     };
   };
+  let notifications: {
+    findSystemSenderId: jest.Mock;
+    sendInternalNotifications: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = {
@@ -83,8 +88,21 @@ describe('AchievementsService', () => {
         findMany: jest.fn(),
       },
     };
+    prisma.userAchievement.findMany.mockResolvedValue([]);
 
-    service = new AchievementsService(prisma as unknown as PrismaService);
+    notifications = {
+      findSystemSenderId: jest.fn().mockResolvedValue('system-admin'),
+      sendInternalNotifications: jest.fn().mockResolvedValue({
+        success: true,
+        sent: 1,
+        failed: 0,
+      }),
+    };
+
+    service = new AchievementsService(
+      prisma as unknown as PrismaService,
+      notifications as unknown as NotificationsService,
+    );
   });
 
   it('rejects unsupported rule_config combinations', async () => {
@@ -186,12 +204,14 @@ describe('AchievementsService', () => {
     prisma.achievement.findMany.mockResolvedValue([
       {
         id: 'ach-training',
+        name: 'Tres entrenos',
         criteria_type: 'TRAINING_DAYS',
         criteria_value: 2,
         rule_config: null,
       },
       {
         id: 'ach-streak',
+        name: 'Racha cinco',
         criteria_type: 'STREAK_DAYS',
         criteria_value: 5,
         rule_config: null,
@@ -236,12 +256,24 @@ describe('AchievementsService', () => {
         achievement_id: { in: ['ach-streak'] },
       },
     });
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'system-admin',
+      ['client-1'],
+      'Logro desbloqueado',
+      'Tres entrenos',
+      {
+        type: 'achievement',
+        route: '/achievements',
+        achievement_id: 'ach-training',
+      },
+    );
   });
 
   it('keeps manually granted automatic achievements during recomputation', async () => {
     prisma.achievement.findMany.mockResolvedValue([
       {
         id: 'ach-streak',
+        name: 'Racha cinco',
         criteria_type: 'STREAK_DAYS',
         criteria_value: 5,
         rule_config: null,
@@ -439,7 +471,10 @@ describe('AchievementsService', () => {
   });
 
   it('grants an achievement to multiple visible clients in one request', async () => {
-    prisma.achievement.findUnique.mockResolvedValue({ id: 'ach-1' });
+    prisma.achievement.findUnique.mockResolvedValue({
+      id: 'ach-1',
+      name: 'Logro manual',
+    });
     prisma.user.findMany.mockResolvedValue([
       { id: 'client-1' },
       { id: 'client-2' },
@@ -504,6 +539,18 @@ describe('AchievementsService', () => {
         unlock_source: AchievementUnlockSource.MANUAL,
       },
     });
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledTimes(2);
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'admin-1',
+      ['client-1'],
+      'Logro desbloqueado',
+      'Logro manual',
+      {
+        type: 'achievement',
+        route: '/achievements',
+        achievement_id: 'ach-1',
+      },
+    );
   });
 
   it('prevents revoking an achievement from a client outside the admin visibility', async () => {

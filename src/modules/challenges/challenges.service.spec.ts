@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ChallengeType, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { ChallengesService } from './challenges.service';
 
 describe('ChallengesService', () => {
@@ -24,6 +25,10 @@ describe('ChallengesService', () => {
   let achievementsService: {
     evaluateAutomaticAchievementsForUser: jest.Mock;
   };
+  let notifications: {
+    findSystemSenderId: jest.Mock;
+    sendInternalNotifications: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = {
@@ -44,11 +49,20 @@ describe('ChallengesService', () => {
     achievementsService = {
       evaluateAutomaticAchievementsForUser: jest.fn(),
     };
+    notifications = {
+      findSystemSenderId: jest.fn().mockResolvedValue('system-admin'),
+      sendInternalNotifications: jest.fn().mockResolvedValue({
+        success: true,
+        sent: 1,
+        failed: 0,
+      }),
+    };
     jest.useFakeTimers().setSystemTime(new Date('2026-04-17T12:00:00.000Z'));
 
     service = new ChallengesService(
       prisma as unknown as PrismaService,
       achievementsService as unknown as AchievementsService,
+      notifications as unknown as NotificationsService,
     );
   });
 
@@ -74,8 +88,12 @@ describe('ChallengesService', () => {
 
   it('re-evaluates achievements after updating manual challenge progress', async () => {
     prisma.challengeClient.findUnique.mockResolvedValue({
+      is_completed: false,
       completed_at: null,
       challenge: {
+        id: 'challenge-1',
+        title: '5 comidas limpias',
+        created_by: 'admin-1',
         is_manual: true,
         target_value: 5,
       },
@@ -89,6 +107,17 @@ describe('ChallengesService', () => {
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
     ).toHaveBeenCalledWith('client-1', prisma as unknown as PrismaService);
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'admin-1',
+      ['client-1'],
+      'Reto completado: 5 comidas limpias',
+      'Buen trabajo. Has completado el reto.',
+      {
+        type: 'challenge',
+        route: '/challenges',
+        challenge_id: 'challenge-1',
+      },
+    );
   });
 
   it('allows challenges without a deadline', async () => {

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -13,6 +14,7 @@ import {
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateAchievementDto, GrantAchievementDto } from './dto/create-achievement.dto';
 import { UpdateAchievementDto } from './dto/update-achievement.dto';
 import {
@@ -31,6 +33,7 @@ type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
 type AchievementRuleRecord = {
   id: string;
+  name: string;
   criteria_type: string;
   criteria_value: number;
   rule_config: Prisma.JsonValue | null;
@@ -51,7 +54,12 @@ interface AchievementSyncResult {
 
 @Injectable()
 export class AchievementsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AchievementsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private isOfficialCriteriaType(
     value: string,
@@ -335,6 +343,7 @@ export class AchievementsService {
         },
         select: {
           id: true,
+          name: true,
           criteria_type: true,
           criteria_value: true,
           rule_config: true,
@@ -348,6 +357,7 @@ export class AchievementsService {
       where: { id: { in: uniqueAchievementIds } },
       select: {
         id: true,
+        name: true,
         criteria_type: true,
         criteria_value: true,
         rule_config: true,
@@ -512,6 +522,19 @@ export class AchievementsService {
         : Promise.resolve({ count: 0 }),
     ]);
 
+    if (createdAchievements.count > 0) {
+      await this.notifyAchievementsUnlocked(
+        userId,
+        achievementIdsToGrant.map((achievementId) => {
+          const achievement = achievements.find((a) => a.id === achievementId);
+          return {
+            id: achievementId,
+            name: achievement?.name ?? 'Logro desbloqueado',
+          };
+        }),
+      );
+    }
+
     return {
       granted: createdAchievements.count,
       revoked: deletedAchievements.count,
@@ -588,6 +611,64 @@ export class AchievementsService {
         ...(dto.user_id ? [dto.user_id] : []),
       ]),
     ];
+  }
+
+  private async resolveExistingAchievementUserIds(
+    achievementId: string,
+    userIds: string[],
+    prisma: PrismaClientLike = this.prisma,
+  ) {
+    const existing = await prisma.userAchievement.findMany({
+      where: {
+        achievement_id: achievementId,
+        user_id: { in: userIds },
+      },
+      select: { user_id: true },
+    });
+
+    return new Set(existing.map((row) => row.user_id));
+  }
+
+  private async notifyAchievementsUnlocked(
+    userId: string,
+    achievements: Array<{ id: string; name: string }>,
+    senderId?: string,
+  ) {
+    if (achievements.length === 0) {
+      return;
+    }
+
+    try {
+      const resolvedSenderId =
+        senderId ?? (await this.notifications.findSystemSenderId(userId));
+
+      if (!resolvedSenderId) {
+        this.logger.warn(
+          `Skipping achievement notification for ${userId}: no sender available`,
+        );
+        return;
+      }
+
+      await Promise.all(
+        achievements.map((achievement) =>
+          this.notifications.sendInternalNotifications(
+            resolvedSenderId,
+            [userId],
+            'Logro desbloqueado',
+            achievement.name,
+            {
+              type: 'achievement',
+              route: '/achievements',
+              achievement_id: achievement.id,
+            },
+          ),
+        ),
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send achievement notification to ${userId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   async findAll(filters: AchievementFiltersDto) {
@@ -800,11 +881,16 @@ export class AchievementsService {
     }
 
     await this.assertClientIdsVisibleToAdmin(userIds, admin);
+    const existingUserIds = await this.resolveExistingAchievementUserIds(
+      achievementId,
+      userIds,
+    );
+    const newUserIds = userIds.filter((userId) => !existingUserIds.has(userId));
 
     if (userIds.length === 1) {
       const [userId] = userIds;
 
-      return this.prisma.userAchievement.upsert({
+      const userAchievement = await this.prisma.userAchievement.upsert({
         where: {
           user_id_achievement_id: {
             user_id: userId,
@@ -820,6 +906,16 @@ export class AchievementsService {
           unlock_source: AchievementUnlockSource.MANUAL,
         },
       });
+
+      if (newUserIds.includes(userId)) {
+        await this.notifyAchievementsUnlocked(
+          userId,
+          [{ id: achievementId, name: achievement.name }],
+          admin.id,
+        );
+      }
+
+      return userAchievement;
     }
 
     const grantedAchievements = await Promise.all(
@@ -840,6 +936,16 @@ export class AchievementsService {
             unlock_source: AchievementUnlockSource.MANUAL,
           },
         }),
+      ),
+    );
+
+    await Promise.all(
+      newUserIds.map((userId) =>
+        this.notifyAchievementsUnlocked(
+          userId,
+          [{ id: achievementId, name: achievement.name }],
+          admin.id,
+        ),
       ),
     );
 

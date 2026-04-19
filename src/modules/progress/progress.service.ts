@@ -1,10 +1,11 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type TransactionClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   CompleteTrainingDto,
   MarkExerciseDto,
@@ -25,10 +26,13 @@ interface AssignmentContext {
 
 @Injectable()
 export class ProgressService {
+  private readonly logger = new Logger(ProgressService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
     private readonly achievementsService: AchievementsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private parseExercisesCompleted(
@@ -100,6 +104,25 @@ export class ProgressService {
     return [...assignedExerciseIds].every((exerciseId) =>
       completedIds.has(exerciseId),
     );
+  }
+
+  private async notifyStreakMilestone(clientId: string, days: number) {
+    try {
+      const senderId = await this.notifications.findSystemSenderId(clientId);
+      if (!senderId) return;
+
+      await this.notifications.sendInternalNotifications(
+        senderId,
+        [clientId],
+        `🔥 ${days} días de racha!`,
+        'Sigue así. Tu constancia está creciendo.',
+        { type: 'streak', route: '/' },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send streak milestone notification to ${clientId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   async getDayProgress(clientId: string, dateStr: string) {
@@ -430,5 +453,12 @@ export class ProgressService {
         last_active_date: dateOnly,
       },
     });
+
+    if (
+      newCurrentDays !== streak.current_days &&
+      [7, 30, 100, 365].includes(newCurrentDays)
+    ) {
+      await this.notifyStreakMilestone(clientId, newCurrentDays);
+    }
   }
 }

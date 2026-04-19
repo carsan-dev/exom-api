@@ -55,6 +55,11 @@ export class NotificationsService {
       case 'challenge':
       case 'challenge_update':
         return '/challenges';
+      case 'achievement':
+        return '/achievements';
+      case 'streak':
+      case 'streak_at_risk':
+        return '/';
       case 'profile':
         return '/profile';
       case 'calendar':
@@ -512,13 +517,13 @@ export class NotificationsService {
     );
   }
 
-  async findSystemSenderId(): Promise<string | null> {
+  async findSystemSenderId(fallbackUserId?: string): Promise<string | null> {
     const superAdmin = await this.prisma.user.findFirst({
       where: { role: Role.SUPER_ADMIN, is_active: true },
       orderBy: { created_at: 'asc' },
       select: { id: true },
     });
 
-    return superAdmin?.id ?? null;
+    return superAdmin?.id ?? fallbackUserId ?? null;
   }
 }

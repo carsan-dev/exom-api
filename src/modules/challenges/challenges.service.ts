@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -13,6 +14,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import { AchievementsService } from '../achievements/achievements.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   CreateChallengeDto,
   AssignChallengeDto,
@@ -75,11 +77,20 @@ type ChallengeClientRecord = Prisma.ChallengeClientGetPayload<{
   select: typeof CHALLENGE_CLIENT_SELECT;
 }>;
 
+type ChallengeNotificationData = {
+  id: string;
+  title: string;
+  created_by?: string | null;
+};
+
 @Injectable()
 export class ChallengesService {
+  private readonly logger = new Logger(ChallengesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly achievementsService: AchievementsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private async evaluateAchievementsForClient(
@@ -90,6 +101,73 @@ export class ChallengesService {
       clientId,
       prisma,
     );
+  }
+
+  private async resolveNotificationSender(
+    senderId: string | null | undefined,
+    recipientId: string,
+  ) {
+    return senderId ?? this.notifications.findSystemSenderId(recipientId);
+  }
+
+  private async notifyChallengeAssigned(
+    senderId: string | null | undefined,
+    clientId: string,
+    challenge: ChallengeNotificationData,
+  ) {
+    try {
+      const resolvedSenderId = await this.resolveNotificationSender(
+        senderId,
+        clientId,
+      );
+      if (!resolvedSenderId) return;
+
+      await this.notifications.sendInternalNotifications(
+        resolvedSenderId,
+        [clientId],
+        `Nuevo reto: ${challenge.title}`,
+        'Tienes un nuevo reto disponible.',
+        {
+          type: 'challenge',
+          route: '/challenges',
+          challenge_id: challenge.id,
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send challenge assignment notification to ${clientId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async notifyChallengeCompleted(
+    senderId: string | null | undefined,
+    clientId: string,
+    challenge: ChallengeNotificationData,
+  ) {
+    try {
+      const resolvedSenderId = await this.resolveNotificationSender(
+        senderId,
+        clientId,
+      );
+      if (!resolvedSenderId) return;
+
+      await this.notifications.sendInternalNotifications(
+        resolvedSenderId,
+        [clientId],
+        `Reto completado: ${challenge.title}`,
+        'Buen trabajo. Has completado el reto.',
+        {
+          type: 'challenge',
+          route: '/challenges',
+          challenge_id: challenge.id,
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send challenge completion notification to ${clientId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   private normalizeDate(date: Date) {
@@ -571,13 +649,19 @@ export class ChallengesService {
   ) {
     const targetClientIds = [...new Set(creatorScopeClientIds)];
     const targetClientIdSet = new Set(targetClientIds);
-    const existingAssignments = await prisma.challengeClient.findMany({
-      where: { challenge_id: challengeId },
-      select: {
-        client_id: true,
-        assignment_source: true,
-      },
-    });
+    const [challenge, existingAssignments] = await Promise.all([
+      prisma.challenge.findUnique({
+        where: { id: challengeId },
+        select: { id: true, title: true, created_by: true },
+      }),
+      prisma.challengeClient.findMany({
+        where: { challenge_id: challengeId },
+        select: {
+          client_id: true,
+          assignment_source: true,
+        },
+      }),
+    ]);
     const existingClientIdSet = new Set(
       existingAssignments.map((assignment) => assignment.client_id),
     );
@@ -604,6 +688,18 @@ export class ChallengesService {
         })),
         skipDuplicates: true,
       });
+
+      if (challenge) {
+        await Promise.all(
+          clientIdsToCreate.map((clientId) =>
+            this.notifyChallengeAssigned(
+              challenge.created_by,
+              clientId,
+              challenge,
+            ),
+          ),
+        );
+      }
     }
 
     if (globalClientIdsToDelete.length > 0) {
@@ -638,34 +734,61 @@ export class ChallengesService {
       return existingAssignment;
     }
 
-    return prisma.challengeClient.create({
-      data: {
-        challenge_id: challengeId,
-        client_id: clientId,
-        assignment_source: ChallengeAssignmentSource.GLOBAL,
-        current_value: 0,
-        is_completed: false,
-      },
-      select: {
-        assignment_source: true,
-      },
-    });
+    const [challenge, createdAssignment] = await Promise.all([
+      prisma.challenge.findUnique({
+        where: { id: challengeId },
+        select: { id: true, title: true, created_by: true },
+      }),
+      prisma.challengeClient.create({
+        data: {
+          challenge_id: challengeId,
+          client_id: clientId,
+          assignment_source: ChallengeAssignmentSource.GLOBAL,
+          current_value: 0,
+          is_completed: false,
+        },
+        select: {
+          assignment_source: true,
+        },
+      }),
+    ]);
+
+    if (challenge) {
+      await this.notifyChallengeAssigned(
+        challenge.created_by,
+        clientId,
+        challenge,
+      );
+    }
+
+    return createdAssignment;
   }
 
   private async upsertManualAssignment(
-    challengeId: string,
+    challenge: ChallengeNotificationData,
     clientId: string,
+    senderId: string,
     prisma: PrismaClientLike = this.prisma,
   ) {
+    const existingAssignment = await prisma.challengeClient.findUnique({
+      where: {
+        challenge_id_client_id: {
+          challenge_id: challenge.id,
+          client_id: clientId,
+        },
+      },
+      select: { id: true },
+    });
+
     await prisma.challengeClient.upsert({
       where: {
         challenge_id_client_id: {
-          challenge_id: challengeId,
+          challenge_id: challenge.id,
           client_id: clientId,
         },
       },
       create: {
-        challenge_id: challengeId,
+        challenge_id: challenge.id,
         client_id: clientId,
         assignment_source: ChallengeAssignmentSource.MANUAL,
         current_value: 0,
@@ -675,6 +798,10 @@ export class ChallengesService {
         assignment_source: ChallengeAssignmentSource.MANUAL,
       },
     });
+
+    if (!existingAssignment) {
+      await this.notifyChallengeAssigned(senderId, clientId, challenge);
+    }
   }
 
   private async refreshManualAssignments(
@@ -682,21 +809,28 @@ export class ChallengesService {
     targetValue: number,
     prisma: PrismaClientLike = this.prisma,
   ) {
-    const assignments = await prisma.challengeClient.findMany({
-      where: { challenge_id: challengeId },
-      select: {
-        challenge_id: true,
-        client_id: true,
-        current_value: true,
-        completed_at: true,
-      },
-    });
+    const [challenge, assignments] = await Promise.all([
+      prisma.challenge.findUnique({
+        where: { id: challengeId },
+        select: { id: true, title: true, created_by: true },
+      }),
+      prisma.challengeClient.findMany({
+        where: { challenge_id: challengeId },
+        select: {
+          challenge_id: true,
+          client_id: true,
+          current_value: true,
+          is_completed: true,
+          completed_at: true,
+        },
+      }),
+    ]);
 
     await Promise.all(
-      assignments.map((assignment) => {
+      assignments.map(async (assignment) => {
         const isCompleted = assignment.current_value >= targetValue;
 
-        return prisma.challengeClient.update({
+        await prisma.challengeClient.update({
           where: {
             challenge_id_client_id: {
               challenge_id: assignment.challenge_id,
@@ -710,6 +844,14 @@ export class ChallengesService {
               : null,
           },
         });
+
+        if (challenge && isCompleted && !assignment.is_completed) {
+          await this.notifyChallengeCompleted(
+            challenge.created_by,
+            assignment.client_id,
+            challenge,
+          );
+        }
       }),
     );
   }
@@ -1063,7 +1205,7 @@ export class ChallengesService {
 
       await Promise.all(
         clientIds.map((clientId) =>
-          this.upsertManualAssignment(challengeId, clientId, tx),
+          this.upsertManualAssignment(challenge, clientId, adminId, tx),
         ),
       );
 
@@ -1198,6 +1340,8 @@ export class ChallengesService {
             target_value: true,
             rule_key: true,
             deadline: true,
+            title: true,
+            created_by: true,
           },
         },
       },
@@ -1250,7 +1394,7 @@ export class ChallengesService {
     ]);
 
     await Promise.all(
-      assignments.map((assignment) => {
+      assignments.map(async (assignment) => {
         const currentValue = this.evaluateAutomaticProgress(
           assignment.challenge.rule_key as ChallengeRuleKey | null,
           assignment.assigned_at,
@@ -1261,7 +1405,7 @@ export class ChallengesService {
         );
         const isCompleted = currentValue >= assignment.challenge.target_value;
 
-        return prisma.challengeClient.update({
+        await prisma.challengeClient.update({
           where: {
             challenge_id_client_id: {
               challenge_id: assignment.challenge_id,
@@ -1276,6 +1420,14 @@ export class ChallengesService {
               : null,
           },
         });
+
+        if (isCompleted && !assignment.is_completed) {
+          await this.notifyChallengeCompleted(
+            assignment.challenge.created_by,
+            assignment.client_id,
+            assignment.challenge,
+          );
+        }
       }),
     );
   }
@@ -1322,6 +1474,14 @@ export class ChallengesService {
           : null,
       },
     });
+
+    if (isCompleted && !record.is_completed) {
+      await this.notifyChallengeCompleted(
+        record.challenge.created_by,
+        clientId,
+        record.challenge,
+      );
+    }
 
     await this.evaluateAchievementsForClient(clientId);
 

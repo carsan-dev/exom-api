@@ -219,4 +219,65 @@ export class NotificationsSchedulerService {
       { type: 'recap_reminder', route: '/recap' },
     );
   }
+
+  @Cron('0 20 * * *', { timeZone: TZ })
+  async warnStreakAtRisk() {
+    const sender = await this.resolveSender();
+    if (!sender) return;
+
+    const today = this.todayUtcDate();
+    const streaks = await this.prisma.streak.findMany({
+      where: {
+        current_days: { gt: 0 },
+        last_active_date: { lt: today },
+        client: {
+          is: {
+            role: Role.CLIENT,
+            is_active: true,
+          },
+        },
+      },
+      select: { client_id: true, current_days: true },
+    });
+
+    if (streaks.length === 0) return;
+
+    const progress = await this.prisma.dayProgress.findMany({
+      where: {
+        date: today,
+        client_id: { in: streaks.map((streak) => streak.client_id) },
+      },
+      select: {
+        client_id: true,
+        training_completed: true,
+        meals_completed: true,
+      },
+    });
+    const completedToday = new Set(
+      progress
+        .filter(
+          (entry) =>
+            entry.training_completed || entry.meals_completed.length > 0,
+        )
+        .map((entry) => entry.client_id),
+    );
+    const pending = streaks.filter(
+      (streak) => !completedToday.has(streak.client_id),
+    );
+
+    if (pending.length === 0) return;
+
+    this.logger.log(`[cron] warnStreakAtRisk → ${pending.length} clients`);
+    await Promise.all(
+      pending.map((streak) =>
+        this.notifications.sendInternalNotifications(
+          sender,
+          [streak.client_id],
+          `No pierdas tu racha de ${streak.current_days} días`,
+          'Registra tu progreso de hoy para mantenerla activa.',
+          { type: 'streak_at_risk', route: '/' },
+        ),
+      ),
+    );
+  }
 }
