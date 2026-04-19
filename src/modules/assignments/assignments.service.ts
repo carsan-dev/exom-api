@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -12,7 +13,10 @@ import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+
+type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
 const assignmentInclude = {
   training: {
@@ -79,7 +83,89 @@ interface AssignmentMonthRange extends AssignmentRange {
 
 @Injectable()
 export class AssignmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AssignmentsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  private inferPlanKind(
+    days: Array<{
+      training_id?: string | null;
+      diet_id?: string | null;
+      is_rest_day?: boolean;
+    }>,
+  ): PlanNotifKind {
+    const active = days.filter((d) => !d.is_rest_day);
+    if (active.length === 0) return 'rest';
+    const hasTraining = active.some((d) => !!d.training_id);
+    const hasDiet = active.some((d) => !!d.diet_id);
+    if (hasTraining && hasDiet) return 'plan';
+    if (hasTraining) return 'training';
+    if (hasDiet) return 'diet';
+    return 'plan';
+  }
+
+  private routeForKind(kind: PlanNotifKind): string {
+    switch (kind) {
+      case 'training':
+        return '/trainings';
+      case 'diet':
+        return '/diets';
+      default:
+        return '/calendar';
+    }
+  }
+
+  private async notifyPlanAssigned(params: {
+    actorId: string;
+    clientId: string;
+    kind: PlanNotifKind;
+    dayCount: number;
+  }) {
+    const { actorId, clientId, kind, dayCount } = params;
+    try {
+      const titleMap: Record<PlanNotifKind, string> = {
+        training: 'Nuevo entrenamiento asignado',
+        diet: 'Nueva dieta asignada',
+        plan: 'Tu plan se ha actualizado',
+        rest: 'Tu plan se ha actualizado',
+      };
+      const bodyMap: Record<PlanNotifKind, string> = {
+        training:
+          dayCount === 1
+            ? 'Tu entrenador asignó un entrenamiento'
+            : `Tu entrenador asignó ${dayCount} días de entrenamiento`,
+        diet:
+          dayCount === 1
+            ? 'Tu entrenador asignó una dieta'
+            : `Tu entrenador asignó ${dayCount} días de dieta`,
+        plan: `Tu entrenador actualizó tu plan (${dayCount} días)`,
+        rest: 'Tu plan se ha actualizado',
+      };
+
+      await this.notifications.sendInternalNotifications(
+        actorId,
+        [clientId],
+        titleMap[kind],
+        bodyMap[kind],
+        {
+          type:
+            kind === 'training'
+              ? 'training'
+              : kind === 'diet'
+                ? 'diet'
+                : 'calendar',
+          route: this.routeForKind(kind),
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send plan notification to ${clientId}: ${(err as Error).message}`,
+      );
+    }
+  }
 
   private parseDate(dateStr: string): Date {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
@@ -351,6 +437,18 @@ export class AssignmentsService {
       }),
     );
 
+    if (uniqueDates.length > 0) {
+      const kind = this.inferPlanKind([normalizedInput]);
+      if (kind !== 'rest') {
+        await this.notifyPlanAssigned({
+          actorId: user.id,
+          clientId: dto.client_id,
+          kind,
+          dayCount: uniqueDates.length,
+        });
+      }
+    }
+
     return results.map((assignment) => this.serializeAssignment(assignment));
   }
 
@@ -415,6 +513,18 @@ export class AssignmentsService {
         }),
       ),
     );
+
+    if (uniqueDays.length > 0) {
+      const kind = this.inferPlanKind(uniqueDays);
+      if (kind !== 'rest') {
+        await this.notifyPlanAssigned({
+          actorId: user.id,
+          clientId: dto.client_id,
+          kind,
+          dayCount: uniqueDays.length,
+        });
+      }
+    }
 
     return results.map((assignment) => this.serializeAssignment(assignment));
   }
@@ -485,6 +595,31 @@ export class AssignmentsService {
     );
 
     void results;
+
+    const copiedDays = sourceWeek.dates
+      .map((sourceDate) => {
+        const sourceDateKey = sourceDate.toISOString().split('T')[0];
+        const source = sourceMap.get(sourceDateKey);
+        if (!source) return null;
+        return {
+          training_id: source.training_id,
+          diet_id: source.diet_id,
+          is_rest_day: source.is_rest_day,
+        };
+      })
+      .filter((d): d is NonNullable<typeof d> => d !== null);
+
+    if (copiedDays.length > 0) {
+      const kind = this.inferPlanKind(copiedDays);
+      if (kind !== 'rest') {
+        await this.notifyPlanAssigned({
+          actorId: user.id,
+          clientId: dto.client_id,
+          kind,
+          dayCount: copiedDays.length,
+        });
+      }
+    }
 
     return this.getWeek(user, {
       client_id: dto.client_id,
@@ -567,6 +702,16 @@ export class AssignmentsService {
       },
       include: assignmentInclude,
     });
+
+    const kind = this.inferPlanKind([normalizedInput]);
+    if (kind !== 'rest') {
+      await this.notifyPlanAssigned({
+        actorId: user.id,
+        clientId: assignment.client_id,
+        kind,
+        dayCount: 1,
+      });
+    }
 
     return this.serializeAssignment(updatedAssignment);
   }

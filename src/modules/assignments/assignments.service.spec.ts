@@ -6,6 +6,7 @@ import {
 import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AssignmentsService } from './assignments.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 
 function createAssignment(overrides: Record<string, unknown> = {}) {
   return {
@@ -46,6 +47,7 @@ describe('AssignmentsService', () => {
     };
     $transaction: jest.Mock;
   };
+  let notifications: { sendInternalNotifications: jest.Mock };
 
   const adminUser = {
     id: 'admin-1',
@@ -95,7 +97,18 @@ describe('AssignmentsService', () => {
       ),
     };
 
-    service = new AssignmentsService(prisma as unknown as PrismaService);
+    notifications = {
+      sendInternalNotifications: jest.fn().mockResolvedValue({
+        success: true,
+        sent: 0,
+        failed: 0,
+      }),
+    };
+
+    service = new AssignmentsService(
+      prisma as unknown as PrismaService,
+      notifications as unknown as NotificationsService,
+    );
   });
 
   it('rejects bulk assignment when no training, diet or rest day is provided', async () => {
@@ -146,6 +159,13 @@ describe('AssignmentsService', () => {
         create: expect.objectContaining({ admin_id: 'super-admin-1' }),
         update: expect.objectContaining({ admin_id: 'super-admin-1' }),
       }),
+    );
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'super-admin-1',
+      ['client-1'],
+      'Nuevo entrenamiento asignado',
+      'Tu entrenador asign\u00f3 un entrenamiento',
+      { type: 'training', route: '/trainings' },
     );
   });
 
@@ -332,6 +352,13 @@ describe('AssignmentsService', () => {
           is_rest_day: true,
         }),
       }),
+    );
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'admin-1',
+      ['client-1'],
+      'Nueva dieta asignada',
+      'Tu entrenador asign\u00f3 2 d\u00edas de dieta',
+      { type: 'diet', route: '/diets' },
     );
   });
 
