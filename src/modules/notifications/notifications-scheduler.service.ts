@@ -22,6 +22,44 @@ export class NotificationsSchedulerService {
     );
   }
 
+  private addUtcDays(date: Date, days: number): Date {
+    const result = new Date(date);
+    result.setUTCDate(result.getUTCDate() + days);
+    return result;
+  }
+
+  private formatDate(date: Date): string {
+    return date.toISOString().split('T')[0];
+  }
+
+  private previousWeekRange(referenceDate: Date) {
+    const day = referenceDate.getUTCDay();
+    const daysSinceMonday = day === 0 ? 6 : day - 1;
+    const currentMonday = this.addUtcDays(referenceDate, -daysSinceMonday);
+    const start = this.addUtcDays(currentMonday, -7);
+    const end = this.addUtcDays(currentMonday, -1);
+
+    return { start, end };
+  }
+
+  private buildClientName(client: {
+    email?: string | null;
+    profile?: {
+      first_name?: string | null;
+      last_name?: string | null;
+    } | null;
+  }) {
+    const fullName = [
+      client.profile?.first_name,
+      client.profile?.last_name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    return fullName || client.email || 'Cliente';
+  }
+
   private async resolveSender(): Promise<string | null> {
     const id = await this.notifications.findSystemSenderId();
     if (!id) {
@@ -278,6 +316,171 @@ export class NotificationsSchedulerService {
           { type: 'streak_at_risk', route: '/' },
         ),
       ),
+    );
+  }
+
+  @Cron('0 9 * * 1', { timeZone: TZ })
+  async weeklyClientSummaryToAdmin() {
+    const sender = await this.resolveSender();
+    if (!sender) return;
+
+    const { start, end } = this.previousWeekRange(this.todayUtcDate());
+    const assignments = await this.prisma.adminClientAssignment.findMany({
+      where: {
+        is_active: true,
+        admin: {
+          is: {
+            role: Role.ADMIN,
+            is_active: true,
+          },
+        },
+        client: {
+          is: {
+            role: Role.CLIENT,
+            is_active: true,
+          },
+        },
+      },
+      select: {
+        admin_id: true,
+        client_id: true,
+        client: {
+          select: {
+            email: true,
+            profile: {
+              select: {
+                first_name: true,
+                last_name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (assignments.length === 0) return;
+
+    const clientIds = [...new Set(assignments.map((row) => row.client_id))];
+    const [plans, progress] = await Promise.all([
+      this.prisma.planAssignment.findMany({
+        where: {
+          client_id: { in: clientIds },
+          date: { gte: start, lte: end },
+          is_rest_day: false,
+          OR: [{ training_id: { not: null } }, { diet_id: { not: null } }],
+        },
+        select: {
+          client_id: true,
+          date: true,
+          training_id: true,
+          diet: {
+            select: {
+              meals: {
+                select: { id: true },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.dayProgress.findMany({
+        where: {
+          client_id: { in: clientIds },
+          date: { gte: start, lte: end },
+        },
+        select: {
+          client_id: true,
+          date: true,
+          training_completed: true,
+          meals_completed: true,
+        },
+      }),
+    ]);
+
+    const summaryByClient = new Map<
+      string,
+      {
+        trainingsAssigned: number;
+        trainingsCompleted: number;
+        mealsAssigned: number;
+        mealsCompleted: number;
+        trainingDates: Set<string>;
+        mealIdsByDate: Map<string, Set<string>>;
+      }
+    >();
+    const ensureSummary = (clientId: string) => {
+      let summary = summaryByClient.get(clientId);
+      if (!summary) {
+        summary = {
+          trainingsAssigned: 0,
+          trainingsCompleted: 0,
+          mealsAssigned: 0,
+          mealsCompleted: 0,
+          trainingDates: new Set(),
+          mealIdsByDate: new Map(),
+        };
+        summaryByClient.set(clientId, summary);
+      }
+      return summary;
+    };
+
+    for (const plan of plans) {
+      const summary = ensureSummary(plan.client_id);
+      if (plan.training_id) {
+        summary.trainingsAssigned += 1;
+        summary.trainingDates.add(this.formatDate(plan.date));
+      }
+
+      const meals = plan.diet?.meals ?? [];
+      if (meals.length > 0) {
+        summary.mealsAssigned += meals.length;
+        summary.mealIdsByDate.set(
+          this.formatDate(plan.date),
+          new Set(meals.map((meal) => meal.id)),
+        );
+      }
+    }
+
+    for (const entry of progress) {
+      const summary = ensureSummary(entry.client_id);
+      if (
+        entry.training_completed &&
+        summary.trainingDates.has(this.formatDate(entry.date))
+      ) {
+        summary.trainingsCompleted += 1;
+      }
+
+      const mealIds = summary.mealIdsByDate.get(this.formatDate(entry.date));
+      if (!mealIds) {
+        continue;
+      }
+
+      summary.mealsCompleted += entry.meals_completed.filter((mealId) =>
+        mealIds.has(mealId),
+      ).length;
+    }
+
+    this.logger.log(
+      `[cron] weeklyClientSummaryToAdmin -> ${assignments.length} assignments`,
+    );
+    await Promise.all(
+      assignments.map((assignment) => {
+        const summary = ensureSummary(assignment.client_id);
+        const clientName = this.buildClientName(assignment.client);
+
+        return this.notifications.sendInternalNotifications(
+          sender,
+          [assignment.admin_id],
+          'Resumen semanal de cliente',
+          `${clientName}: ${summary.trainingsCompleted}/${summary.trainingsAssigned} entrenos, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
+          {
+            type: 'weekly_summary',
+            route: `/admin/clients/${assignment.client_id}`,
+            client_id: assignment.client_id,
+            week_start: this.formatDate(start),
+            week_end: this.formatDate(end),
+          },
+        );
+      }),
     );
   }
 }

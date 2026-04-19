@@ -1,13 +1,19 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { CreateFeedbackDto, RespondFeedbackDto } from './dto/create-feedback.dto';
 import { FeedbackStatus, Role } from '@prisma/client';
 import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class FeedbackService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(FeedbackService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private async resolveAccessibleClientIds(currentUserId: string, currentUserRole: string) {
     if (currentUserRole === Role.SUPER_ADMIN) {
@@ -32,7 +38,7 @@ export class FeedbackService {
   }
 
   async create(clientId: string, dto: CreateFeedbackDto) {
-    return this.prisma.feedbackMedia.create({
+    const feedback = await this.prisma.feedbackMedia.create({
       data: {
         client_id: clientId,
         exercise_id: dto.exercise_id,
@@ -42,6 +48,10 @@ export class FeedbackService {
         status: FeedbackStatus.PENDING,
       },
     });
+
+    await this.notifyFeedbackSubmitted(clientId, feedback.id);
+
+    return feedback;
   }
 
   async findAll(currentUserId: string, currentUserRole: string, query: AdminFeedbackQueryDto) {
@@ -143,5 +153,80 @@ export class FeedbackService {
         reviewed_at: new Date(),
       },
     });
+  }
+
+  private buildClientNotificationName(client: {
+    email?: string | null;
+    profile?: {
+      first_name?: string | null;
+      last_name?: string | null;
+    } | null;
+  } | null) {
+    const fullName = [
+      client?.profile?.first_name,
+      client?.profile?.last_name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    return fullName || client?.email || 'Cliente';
+  }
+
+  private async notifyFeedbackSubmitted(clientId: string, feedbackId: string) {
+    try {
+      const assignments = await this.prisma.adminClientAssignment.findMany({
+        where: {
+          client_id: clientId,
+          is_active: true,
+          admin: {
+            is: {
+              role: Role.ADMIN,
+              is_active: true,
+            },
+          },
+        },
+        select: {
+          admin_id: true,
+          client: {
+            select: {
+              email: true,
+              profile: {
+                select: {
+                  first_name: true,
+                  last_name: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const adminIds = [...new Set(assignments.map((row) => row.admin_id))];
+      if (adminIds.length === 0) {
+        return;
+      }
+
+      const clientName = this.buildClientNotificationName(
+        assignments[0]?.client ?? null,
+      );
+
+      await this.notifications.sendInternalNotifications(
+        clientId,
+        adminIds,
+        'Nuevo feedback de cliente',
+        `${clientName} subió feedback`,
+        {
+          type: 'feedback_submitted',
+          route: `/admin/feedback/${feedbackId}`,
+          feedback_id: feedbackId,
+          client_id: clientId,
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send feedback notification for ${feedbackId}: ${(err as Error).message}`,
+      );
+    }
   }
 }

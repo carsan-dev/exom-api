@@ -3,9 +3,10 @@ import { FeedbackController } from './feedback.controller';
 import { FeedbackService } from './feedback.service';
 import { UploadsModule } from '../uploads/uploads.module';
 import { FeedbackRetentionService } from './feedback-retention.service';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [UploadsModule],
+  imports: [UploadsModule, NotificationsModule],
   controllers: [FeedbackController],
   providers: [FeedbackService, FeedbackRetentionService],
 })

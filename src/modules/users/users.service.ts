@@ -10,6 +10,7 @@ import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
@@ -56,6 +57,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async findAll(roleFilter?: Role, pagination: PaginationDto = new PaginationDto()) {
@@ -170,6 +172,15 @@ export class UsersService {
 
     if (shouldSendInvitation) {
       await this.sendPasswordResetEmail(email);
+    }
+
+    if (currentUserRole === Role.ADMIN) {
+      await this.notifyClientAssignedToAdmins(
+        adminId,
+        [adminId],
+        user.id,
+        this.buildClientNotificationName(user),
+      );
     }
 
     return this.serializeUserSummary(user);
@@ -480,7 +491,7 @@ export class UsersService {
     const desiredAdminIds = [...new Set(dto.admin_ids)];
     await this.assertAdminUsersExist(desiredAdminIds);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const currentActiveAssignments = await tx.adminClientAssignment.findMany({
         where: { client_id: clientId, is_active: true },
         select: { admin_id: true },
@@ -492,7 +503,11 @@ export class UsersService {
         ]),
       ];
 
-      await this.syncClientAssignments(tx, clientId, desiredAdminIds);
+      const syncResult = await this.syncClientAssignments(
+        tx,
+        clientId,
+        desiredAdminIds,
+      );
 
       await Promise.all(
         adminIdsToSync.map((adminId) =>
@@ -535,8 +550,34 @@ export class UsersService {
         },
       });
 
-      return this.serializeClientAssignments(clientId, assignments);
+      const client = await tx.user.findUnique({
+        where: { id: clientId },
+        select: {
+          email: true,
+          profile: {
+            select: {
+              first_name: true,
+              last_name: true,
+            },
+          },
+        },
+      });
+
+      return {
+        response: this.serializeClientAssignments(clientId, assignments),
+        assignedAdminIds: syncResult.assignedAdminIds,
+        clientName: this.buildClientNotificationName(client),
+      };
     });
+
+    await this.notifyClientAssignedToAdmins(
+      currentUserId,
+      result.assignedAdminIds,
+      clientId,
+      result.clientName,
+    );
+
+    return result.response;
   }
 
   private async assertClientAccess(currentUserId: string, currentUserRole: string, clientId: string) {
@@ -757,6 +798,54 @@ export class UsersService {
 
   private buildDisplayName(firstName: string, lastName: string) {
     return `${firstName} ${lastName}`.trim();
+  }
+
+  private buildClientNotificationName(user: {
+    email?: string | null;
+    profile?: {
+      first_name?: string | null;
+      last_name?: string | null;
+    } | null;
+  } | null) {
+    const fullName = [
+      user?.profile?.first_name,
+      user?.profile?.last_name,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+    return fullName || user?.email || 'Cliente';
+  }
+
+  private async notifyClientAssignedToAdmins(
+    senderId: string,
+    adminIds: string[],
+    clientId: string,
+    clientName: string,
+  ) {
+    const uniqueAdminIds = [...new Set(adminIds.filter(Boolean))];
+    if (uniqueAdminIds.length === 0) {
+      return;
+    }
+
+    try {
+      await this.notifications.sendInternalNotifications(
+        senderId,
+        uniqueAdminIds,
+        'Cliente asignado',
+        `${clientName} te ha sido asignado`,
+        {
+          type: 'client_assigned',
+          route: `/admin/clients/${clientId}`,
+          client_id: clientId,
+        },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send client assignment notification for ${clientId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   private normalizeEmail(email: string) {
@@ -1002,5 +1091,12 @@ export class UsersService {
           })
         : Promise.resolve(),
     ]);
+
+    return {
+      assignedAdminIds: [
+        ...assignmentsToReactivate.map((assignment) => assignment.admin_id),
+        ...adminIdsToCreate,
+      ],
+    };
   }
 }

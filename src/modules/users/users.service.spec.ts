@@ -5,6 +5,7 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { UsersService } from './users.service';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { ChallengesService } from '../challenges/challenges.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 
 const createUserMock = jest.fn();
 
@@ -38,6 +39,9 @@ describe('UsersService', () => {
   let challengesService: {
     syncGlobalChallengesForCreatorClient: jest.Mock;
   };
+  let notifications: {
+    sendInternalNotifications: jest.Mock;
+  };
 
   beforeEach(() => {
     createUserMock.mockReset();
@@ -64,10 +68,18 @@ describe('UsersService', () => {
     challengesService = {
       syncGlobalChallengesForCreatorClient: jest.fn().mockResolvedValue(undefined),
     };
+    notifications = {
+      sendInternalNotifications: jest.fn().mockResolvedValue({
+        success: true,
+        sent: 1,
+        failed: 0,
+      }),
+    };
 
     service = new UsersService(
       prisma as unknown as PrismaService,
       challengesService as unknown as ChallengesService,
+      notifications as unknown as NotificationsService,
     );
   });
 
@@ -145,6 +157,17 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.create).toHaveBeenCalledWith({
       data: { admin_id: 'admin-1', client_id: 'client-1' },
     });
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'admin-1',
+      ['admin-1'],
+      'Cliente asignado',
+      'Ada Rivera te ha sido asignado',
+      {
+        type: 'client_assigned',
+        route: '/admin/clients/client-1',
+        client_id: 'client-1',
+      },
+    );
   });
 
   it('allows a super admin to view a client profile without assignment', async () => {
@@ -384,6 +407,17 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.createMany).toHaveBeenCalledWith({
       data: [{ admin_id: 'admin-3', client_id: 'client-1' }],
     });
+    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+      'super-admin-1',
+      ['admin-2', 'admin-3'],
+      'Cliente asignado',
+      'Cliente te ha sido asignado',
+      {
+        type: 'client_assigned',
+        route: '/admin/clients/client-1',
+        client_id: 'client-1',
+      },
+    );
   });
 
   it('rejects assignment updates when any admin is missing or has the wrong role', async () => {
