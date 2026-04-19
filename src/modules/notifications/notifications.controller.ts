@@ -9,8 +9,10 @@ import { Role } from '@prisma/client';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import { SendNotificationDto, SendToAllClientsDto } from './dto/send-notification.dto';
-import { UpdateNotificationTemplateDto } from './dto/notification-template.dto';
-import type { NotificationTemplateKey } from './notification-templates.constants';
+import {
+  CreateNotificationTemplateDto,
+  UpdateNotificationTemplateDto,
+} from './dto/notification-template.dto';
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -78,19 +80,27 @@ export class NotificationsController {
   }
 
   @Get('templates')
-  @Roles(Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'List automatic notification templates' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'List notification templates' })
   @ApiResponse({ status: 200, description: 'Plantillas obtenidas correctamente' })
   listTemplates() {
     return this.notificationsService.listTemplates();
   }
 
+  @Post('templates')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Create a manual notification template' })
+  @ApiResponse({ status: 201, description: 'Plantilla creada correctamente' })
+  createTemplate(@Body() dto: CreateNotificationTemplateDto) {
+    return this.notificationsService.createTemplate(dto);
+  }
+
   @Patch('templates/:key')
   @Roles(Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Update an automatic notification template' })
+  @ApiOperation({ summary: 'Update a notification template' })
   @ApiResponse({ status: 200, description: 'Plantilla actualizada correctamente' })
   updateTemplate(
-    @Param('key') key: NotificationTemplateKey,
+    @Param('key') key: string,
     @Body() dto: UpdateNotificationTemplateDto,
   ) {
     return this.notificationsService.updateTemplate(key, dto);
@@ -98,9 +108,9 @@ export class NotificationsController {
 
   @Delete('templates/:key')
   @Roles(Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Reset an automatic notification template' })
+  @ApiOperation({ summary: 'Reset or delete a notification template' })
   @ApiResponse({ status: 200, description: 'Plantilla restaurada correctamente' })
-  resetTemplate(@Param('key') key: NotificationTemplateKey) {
+  resetTemplate(@Param('key') key: string) {
     return this.notificationsService.resetTemplate(key);
   }
 

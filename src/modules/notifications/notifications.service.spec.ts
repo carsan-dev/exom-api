@@ -49,8 +49,10 @@ describe('NotificationsService', () => {
       create: jest.Mock;
     };
     notificationTemplate: {
+      create: jest.Mock;
       findUnique: jest.Mock;
       findMany: jest.Mock;
+      update: jest.Mock;
       upsert: jest.Mock;
       deleteMany: jest.Mock;
     };
@@ -83,8 +85,10 @@ describe('NotificationsService', () => {
         create: jest.fn(),
       },
       notificationTemplate: {
+        create: jest.fn(),
         findUnique: jest.fn(),
         findMany: jest.fn(),
+        update: jest.fn(),
         upsert: jest.fn(),
         deleteMany: jest.fn(),
       },
@@ -340,7 +344,7 @@ describe('NotificationsService', () => {
     const updatedAt = new Date('2026-04-19T10:00:00.000Z');
     prisma.notificationTemplate.findMany.mockResolvedValue([
       {
-        key: 'training_reminder_daily',
+        key: 'diet_reminder_meal',
         title: 'Entreno pendiente',
         body: 'Abre tu plan de hoy',
         route: null,
@@ -354,16 +358,118 @@ describe('NotificationsService', () => {
     expect(templates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          key: 'training_reminder_daily',
+          key: 'diet_reminder_meal',
           title: 'Entreno pendiente',
           body: 'Abre tu plan de hoy',
           route: null,
           enabled: false,
           customized: true,
+          is_system: true,
+          variable_help: expect.objectContaining({
+            mealLabel: 'Nombre de la comida: desayuno, comida, snack o cena.',
+          }),
           updated_at: updatedAt,
         }),
       ]),
     );
+  });
+
+  it('lists manual templates after the system templates', async () => {
+    const updatedAt = new Date('2026-04-19T11:00:00.000Z');
+    prisma.notificationTemplate.findMany.mockResolvedValue([
+      {
+        key: 'manual_revision_mensual',
+        name: 'Revisión mensual',
+        description: 'Plantilla para envío manual',
+        category: 'Manual',
+        title: 'Revisión mensual',
+        body: 'Agenda tu revisión',
+        route: '/recap',
+        enabled: true,
+        variables: [],
+        updated_at: updatedAt,
+      },
+    ]);
+
+    const templates = await service.listTemplates();
+
+    expect(templates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'manual_revision_mensual',
+          name: 'Revisión mensual',
+          description: 'Plantilla para envío manual',
+          category: 'Manual',
+          title: 'Revisión mensual',
+          body: 'Agenda tu revisión',
+          route: '/recap',
+          enabled: true,
+          customized: true,
+          is_system: false,
+          variables: [],
+          variable_help: {},
+          updated_at: updatedAt,
+        }),
+      ]),
+    );
+  });
+
+  it('creates a manual template with a generated unique key', async () => {
+    const createdAt = new Date('2026-04-19T12:00:00.000Z');
+    prisma.notificationTemplate.findUnique.mockResolvedValue(null);
+    prisma.notificationTemplate.create.mockResolvedValue({
+      key: 'manual_revision_mensual',
+      name: 'Revisión mensual',
+      description: 'Aviso manual',
+      category: 'Manual',
+      title: 'Tu revisión mensual',
+      body: 'Reserva un hueco esta semana',
+      route: '/recap',
+      enabled: true,
+      variables: [],
+      updated_at: createdAt,
+    });
+
+    await expect(
+      service.createTemplate({
+        name: 'Revisión mensual',
+        description: 'Aviso manual',
+        title: 'Tu revisión mensual',
+        body: 'Reserva un hueco esta semana',
+        route: '/recap',
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        key: 'manual_revision_mensual',
+        is_system: false,
+        variable_help: {},
+      }),
+    );
+
+    expect(prisma.notificationTemplate.create).toHaveBeenCalledWith({
+      data: {
+        key: 'manual_revision_mensual',
+        name: 'Revisión mensual',
+        description: 'Aviso manual',
+        category: 'Manual',
+        title: 'Tu revisión mensual',
+        body: 'Reserva un hueco esta semana',
+        route: '/recap',
+        enabled: true,
+        variables: [],
+      },
+    });
+  });
+
+  it('deletes a manual template through resetTemplate', async () => {
+    prisma.notificationTemplate.deleteMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      service.resetTemplate('manual_revision_mensual'),
+    ).resolves.toEqual({
+      key: 'manual_revision_mensual',
+      deleted: true,
+    });
   });
 
   it('does not send an internal template when it is disabled', async () => {

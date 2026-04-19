@@ -25,6 +25,22 @@ export type NotificationTemplateDefinition = {
   variables: string[];
 };
 
+export const NOTIFICATION_TEMPLATE_VARIABLE_HELP: Record<string, string> = {
+  achievementName: 'Nombre del logro desbloqueado.',
+  challengeName: 'Nombre del reto asignado o completado.',
+  clientId: 'Identificador interno del cliente para construir enlaces.',
+  clientName: 'Nombre visible del cliente.',
+  dayCount: 'Número de días incluidos en el plan o hito.',
+  days: 'Número de días de racha.',
+  feedbackId: 'Identificador interno del feedback para abrir su detalle.',
+  mealLabel: 'Nombre de la comida: desayuno, comida, snack o cena.',
+  mealsAssigned: 'Total de comidas planificadas en la semana.',
+  mealsCompleted: 'Comidas registradas por el cliente en la semana.',
+  planSummary: 'Resumen del plan asignado, por ejemplo "un entrenamiento" o "2 días de dieta".',
+  trainingsAssigned: 'Total de entrenamientos planificados en la semana.',
+  trainingsCompleted: 'Entrenamientos completados por el cliente en la semana.',
+};
+
 export const DEFAULT_NOTIFICATION_TEMPLATES: NotificationTemplateDefinition[] = [
   {
     key: 'plan_training_assigned',

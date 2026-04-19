@@ -11,10 +11,14 @@ import { paginate } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
-import { UpdateNotificationTemplateDto } from './dto/notification-template.dto';
+import {
+  CreateNotificationTemplateDto,
+  UpdateNotificationTemplateDto,
+} from './dto/notification-template.dto';
 import {
   DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY,
   DEFAULT_NOTIFICATION_TEMPLATES,
+  NOTIFICATION_TEMPLATE_VARIABLE_HELP,
   type NotificationTemplateDefinition,
   type NotificationTemplateKey,
 } from './notification-templates.constants';
@@ -40,6 +44,19 @@ type TemplateFallback = {
   title: string;
   body: string;
   route?: string | null;
+};
+
+type StoredNotificationTemplate = {
+  key: string;
+  name: string;
+  description: string | null;
+  category: string;
+  title: string;
+  body: string;
+  route: string | null;
+  enabled: boolean;
+  variables: string[];
+  updated_at?: Date;
 };
 
 @Injectable()
@@ -119,15 +136,19 @@ export class NotificationsService {
     );
   }
 
+  private getVariableHelp(variables: string[]) {
+    return Object.fromEntries(
+      variables.map((variable) => [
+        variable,
+        NOTIFICATION_TEMPLATE_VARIABLE_HELP[variable] ??
+          'Dato dinámico que el sistema reemplaza al enviar.',
+      ]),
+    );
+  }
+
   private serializeTemplate(
     definition: NotificationTemplateDefinition,
-    storedTemplate?: {
-      title: string;
-      body: string;
-      route: string | null;
-      enabled: boolean;
-      updated_at?: Date;
-    },
+    storedTemplate?: StoredNotificationTemplate,
   ) {
     return {
       ...definition,
@@ -136,8 +157,82 @@ export class NotificationsService {
       route: storedTemplate ? storedTemplate.route : definition.route,
       enabled: storedTemplate?.enabled ?? true,
       customized: Boolean(storedTemplate),
+      is_system: true,
+      variable_help: this.getVariableHelp(definition.variables),
       updated_at: storedTemplate?.updated_at ?? null,
     };
+  }
+
+  private serializeStoredTemplate(template: StoredNotificationTemplate) {
+    return {
+      key: template.key,
+      name: template.name,
+      description: template.description ?? '',
+      category: template.category,
+      title: template.title,
+      body: template.body,
+      route: template.route,
+      enabled: template.enabled,
+      variables: template.variables,
+      customized: true,
+      is_system: false,
+      variable_help: this.getVariableHelp(template.variables),
+      updated_at: template.updated_at ?? null,
+    };
+  }
+
+  private normalizeTemplateRoute(route: string | null | undefined) {
+    if (route === undefined) {
+      return undefined;
+    }
+
+    const trimmed = route?.trim() ?? '';
+    if (!trimmed) {
+      return null;
+    }
+
+    if (!trimmed.startsWith('/')) {
+      throw new BadRequestException('La ruta debe empezar por /');
+    }
+
+    return trimmed;
+  }
+
+  private buildManualTemplateKey(name: string, suffix?: number) {
+    const slug =
+      name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 48) || 'plantilla';
+
+    return `manual_${slug}${suffix ? `_${suffix}` : ''}`;
+  }
+
+  private async buildUniqueManualTemplateKey(name: string) {
+    for (let suffix = 0; suffix < 100; suffix += 1) {
+      const key = this.buildManualTemplateKey(name, suffix || undefined);
+      const isDefaultKey = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.has(
+        key as NotificationTemplateKey,
+      );
+
+      if (isDefaultKey) {
+        continue;
+      }
+
+      const existing = await this.prisma.notificationTemplate.findUnique({
+        where: { key },
+        select: { key: true },
+      });
+
+      if (!existing) {
+        return key;
+      }
+    }
+
+    throw new BadRequestException('No se pudo generar una clave única');
   }
 
   private async resolveTemplate(
@@ -494,34 +589,104 @@ export class NotificationsService {
     const storedByKey = new Map(
       storedTemplates.map((template) => [template.key, template]),
     );
-
-    return DEFAULT_NOTIFICATION_TEMPLATES.map((definition) =>
-      this.serializeTemplate(definition, storedByKey.get(definition.key)),
+    const customTemplates = storedTemplates.filter(
+      (template) =>
+        !DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.has(
+          template.key as NotificationTemplateKey,
+        ),
     );
+
+    return [
+      ...DEFAULT_NOTIFICATION_TEMPLATES.map((definition) =>
+        this.serializeTemplate(definition, storedByKey.get(definition.key)),
+      ),
+      ...customTemplates
+        .sort((left, right) => left.name.localeCompare(right.name, 'es'))
+        .map((template) => this.serializeStoredTemplate(template)),
+    ];
+  }
+
+  async createTemplate(dto: CreateNotificationTemplateDto) {
+    const name = dto.name.trim();
+    const title = dto.title.trim();
+    const body = dto.body.trim();
+
+    if (!name || !title || !body) {
+      throw new BadRequestException('Nombre, título y cuerpo son obligatorios');
+    }
+
+    const key = await this.buildUniqueManualTemplateKey(name);
+    const template = await this.prisma.notificationTemplate.create({
+      data: {
+        key,
+        name,
+        description: dto.description?.trim() || null,
+        category: dto.category?.trim() || 'Manual',
+        title,
+        body,
+        route: this.normalizeTemplateRoute(dto.route) ?? null,
+        enabled: dto.enabled ?? true,
+        variables: [],
+      },
+    });
+
+    return this.serializeStoredTemplate(template);
   }
 
   async updateTemplate(
-    key: NotificationTemplateKey,
+    key: string,
     dto: UpdateNotificationTemplateDto,
   ) {
-    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(key);
+    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(
+      key as NotificationTemplateKey,
+    );
+    const route = this.normalizeTemplateRoute(dto.route);
+    const name = dto.name?.trim();
+    const title = dto.title?.trim();
+    const body = dto.body?.trim();
 
-    if (!definition) {
-      throw new NotFoundException('Notification template not found');
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('El nombre es obligatorio');
     }
 
-    const route =
-      dto.route === undefined
-        ? undefined
-        : dto.route?.trim()
-          ? dto.route.trim()
-          : null;
+    if (dto.title !== undefined && !title) {
+      throw new BadRequestException('El título es obligatorio');
+    }
+
+    if (dto.body !== undefined && !body) {
+      throw new BadRequestException('El cuerpo es obligatorio');
+    }
+
     const data = {
-      ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
-      ...(dto.body !== undefined ? { body: dto.body.trim() } : {}),
+      ...(!definition && name !== undefined ? { name } : {}),
+      ...(!definition && dto.description !== undefined
+        ? { description: dto.description.trim() || null }
+        : {}),
+      ...(!definition && dto.category !== undefined
+        ? { category: dto.category.trim() || 'Manual' }
+        : {}),
+      ...(title !== undefined ? { title } : {}),
+      ...(body !== undefined ? { body } : {}),
       ...(route !== undefined ? { route } : {}),
       ...(dto.enabled !== undefined ? { enabled: dto.enabled } : {}),
     };
+
+    if (!definition) {
+      const existingTemplate = await this.prisma.notificationTemplate.findUnique({
+        where: { key },
+      });
+
+      if (!existingTemplate) {
+        throw new NotFoundException('Notification template not found');
+      }
+
+      const storedTemplate = await this.prisma.notificationTemplate.update({
+        where: { key },
+        data,
+      });
+
+      return this.serializeStoredTemplate(storedTemplate);
+    }
 
     const storedTemplate = await this.prisma.notificationTemplate.upsert({
       where: { key },
@@ -542,16 +707,26 @@ export class NotificationsService {
     return this.serializeTemplate(definition, storedTemplate);
   }
 
-  async resetTemplate(key: NotificationTemplateKey) {
-    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(key);
+  async resetTemplate(key: string) {
+    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(
+      key as NotificationTemplateKey,
+    );
 
-    if (!definition) {
+    if (definition) {
+      await this.prisma.notificationTemplate.deleteMany({ where: { key } });
+
+      return this.serializeTemplate(definition);
+    }
+
+    const result = await this.prisma.notificationTemplate.deleteMany({
+      where: { key },
+    });
+
+    if (result.count === 0) {
       throw new NotFoundException('Notification template not found');
     }
 
-    await this.prisma.notificationTemplate.deleteMany({ where: { key } });
-
-    return this.serializeTemplate(definition);
+    return { key, deleted: true };
   }
 
   async getHistory(senderId: string, query: NotificationQueryDto) {
