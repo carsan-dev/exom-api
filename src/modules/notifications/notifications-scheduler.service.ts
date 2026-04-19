@@ -3,12 +3,23 @@ import { Cron } from '@nestjs/schedule';
 import { MealType, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
+import {
+  NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY,
+  type NotificationTemplateKey,
+} from './notification-templates.constants';
 
 const TZ = 'Europe/Madrid';
+const mealReminderSlots = [
+  { type: MealType.BREAKFAST, label: 'desayuno' },
+  { type: MealType.LUNCH, label: 'comida' },
+  { type: MealType.SNACK, label: 'snack' },
+  { type: MealType.DINNER, label: 'cena' },
+];
 
 @Injectable()
 export class NotificationsSchedulerService {
   private readonly logger = new Logger(NotificationsSchedulerService.name);
+  private readonly lastRunByScheduleKey = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -30,6 +41,37 @@ export class NotificationsSchedulerService {
 
   private formatDate(date: Date): string {
     return date.toISOString().split('T')[0];
+  }
+
+  private localScheduleParts(date: Date, timeZone: string) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+    }).formatToParts(date);
+    const values = Object.fromEntries(
+      parts.map((part) => [part.type, part.value]),
+    );
+    const weekday = {
+      Sun: 0,
+      Mon: 1,
+      Tue: 2,
+      Wed: 3,
+      Thu: 4,
+      Fri: 5,
+      Sat: 6,
+    }[values.weekday ?? ''];
+
+    return {
+      dateKey: `${values.year}-${values.month}-${values.day}`,
+      time: `${values.hour}:${values.minute}`,
+      weekday: weekday ?? -1,
+    };
   }
 
   private previousWeekRange(referenceDate: Date) {
@@ -78,8 +120,82 @@ export class NotificationsSchedulerService {
     return new Set(rows.map((r) => r.id));
   }
 
-  @Cron('0 9 * * *', { timeZone: TZ })
-  async remindDailyTraining() {
+  @Cron('* * * * *', { timeZone: TZ })
+  async runScheduledNotifications() {
+    const now = new Date();
+    const keys = Array.from(NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY.keys());
+    const storedSchedules =
+      await this.prisma.notificationTemplateSchedule.findMany({
+        where: { template_key: { in: keys } },
+      });
+    const storedByKey = new Map(
+      storedSchedules.map((schedule) => [schedule.template_key, schedule]),
+    );
+
+    for (const [key, definition] of NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY) {
+      const stored = storedByKey.get(key);
+      const enabled = stored?.enabled ?? true;
+      if (!enabled) continue;
+
+      const timeZone = stored?.timezone || definition.defaultTimezone;
+      const times =
+        stored?.times && stored.times.length > 0
+          ? stored.times
+          : definition.defaultTimes;
+      const weekday = stored?.weekday ?? definition.defaultWeekday ?? null;
+      let localParts: ReturnType<typeof this.localScheduleParts>;
+
+      try {
+        localParts = this.localScheduleParts(now, timeZone);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Invalid schedule timezone';
+        this.logger.warn(`[cron] invalid timezone for ${key}: ${message}`);
+        continue;
+      }
+
+      if (definition.kind === 'weekly' && localParts.weekday !== weekday) {
+        continue;
+      }
+
+      const timeIndex = times.indexOf(localParts.time);
+      if (timeIndex === -1) {
+        continue;
+      }
+
+      const runKey = `${localParts.dateKey}:${localParts.time}`;
+      if (this.lastRunByScheduleKey.get(key) === runKey) {
+        continue;
+      }
+      this.lastRunByScheduleKey.set(key, runKey);
+
+      await this.runScheduledTemplate(key, timeIndex);
+    }
+  }
+
+  private async runScheduledTemplate(
+    key: NotificationTemplateKey,
+    timeIndex: number,
+  ) {
+    switch (key) {
+      case 'training_reminder_daily':
+        return this.remindDailyTraining();
+      case 'diet_reminder_meal': {
+        const slot = mealReminderSlots[timeIndex] ?? mealReminderSlots[0];
+        return this.remindMeal(slot.type, slot.label);
+      }
+      case 'recap_reminder_weekly':
+        return this.remindWeeklyRecap();
+      case 'streak_at_risk':
+        return this.warnStreakAtRisk();
+      case 'admin_weekly_summary':
+        return this.weeklyClientSummaryToAdmin();
+      default:
+        return undefined;
+    }
+  }
+
+  private async remindDailyTraining() {
     const sender = await this.resolveSender();
     if (!sender) return;
 
@@ -127,26 +243,6 @@ export class NotificationsSchedulerService {
       },
       { type: 'training_reminder' },
     );
-  }
-
-  @Cron('0 8 * * *', { timeZone: TZ })
-  async remindBreakfast() {
-    await this.remindMeal(MealType.BREAKFAST, 'desayuno');
-  }
-
-  @Cron('0 13 * * *', { timeZone: TZ })
-  async remindLunch() {
-    await this.remindMeal(MealType.LUNCH, 'comida');
-  }
-
-  @Cron('0 17 * * *', { timeZone: TZ })
-  async remindSnack() {
-    await this.remindMeal(MealType.SNACK, 'snack');
-  }
-
-  @Cron('30 20 * * *', { timeZone: TZ })
-  async remindDinner() {
-    await this.remindMeal(MealType.DINNER, 'cena');
   }
 
   private async remindMeal(mealType: MealType, label: string) {
@@ -228,8 +324,7 @@ export class NotificationsSchedulerService {
     );
   }
 
-  @Cron('0 19 * * 0', { timeZone: TZ })
-  async remindWeeklyRecap() {
+  private async remindWeeklyRecap() {
     const sender = await this.resolveSender();
     if (!sender) return;
 
@@ -273,8 +368,7 @@ export class NotificationsSchedulerService {
     );
   }
 
-  @Cron('0 20 * * *', { timeZone: TZ })
-  async warnStreakAtRisk() {
+  private async warnStreakAtRisk() {
     const sender = await this.resolveSender();
     if (!sender) return;
 
@@ -339,8 +433,7 @@ export class NotificationsSchedulerService {
     );
   }
 
-  @Cron('0 9 * * 1', { timeZone: TZ })
-  async weeklyClientSummaryToAdmin() {
+  private async weeklyClientSummaryToAdmin() {
     const sender = await this.resolveSender();
     if (!sender) return;
 

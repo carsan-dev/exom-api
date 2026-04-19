@@ -200,6 +200,18 @@ model NotificationTemplate {
   @@map("notification_templates")
 }
 
+model NotificationTemplateSchedule {
+  template_key String   @id
+  enabled      Boolean  @default(true)
+  timezone     String   @default("Europe/Madrid")
+  times        String[] @default([])
+  weekday      Int?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@map("notification_template_schedules")
+}
+
 model ApprovalRequest {
   id               String         @id @default(uuid())
   requester_id     String

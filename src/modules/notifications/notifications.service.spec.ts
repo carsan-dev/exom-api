@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { NotificationStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
@@ -56,6 +60,11 @@ describe('NotificationsService', () => {
       upsert: jest.Mock;
       deleteMany: jest.Mock;
     };
+    notificationTemplateSchedule: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      upsert: jest.Mock;
+    };
   };
 
   const adminUser = {
@@ -92,7 +101,14 @@ describe('NotificationsService', () => {
         upsert: jest.fn(),
         deleteMany: jest.fn(),
       },
+      notificationTemplateSchedule: {
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        upsert: jest.fn(),
+      },
     };
+    prisma.notificationTemplate.findMany.mockResolvedValue([]);
+    prisma.notificationTemplateSchedule.findMany.mockResolvedValue([]);
 
     service = new NotificationsService(prisma as unknown as PrismaService);
   });
@@ -376,6 +392,116 @@ describe('NotificationsService', () => {
           updated_at: updatedAt,
         }),
       ]),
+    );
+  });
+
+  it('lists scheduled templates with stored schedule overrides', async () => {
+    prisma.notificationTemplateSchedule.findMany.mockResolvedValue([
+      {
+        template_key: 'training_reminder_daily',
+        enabled: true,
+        timezone: 'Europe/Madrid',
+        times: ['10:30'],
+        weekday: null,
+      },
+    ]);
+
+    const templates = await service.listTemplates();
+
+    expect(templates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'training_reminder_daily',
+          delivery_info: expect.objectContaining({
+            type: 'schedule',
+            label: 'Todos los días a las 10:30',
+            timezone: 'Europe/Madrid',
+            times: ['10:30'],
+            schedule_enabled: true,
+            schedule_kind: 'daily',
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it('updates a scheduled template schedule', async () => {
+    prisma.notificationTemplateSchedule.findUnique.mockResolvedValue(null);
+    prisma.notificationTemplateSchedule.upsert.mockResolvedValue({
+      template_key: 'recap_reminder_weekly',
+      enabled: true,
+      timezone: 'Europe/Madrid',
+      times: ['18:15'],
+      weekday: 0,
+    });
+    prisma.notificationTemplate.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.updateTemplateSchedule('recap_reminder_weekly', {
+        enabled: true,
+        timezone: 'Europe/Madrid',
+        times: ['18:15'],
+        weekday: 0,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        key: 'recap_reminder_weekly',
+        delivery_info: expect.objectContaining({
+          label: 'domingos a las 18:15',
+          times: ['18:15'],
+          weekday: 0,
+          schedule_enabled: true,
+        }),
+      }),
+    );
+
+    expect(prisma.notificationTemplateSchedule.upsert).toHaveBeenCalledWith({
+      where: { template_key: 'recap_reminder_weekly' },
+      create: {
+        template_key: 'recap_reminder_weekly',
+        enabled: true,
+        timezone: 'Europe/Madrid',
+        times: ['18:15'],
+        weekday: 0,
+      },
+      update: {
+        enabled: true,
+        timezone: 'Europe/Madrid',
+        times: ['18:15'],
+        weekday: 0,
+      },
+    });
+  });
+
+  it('rejects schedule updates for templates without programmable schedule', async () => {
+    await expect(
+      service.updateTemplateSchedule('achievement_unlocked', {
+        times: ['09:00'],
+      }),
+    ).rejects.toThrow('Esta plantilla no tiene horario programable');
+  });
+
+  it('preserves meal reminder time order for meal labels', async () => {
+    const times = ['08:00', '13:00', '17:00', '20:30'];
+    prisma.notificationTemplateSchedule.findUnique.mockResolvedValue(null);
+    prisma.notificationTemplateSchedule.upsert.mockResolvedValue({
+      template_key: 'diet_reminder_meal',
+      enabled: true,
+      timezone: 'Europe/Madrid',
+      times,
+      weekday: null,
+    });
+    prisma.notificationTemplate.findUnique.mockResolvedValue(null);
+
+    await service.updateTemplateSchedule('diet_reminder_meal', {
+      times,
+    });
+
+    expect(prisma.notificationTemplateSchedule.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ times }),
+        update: expect.objectContaining({ times }),
+      }),
     );
   });
 

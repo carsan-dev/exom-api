@@ -13,15 +13,20 @@ import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import {
   CreateNotificationTemplateDto,
+  UpdateNotificationTemplateScheduleDto,
   UpdateNotificationTemplateDto,
 } from './dto/notification-template.dto';
 import {
   DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY,
   DEFAULT_NOTIFICATION_TEMPLATES,
   NOTIFICATION_TEMPLATE_DELIVERY_INFO,
+  NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE,
+  NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY,
   NOTIFICATION_TEMPLATE_VARIABLE_HELP,
   type NotificationTemplateDefinition,
+  type NotificationTemplateDeliveryInfo,
   type NotificationTemplateKey,
+  type NotificationTemplateScheduleDefinition,
 } from './notification-templates.constants';
 
 const notificationHistoryInclude = {
@@ -59,6 +64,27 @@ type StoredNotificationTemplate = {
   variables: string[];
   updated_at?: Date;
 };
+
+type StoredNotificationTemplateSchedule = {
+  template_key: string;
+  enabled: boolean;
+  timezone: string;
+  times: string[];
+  weekday: number | null;
+  updated_at?: Date;
+};
+
+const weekdayLabels = [
+  'domingos',
+  'lunes',
+  'martes',
+  'miércoles',
+  'jueves',
+  'viernes',
+  'sábados',
+];
+
+const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 @Injectable()
 export class NotificationsService {
@@ -147,9 +173,129 @@ export class NotificationsService {
     );
   }
 
+  private normalizeScheduleTimes(
+    schedule: NotificationTemplateScheduleDefinition,
+    times?: string[],
+  ) {
+    const nextTimes = times ?? schedule.defaultTimes;
+    const uniqueTimes = [
+      ...new Set(nextTimes.map((time) => time.trim()).filter(Boolean)),
+    ];
+    const normalizedTimes =
+      schedule.kind === 'meal_daily' ? uniqueTimes : uniqueTimes.sort();
+
+    if (normalizedTimes.some((time) => !timePattern.test(time))) {
+      throw new BadRequestException('Las horas deben usar formato HH:mm');
+    }
+
+    if (schedule.kind === 'meal_daily' && normalizedTimes.length !== 4) {
+      throw new BadRequestException(
+        'El recordatorio de comidas necesita 4 horas: desayuno, comida, snack y cena',
+      );
+    }
+
+    if (schedule.kind !== 'meal_daily' && normalizedTimes.length !== 1) {
+      throw new BadRequestException('Esta plantilla necesita exactamente una hora');
+    }
+
+    return normalizedTimes;
+  }
+
+  private normalizeScheduleTimezone(timezone?: string) {
+    const value = timezone?.trim() || NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE;
+
+    try {
+      new Intl.DateTimeFormat('es-ES', { timeZone: value });
+    } catch {
+      throw new BadRequestException('La zona horaria no es válida');
+    }
+
+    return value;
+  }
+
+  private normalizeScheduleWeekday(
+    schedule: NotificationTemplateScheduleDefinition,
+    weekday?: number | null,
+  ) {
+    if (schedule.kind !== 'weekly') {
+      return null;
+    }
+
+    const nextWeekday = weekday ?? schedule.defaultWeekday ?? 0;
+    if (nextWeekday < 0 || nextWeekday > 6) {
+      throw new BadRequestException('El día de la semana debe estar entre 0 y 6');
+    }
+
+    return nextWeekday;
+  }
+
+  private buildScheduleCron(
+    schedule: NotificationTemplateScheduleDefinition,
+    times: string[],
+    weekday: number | null,
+  ) {
+    return times
+      .map((time) => {
+        const [hour, minute] = time.split(':');
+        return `${Number(minute)} ${Number(hour)} * * ${
+          schedule.kind === 'weekly' ? weekday ?? schedule.defaultWeekday ?? 0 : '*'
+        }`;
+      })
+      .join(', ');
+  }
+
+  private buildScheduleLabel(
+    schedule: NotificationTemplateScheduleDefinition,
+    times: string[],
+    weekday: number | null,
+  ) {
+    if (schedule.kind === 'weekly') {
+      return `${weekdayLabels[weekday ?? schedule.defaultWeekday ?? 0]} a las ${times[0]}`;
+    }
+
+    if (schedule.kind === 'meal_daily') {
+      return `Todos los días a las ${times.slice(0, -1).join(', ')} y ${
+        times[times.length - 1]
+      }`;
+    }
+
+    return `Todos los días a las ${times[0]}`;
+  }
+
+  private buildDeliveryInfo(
+    key: NotificationTemplateKey,
+    storedSchedule?: StoredNotificationTemplateSchedule,
+  ): NotificationTemplateDeliveryInfo {
+    const base = NOTIFICATION_TEMPLATE_DELIVERY_INFO[key];
+    const schedule = NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY.get(key);
+
+    if (!schedule) {
+      return base;
+    }
+
+    const times =
+      storedSchedule?.times && storedSchedule.times.length > 0
+        ? storedSchedule.times
+        : schedule.defaultTimes;
+    const timezone = storedSchedule?.timezone ?? schedule.defaultTimezone;
+    const weekday = storedSchedule?.weekday ?? schedule.defaultWeekday ?? null;
+
+    return {
+      ...base,
+      label: this.buildScheduleLabel(schedule, times, weekday),
+      timezone,
+      times,
+      weekday,
+      cron: this.buildScheduleCron(schedule, times, weekday),
+      schedule_enabled: storedSchedule?.enabled ?? true,
+      schedule_kind: schedule.kind,
+    };
+  }
+
   private serializeTemplate(
     definition: NotificationTemplateDefinition,
     storedTemplate?: StoredNotificationTemplate,
+    storedSchedule?: StoredNotificationTemplateSchedule,
   ) {
     return {
       ...definition,
@@ -160,7 +306,7 @@ export class NotificationsService {
       customized: Boolean(storedTemplate),
       is_system: true,
       variable_help: this.getVariableHelp(definition.variables),
-      delivery_info: NOTIFICATION_TEMPLATE_DELIVERY_INFO[definition.key],
+      delivery_info: this.buildDeliveryInfo(definition.key, storedSchedule),
       updated_at: storedTemplate?.updated_at ?? null,
     };
   }
@@ -593,9 +739,15 @@ export class NotificationsService {
   }
 
   async listTemplates() {
-    const storedTemplates = await this.prisma.notificationTemplate.findMany();
+    const [storedTemplates, storedSchedules] = await Promise.all([
+      this.prisma.notificationTemplate.findMany(),
+      this.prisma.notificationTemplateSchedule.findMany(),
+    ]);
     const storedByKey = new Map(
       storedTemplates.map((template) => [template.key, template]),
+    );
+    const scheduleByKey = new Map(
+      storedSchedules.map((schedule) => [schedule.template_key, schedule]),
     );
     const customTemplates = storedTemplates.filter(
       (template) =>
@@ -606,7 +758,11 @@ export class NotificationsService {
 
     return [
       ...DEFAULT_NOTIFICATION_TEMPLATES.map((definition) =>
-        this.serializeTemplate(definition, storedByKey.get(definition.key)),
+        this.serializeTemplate(
+          definition,
+          storedByKey.get(definition.key),
+          scheduleByKey.get(definition.key),
+        ),
       ),
       ...customTemplates
         .sort((left, right) => left.name.localeCompare(right.name, 'es'))
@@ -696,23 +852,32 @@ export class NotificationsService {
       return this.serializeStoredTemplate(storedTemplate);
     }
 
-    const storedTemplate = await this.prisma.notificationTemplate.upsert({
-      where: { key },
-      create: {
-        key,
-        name: definition.name,
-        description: definition.description,
-        category: definition.category,
-        title: data.title ?? definition.title,
-        body: data.body ?? definition.body,
-        route: data.route === undefined ? definition.route : data.route,
-        enabled: data.enabled ?? true,
-        variables: definition.variables,
-      },
-      update: data,
-    });
+    const [storedTemplate, storedSchedule] = await Promise.all([
+      this.prisma.notificationTemplate.upsert({
+        where: { key },
+        create: {
+          key,
+          name: definition.name,
+          description: definition.description,
+          category: definition.category,
+          title: data.title ?? definition.title,
+          body: data.body ?? definition.body,
+          route: data.route === undefined ? definition.route : data.route,
+          enabled: data.enabled ?? true,
+          variables: definition.variables,
+        },
+        update: data,
+      }),
+      this.prisma.notificationTemplateSchedule.findUnique({
+        where: { template_key: key },
+      }),
+    ]);
 
-    return this.serializeTemplate(definition, storedTemplate);
+    return this.serializeTemplate(
+      definition,
+      storedTemplate,
+      storedSchedule ?? undefined,
+    );
   }
 
   async resetTemplate(key: string) {
@@ -721,9 +886,18 @@ export class NotificationsService {
     );
 
     if (definition) {
-      await this.prisma.notificationTemplate.deleteMany({ where: { key } });
+      const [, storedSchedule] = await Promise.all([
+        this.prisma.notificationTemplate.deleteMany({ where: { key } }),
+        this.prisma.notificationTemplateSchedule.findUnique({
+          where: { template_key: key },
+        }),
+      ]);
 
-      return this.serializeTemplate(definition);
+      return this.serializeTemplate(
+        definition,
+        undefined,
+        storedSchedule ?? undefined,
+      );
     }
 
     const result = await this.prisma.notificationTemplate.deleteMany({
@@ -735,6 +909,64 @@ export class NotificationsService {
     }
 
     return { key, deleted: true };
+  }
+
+  async updateTemplateSchedule(
+    key: string,
+    dto: UpdateNotificationTemplateScheduleDto,
+  ) {
+    const templateKey = key as NotificationTemplateKey;
+    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(templateKey);
+    const schedule = NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY.get(templateKey);
+
+    if (!definition || !schedule) {
+      throw new BadRequestException(
+        'Esta plantilla no tiene horario programable',
+      );
+    }
+
+    const existingSchedule =
+      await this.prisma.notificationTemplateSchedule.findUnique({
+        where: { template_key: key },
+      });
+    const times = this.normalizeScheduleTimes(
+      schedule,
+      dto.times ?? existingSchedule?.times ?? schedule.defaultTimes,
+    );
+    const timezone = this.normalizeScheduleTimezone(
+      dto.timezone ?? existingSchedule?.timezone ?? schedule.defaultTimezone,
+    );
+    const weekday = this.normalizeScheduleWeekday(
+      schedule,
+      dto.weekday ?? existingSchedule?.weekday ?? schedule.defaultWeekday ?? null,
+    );
+    const enabled = dto.enabled ?? existingSchedule?.enabled ?? true;
+
+    const [storedSchedule, storedTemplate] = await Promise.all([
+      this.prisma.notificationTemplateSchedule.upsert({
+        where: { template_key: key },
+        create: {
+          template_key: key,
+          enabled,
+          timezone,
+          times,
+          weekday,
+        },
+        update: {
+          enabled,
+          timezone,
+          times,
+          weekday,
+        },
+      }),
+      this.prisma.notificationTemplate.findUnique({ where: { key } }),
+    ]);
+
+    return this.serializeTemplate(
+      definition,
+      storedTemplate ?? undefined,
+      storedSchedule,
+    );
   }
 
   async getHistory(senderId: string, query: NotificationQueryDto) {

@@ -1,4 +1,14 @@
-import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class CreateNotificationTemplateDto {
   @IsString()
@@ -73,4 +83,26 @@ export class UpdateNotificationTemplateDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+}
+
+export class UpdateNotificationTemplateScheduleDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  timezone?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  times?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  weekday?: number | null;
 }

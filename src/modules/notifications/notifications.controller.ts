@@ -11,6 +11,7 @@ import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import { SendNotificationDto, SendToAllClientsDto } from './dto/send-notification.dto';
 import {
   CreateNotificationTemplateDto,
+  UpdateNotificationTemplateScheduleDto,
   UpdateNotificationTemplateDto,
 } from './dto/notification-template.dto';
 
@@ -104,6 +105,17 @@ export class NotificationsController {
     @Body() dto: UpdateNotificationTemplateDto,
   ) {
     return this.notificationsService.updateTemplate(key, dto);
+  }
+
+  @Patch('templates/:key/schedule')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update a scheduled notification template timing' })
+  @ApiResponse({ status: 200, description: 'Horario actualizado correctamente' })
+  updateTemplateSchedule(
+    @Param('key') key: string,
+    @Body() dto: UpdateNotificationTemplateScheduleDto,
+  ) {
+    return this.notificationsService.updateTemplateSchedule(key, dto);
   }
 
   @Delete('templates/:key')

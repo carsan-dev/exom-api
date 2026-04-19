@@ -32,7 +32,64 @@ export type NotificationTemplateDeliveryInfo = {
   timezone?: string;
   cron?: string;
   times?: string[];
+  weekday?: number | null;
+  schedule_enabled?: boolean;
+  schedule_kind?: NotificationTemplateScheduleKind;
 };
+
+export type NotificationTemplateScheduleKind = 'daily' | 'weekly' | 'meal_daily';
+
+export type NotificationTemplateScheduleDefinition = {
+  templateKey: NotificationTemplateKey;
+  kind: NotificationTemplateScheduleKind;
+  defaultTimezone: string;
+  defaultTimes: string[];
+  defaultWeekday?: number | null;
+};
+
+export const NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE = 'Europe/Madrid';
+
+export const NOTIFICATION_TEMPLATE_SCHEDULES: NotificationTemplateScheduleDefinition[] = [
+  {
+    templateKey: 'training_reminder_daily',
+    kind: 'daily',
+    defaultTimezone: NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE,
+    defaultTimes: ['09:00'],
+  },
+  {
+    templateKey: 'diet_reminder_meal',
+    kind: 'meal_daily',
+    defaultTimezone: NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE,
+    defaultTimes: ['08:00', '13:00', '17:00', '20:30'],
+  },
+  {
+    templateKey: 'recap_reminder_weekly',
+    kind: 'weekly',
+    defaultTimezone: NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE,
+    defaultTimes: ['19:00'],
+    defaultWeekday: 0,
+  },
+  {
+    templateKey: 'streak_at_risk',
+    kind: 'daily',
+    defaultTimezone: NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE,
+    defaultTimes: ['20:00'],
+  },
+  {
+    templateKey: 'admin_weekly_summary',
+    kind: 'weekly',
+    defaultTimezone: NOTIFICATION_TEMPLATE_DEFAULT_TIMEZONE,
+    defaultTimes: ['09:00'],
+    defaultWeekday: 1,
+  },
+];
+
+export const NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY = new Map(
+  NOTIFICATION_TEMPLATE_SCHEDULES.map((schedule) => [
+    schedule.templateKey,
+    schedule,
+  ]),
+);
 
 export const NOTIFICATION_TEMPLATE_VARIABLE_HELP: Record<string, string> = {
   achievementName: 'Nombre del logro desbloqueado.',
