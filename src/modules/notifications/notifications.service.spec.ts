@@ -48,6 +48,12 @@ describe('NotificationsService', () => {
     notification: {
       create: jest.Mock;
     };
+    notificationTemplate: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      upsert: jest.Mock;
+      deleteMany: jest.Mock;
+    };
   };
 
   const adminUser = {
@@ -75,6 +81,12 @@ describe('NotificationsService', () => {
       },
       notification: {
         create: jest.fn(),
+      },
+      notificationTemplate: {
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        upsert: jest.fn(),
+        deleteMany: jest.fn(),
       },
     };
 
@@ -319,6 +331,109 @@ describe('NotificationsService', () => {
         data: {
           type: 'recap_feedback',
           route: '/recap',
+        },
+      }),
+    );
+  });
+
+  it('lists default templates merged with stored customizations', async () => {
+    const updatedAt = new Date('2026-04-19T10:00:00.000Z');
+    prisma.notificationTemplate.findMany.mockResolvedValue([
+      {
+        key: 'training_reminder_daily',
+        title: 'Entreno pendiente',
+        body: 'Abre tu plan de hoy',
+        route: null,
+        enabled: false,
+        updated_at: updatedAt,
+      },
+    ]);
+
+    const templates = await service.listTemplates();
+
+    expect(templates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: 'training_reminder_daily',
+          title: 'Entreno pendiente',
+          body: 'Abre tu plan de hoy',
+          route: null,
+          enabled: false,
+          customized: true,
+          updated_at: updatedAt,
+        }),
+      ]),
+    );
+  });
+
+  it('does not send an internal template when it is disabled', async () => {
+    prisma.notificationTemplate.findUnique.mockResolvedValue({
+      key: 'streak_at_risk',
+      title: 'Racha en riesgo',
+      body: 'Registra tu progreso',
+      route: '/',
+      enabled: false,
+    });
+
+    await expect(
+      service.sendInternalTemplate(
+        'system-admin',
+        ['client-1'],
+        'streak_at_risk',
+        { days: 6 },
+        {
+          title: 'Racha en riesgo',
+          body: 'Registra tu progreso',
+          route: '/',
+        },
+        { type: 'streak_at_risk' },
+      ),
+    ).resolves.toEqual({ success: true, sent: 0, failed: 0 });
+
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(prisma.notification.create).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a customized empty route instead of falling back to the default route', async () => {
+    prisma.notificationTemplate.findUnique.mockResolvedValue({
+      key: 'training_reminder_daily',
+      title: 'Hola {name}',
+      body: 'Entrena hoy',
+      route: null,
+      enabled: true,
+    });
+    prisma.user.findUnique.mockResolvedValueOnce(clientUser);
+    prisma.notification.create.mockResolvedValue(
+      createNotification({
+        title: 'Hola Ada',
+        body: 'Entrena hoy',
+        data: { source: 'template-test' },
+      }),
+    );
+    sendMock.mockResolvedValue('message-id-template');
+
+    await expect(
+      service.sendInternalTemplate(
+        'system-admin',
+        ['client-1'],
+        'training_reminder_daily',
+        { name: 'Ada' },
+        {
+          title: 'Entreno',
+          body: 'Abre tu plan',
+          route: '/trainings',
+        },
+        { source: 'template-test' },
+      ),
+    ).resolves.toEqual({ success: true, sent: 1, failed: 0 });
+
+    expect(sendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { source: 'template-test' },
+        notification: {
+          title: 'Hola Ada',
+          body: 'Entrena hoy',
         },
       }),
     );

@@ -29,7 +29,7 @@ describe('ProgressService', () => {
   };
   let notifications: {
     findSystemSenderId: jest.Mock;
-    sendInternalNotifications: jest.Mock;
+    sendInternalTemplate: jest.Mock;
   };
   let updateStreakSpy: jest.SpyInstance;
 
@@ -57,7 +57,7 @@ describe('ProgressService', () => {
     };
     notifications = {
       findSystemSenderId: jest.fn().mockResolvedValue('system-admin'),
-      sendInternalNotifications: jest.fn().mockResolvedValue({
+      sendInternalTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -135,12 +135,17 @@ describe('ProgressService', () => {
         last_active_date: new Date('2026-04-08T00:00:00.000Z'),
       },
     });
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'system-admin',
       ['client-1'],
-      '🔥 7 días de racha!',
-      'Sigue así. Tu constancia está creciendo.',
-      { type: 'streak', route: '/' },
+      'streak_milestone',
+      { days: 7 },
+      {
+        title: '7 d\u00edas de racha!',
+        body: 'Sigue as\u00ed. Tu constancia est\u00e1 creciendo.',
+        route: '/',
+      },
+      { type: 'streak' },
     );
   });
 });

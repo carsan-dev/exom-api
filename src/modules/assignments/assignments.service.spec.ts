@@ -47,7 +47,7 @@ describe('AssignmentsService', () => {
     };
     $transaction: jest.Mock;
   };
-  let notifications: { sendInternalNotifications: jest.Mock };
+  let notifications: { sendInternalTemplate: jest.Mock };
 
   const adminUser = {
     id: 'admin-1',
@@ -98,7 +98,7 @@ describe('AssignmentsService', () => {
     };
 
     notifications = {
-      sendInternalNotifications: jest.fn().mockResolvedValue({
+      sendInternalTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 0,
         failed: 0,
@@ -160,12 +160,17 @@ describe('AssignmentsService', () => {
         update: expect.objectContaining({ admin_id: 'super-admin-1' }),
       }),
     );
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'super-admin-1',
       ['client-1'],
-      'Nuevo entrenamiento asignado',
-      'Tu entrenador asign\u00f3 un entrenamiento',
-      { type: 'training', route: '/trainings' },
+      'plan_training_assigned',
+      { dayCount: 1, planSummary: 'un entrenamiento' },
+      {
+        title: 'Nuevo entrenamiento asignado',
+        body: 'Tu entrenador asign\u00f3 un entrenamiento',
+        route: '/trainings',
+      },
+      { type: 'training' },
     );
   });
 
@@ -353,12 +358,17 @@ describe('AssignmentsService', () => {
         }),
       }),
     );
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'admin-1',
       ['client-1'],
-      'Nueva dieta asignada',
-      'Tu entrenador asign\u00f3 2 d\u00edas de dieta',
-      { type: 'diet', route: '/diets' },
+      'plan_diet_assigned',
+      { dayCount: 2, planSummary: '2 d\u00edas de dieta' },
+      {
+        title: 'Nueva dieta asignada',
+        body: 'Tu entrenador asign\u00f3 2 d\u00edas de dieta',
+        route: '/diets',
+      },
+      { type: 'diet' },
     );
   });
 

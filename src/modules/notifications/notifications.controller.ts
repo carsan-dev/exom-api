@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -9,6 +9,8 @@ import { Role } from '@prisma/client';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import { SendNotificationDto, SendToAllClientsDto } from './dto/send-notification.dto';
+import { UpdateNotificationTemplateDto } from './dto/notification-template.dto';
+import type { NotificationTemplateKey } from './notification-templates.constants';
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -73,6 +75,33 @@ export class NotificationsController {
   @ApiResponse({ status: 200, description: 'Estadisticas de notificaciones obtenidas correctamente' })
   getStats(@CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.getStats(user.id);
+  }
+
+  @Get('templates')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'List automatic notification templates' })
+  @ApiResponse({ status: 200, description: 'Plantillas obtenidas correctamente' })
+  listTemplates() {
+    return this.notificationsService.listTemplates();
+  }
+
+  @Patch('templates/:key')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Update an automatic notification template' })
+  @ApiResponse({ status: 200, description: 'Plantilla actualizada correctamente' })
+  updateTemplate(
+    @Param('key') key: NotificationTemplateKey,
+    @Body() dto: UpdateNotificationTemplateDto,
+  ) {
+    return this.notificationsService.updateTemplate(key, dto);
+  }
+
+  @Delete('templates/:key')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reset an automatic notification template' })
+  @ApiResponse({ status: 200, description: 'Plantilla restaurada correctamente' })
+  resetTemplate(@Param('key') key: NotificationTemplateKey) {
+    return this.notificationsService.resetTemplate(key);
   }
 
   @Get('me')

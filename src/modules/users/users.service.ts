@@ -830,14 +830,18 @@ export class UsersService {
     }
 
     try {
-      await this.notifications.sendInternalNotifications(
+      await this.notifications.sendInternalTemplate(
         senderId,
         uniqueAdminIds,
-        'Cliente asignado',
-        `${clientName} te ha sido asignado`,
+        'admin_client_assigned',
+        { clientName, clientId },
+        {
+          title: 'Cliente asignado',
+          body: `${clientName} te ha sido asignado`,
+          route: `/admin/clients/${clientId}`,
+        },
         {
           type: 'client_assigned',
-          route: `/admin/clients/${clientId}`,
           client_id: clientId,
         },
       );

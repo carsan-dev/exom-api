@@ -122,14 +122,18 @@ export class ChallengesService {
       );
       if (!resolvedSenderId) return;
 
-      await this.notifications.sendInternalNotifications(
+      await this.notifications.sendInternalTemplate(
         resolvedSenderId,
         [clientId],
-        `Nuevo reto: ${challenge.title}`,
-        'Tienes un nuevo reto disponible.',
+        'challenge_assigned',
+        { challengeName: challenge.title },
+        {
+          title: `Nuevo reto: ${challenge.title}`,
+          body: 'Tienes un nuevo reto disponible.',
+          route: '/challenges',
+        },
         {
           type: 'challenge',
-          route: '/challenges',
           challenge_id: challenge.id,
         },
       );
@@ -152,14 +156,18 @@ export class ChallengesService {
       );
       if (!resolvedSenderId) return;
 
-      await this.notifications.sendInternalNotifications(
+      await this.notifications.sendInternalTemplate(
         resolvedSenderId,
         [clientId],
-        `Reto completado: ${challenge.title}`,
-        'Buen trabajo. Has completado el reto.',
+        'challenge_completed',
+        { challengeName: challenge.title },
+        {
+          title: `Reto completado: ${challenge.title}`,
+          body: 'Buen trabajo. Has completado el reto.',
+          route: '/challenges',
+        },
         {
           type: 'challenge',
-          route: '/challenges',
           challenge_id: challenge.id,
         },
       );

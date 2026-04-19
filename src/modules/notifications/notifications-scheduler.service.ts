@@ -115,12 +115,17 @@ export class NotificationsSchedulerService {
     if (pending.length === 0) return;
 
     this.logger.log(`[cron] remindDailyTraining → ${pending.length} clients`);
-    await this.notifications.sendInternalNotifications(
+    await this.notifications.sendInternalTemplate(
       sender,
       pending,
-      '🏋️ Tu entreno de hoy te espera',
-      'Abre la app y empieza cuando puedas.',
-      { type: 'training_reminder', route: '/trainings' },
+      'training_reminder_daily',
+      {},
+      {
+        title: 'Tu entreno de hoy te espera',
+        body: 'Abre la app y empieza cuando puedas.',
+        route: '/trainings',
+      },
+      { type: 'training_reminder' },
     );
   }
 
@@ -209,12 +214,17 @@ export class NotificationsSchedulerService {
     this.logger.log(
       `[cron] remindMeal(${mealType}) → ${pending.length} clients`,
     );
-    await this.notifications.sendInternalNotifications(
+    await this.notifications.sendInternalTemplate(
       sender,
       pending,
-      '🍽️ Hora de tu ' + label,
-      'Revisa tu plan y registra la comida cuando termines.',
-      { type: 'diet_reminder', route: '/diets' },
+      'diet_reminder_meal',
+      { mealLabel: label },
+      {
+        title: 'Hora de tu ' + label,
+        body: 'Revisa tu plan y registra la comida cuando termines.',
+        route: '/diets',
+      },
+      { type: 'diet_reminder' },
     );
   }
 
@@ -249,12 +259,17 @@ export class NotificationsSchedulerService {
     if (pending.length === 0) return;
 
     this.logger.log(`[cron] remindWeeklyRecap → ${pending.length} clients`);
-    await this.notifications.sendInternalNotifications(
+    await this.notifications.sendInternalTemplate(
       sender,
       pending.map((p) => p.id),
-      '📋 Completa tu recap semanal',
-      'Cuéntanos cómo fue tu semana antes del domingo.',
-      { type: 'recap_reminder', route: '/recap' },
+      'recap_reminder_weekly',
+      {},
+      {
+        title: 'Completa tu recap semanal',
+        body: 'Cuéntanos cómo fue tu semana antes del domingo.',
+        route: '/recap',
+      },
+      { type: 'recap_reminder' },
     );
   }
 
@@ -308,12 +323,17 @@ export class NotificationsSchedulerService {
     this.logger.log(`[cron] warnStreakAtRisk → ${pending.length} clients`);
     await Promise.all(
       pending.map((streak) =>
-        this.notifications.sendInternalNotifications(
+        this.notifications.sendInternalTemplate(
           sender,
           [streak.client_id],
-          `No pierdas tu racha de ${streak.current_days} días`,
-          'Registra tu progreso de hoy para mantenerla activa.',
-          { type: 'streak_at_risk', route: '/' },
+          'streak_at_risk',
+          { days: streak.current_days },
+          {
+            title: `No pierdas tu racha de ${streak.current_days} días`,
+            body: 'Registra tu progreso de hoy para mantenerla activa.',
+            route: '/',
+          },
+          { type: 'streak_at_risk' },
         ),
       ),
     );
@@ -467,14 +487,25 @@ export class NotificationsSchedulerService {
         const summary = ensureSummary(assignment.client_id);
         const clientName = this.buildClientName(assignment.client);
 
-        return this.notifications.sendInternalNotifications(
+        return this.notifications.sendInternalTemplate(
           sender,
           [assignment.admin_id],
-          'Resumen semanal de cliente',
-          `${clientName}: ${summary.trainingsCompleted}/${summary.trainingsAssigned} entrenos, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
+          'admin_weekly_summary',
+          {
+            clientName,
+            clientId: assignment.client_id,
+            trainingsCompleted: summary.trainingsCompleted,
+            trainingsAssigned: summary.trainingsAssigned,
+            mealsCompleted: summary.mealsCompleted,
+            mealsAssigned: summary.mealsAssigned,
+          },
+          {
+            title: 'Resumen semanal de cliente',
+            body: `${clientName}: ${summary.trainingsCompleted}/${summary.trainingsAssigned} entrenos, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
+            route: `/admin/clients/${assignment.client_id}`,
+          },
           {
             type: 'weekly_summary',
-            route: `/admin/clients/${assignment.client_id}`,
             client_id: assignment.client_id,
             week_start: this.formatDate(start),
             week_end: this.formatDate(end),

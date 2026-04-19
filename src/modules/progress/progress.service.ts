@@ -111,12 +111,17 @@ export class ProgressService {
       const senderId = await this.notifications.findSystemSenderId(clientId);
       if (!senderId) return;
 
-      await this.notifications.sendInternalNotifications(
+      await this.notifications.sendInternalTemplate(
         senderId,
         [clientId],
-        `🔥 ${days} días de racha!`,
-        'Sigue así. Tu constancia está creciendo.',
-        { type: 'streak', route: '/' },
+        'streak_milestone',
+        { days },
+        {
+          title: `${days} días de racha!`,
+          body: 'Sigue así. Tu constancia está creciendo.',
+          route: '/',
+        },
+        { type: 'streak' },
       );
     } catch (err) {
       this.logger.warn(

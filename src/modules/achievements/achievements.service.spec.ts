@@ -46,7 +46,7 @@ describe('AchievementsService', () => {
   };
   let notifications: {
     findSystemSenderId: jest.Mock;
-    sendInternalNotifications: jest.Mock;
+    sendInternalTemplate: jest.Mock;
   };
 
   beforeEach(() => {
@@ -92,7 +92,7 @@ describe('AchievementsService', () => {
 
     notifications = {
       findSystemSenderId: jest.fn().mockResolvedValue('system-admin'),
-      sendInternalNotifications: jest.fn().mockResolvedValue({
+      sendInternalTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -256,14 +256,18 @@ describe('AchievementsService', () => {
         achievement_id: { in: ['ach-streak'] },
       },
     });
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'system-admin',
       ['client-1'],
-      'Logro desbloqueado',
-      'Tres entrenos',
+      'achievement_unlocked',
+      { achievementName: 'Tres entrenos' },
+      {
+        title: 'Logro desbloqueado',
+        body: 'Tres entrenos',
+        route: '/achievements',
+      },
       {
         type: 'achievement',
-        route: '/achievements',
         achievement_id: 'ach-training',
       },
     );
@@ -539,15 +543,19 @@ describe('AchievementsService', () => {
         unlock_source: AchievementUnlockSource.MANUAL,
       },
     });
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledTimes(2);
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledTimes(2);
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'admin-1',
       ['client-1'],
-      'Logro desbloqueado',
-      'Logro manual',
+      'achievement_unlocked',
+      { achievementName: 'Logro manual' },
+      {
+        title: 'Logro desbloqueado',
+        body: 'Logro manual',
+        route: '/achievements',
+      },
       {
         type: 'achievement',
-        route: '/achievements',
         achievement_id: 'ach-1',
       },
     );

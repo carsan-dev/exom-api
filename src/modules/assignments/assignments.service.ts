@@ -126,30 +126,39 @@ export class AssignmentsService {
   }) {
     const { actorId, clientId, kind, dayCount } = params;
     try {
-      const titleMap: Record<PlanNotifKind, string> = {
-        training: 'Nuevo entrenamiento asignado',
-        diet: 'Nueva dieta asignada',
-        plan: 'Tu plan se ha actualizado',
-        rest: 'Tu plan se ha actualizado',
-      };
-      const bodyMap: Record<PlanNotifKind, string> = {
-        training:
-          dayCount === 1
-            ? 'Tu entrenador asignó un entrenamiento'
-            : `Tu entrenador asignó ${dayCount} días de entrenamiento`,
-        diet:
-          dayCount === 1
-            ? 'Tu entrenador asignó una dieta'
-            : `Tu entrenador asignó ${dayCount} días de dieta`,
-        plan: `Tu entrenador actualizó tu plan (${dayCount} días)`,
-        rest: 'Tu plan se ha actualizado',
-      };
+      const planSummary =
+        kind === 'training'
+          ? dayCount === 1
+            ? 'un entrenamiento'
+            : `${dayCount} días de entrenamiento`
+          : kind === 'diet'
+            ? dayCount === 1
+              ? 'una dieta'
+              : `${dayCount} días de dieta`
+            : `${dayCount} días`;
+      const templateKey =
+        kind === 'training'
+          ? 'plan_training_assigned'
+          : kind === 'diet'
+            ? 'plan_diet_assigned'
+            : 'plan_updated';
+      const title =
+        kind === 'training'
+          ? 'Nuevo entrenamiento asignado'
+          : kind === 'diet'
+            ? 'Nueva dieta asignada'
+            : 'Tu plan se ha actualizado';
+      const body =
+        kind === 'plan'
+          ? `Tu entrenador actualizó tu plan (${dayCount} días)`
+          : `Tu entrenador asignó ${planSummary}`;
 
-      await this.notifications.sendInternalNotifications(
+      await this.notifications.sendInternalTemplate(
         actorId,
         [clientId],
-        titleMap[kind],
-        bodyMap[kind],
+        templateKey,
+        { dayCount, planSummary },
+        { title, body, route: this.routeForKind(kind) },
         {
           type:
             kind === 'training'
@@ -157,7 +166,6 @@ export class AssignmentsService {
               : kind === 'diet'
                 ? 'diet'
                 : 'calendar',
-          route: this.routeForKind(kind),
         },
       );
     } catch (err) {

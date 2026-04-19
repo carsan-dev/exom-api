@@ -211,14 +211,18 @@ export class FeedbackService {
         assignments[0]?.client ?? null,
       );
 
-      await this.notifications.sendInternalNotifications(
+      await this.notifications.sendInternalTemplate(
         clientId,
         adminIds,
-        'Nuevo feedback de cliente',
-        `${clientName} subió feedback`,
+        'admin_feedback_submitted',
+        { clientName, clientId, feedbackId },
+        {
+          title: 'Nuevo feedback de cliente',
+          body: `${clientName} subió feedback`,
+          route: `/admin/feedback/${feedbackId}`,
+        },
         {
           type: 'feedback_submitted',
-          route: `/admin/feedback/${feedbackId}`,
           feedback_id: feedbackId,
           client_id: clientId,
         },

@@ -14,7 +14,7 @@ describe('FeedbackService', () => {
     };
   };
   let notifications: {
-    sendInternalNotifications: jest.Mock;
+    sendInternalTemplate: jest.Mock;
   };
 
   beforeEach(() => {
@@ -27,7 +27,7 @@ describe('FeedbackService', () => {
       },
     };
     notifications = {
-      sendInternalNotifications: jest.fn().mockResolvedValue({
+      sendInternalTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -116,14 +116,22 @@ describe('FeedbackService', () => {
         },
       },
     });
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'client-1',
       ['admin-1', 'admin-2'],
-      'Nuevo feedback de cliente',
-      'Ada Rivera subió feedback',
+      'admin_feedback_submitted',
+      {
+        clientName: 'Ada Rivera',
+        clientId: 'client-1',
+        feedbackId: 'feedback-1',
+      },
+      {
+        title: 'Nuevo feedback de cliente',
+        body: 'Ada Rivera subi\u00f3 feedback',
+        route: '/admin/feedback/feedback-1',
+      },
       {
         type: 'feedback_submitted',
-        route: '/admin/feedback/feedback-1',
         feedback_id: 'feedback-1',
         client_id: 'client-1',
       },

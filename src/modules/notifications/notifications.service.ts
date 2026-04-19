@@ -11,6 +11,13 @@ import { paginate } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
+import { UpdateNotificationTemplateDto } from './dto/notification-template.dto';
+import {
+  DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY,
+  DEFAULT_NOTIFICATION_TEMPLATES,
+  type NotificationTemplateDefinition,
+  type NotificationTemplateKey,
+} from './notification-templates.constants';
 
 const notificationHistoryInclude = {
   recipient: {
@@ -26,6 +33,14 @@ const notificationHistoryInclude = {
     },
   },
 } as const;
+
+type TemplateVariables = Record<string, string | number | boolean | null | undefined>;
+
+type TemplateFallback = {
+  title: string;
+  body: string;
+  route?: string | null;
+};
 
 @Injectable()
 export class NotificationsService {
@@ -81,6 +96,77 @@ export class NotificationsService {
     return {
       ...(data ?? {}),
       ...(route ? { route } : {}),
+    };
+  }
+
+  private stringifyTemplateVariables(variables: TemplateVariables) {
+    return Object.fromEntries(
+      Object.entries(variables).map(([key, value]) => [
+        key,
+        value == null ? '' : String(value),
+      ]),
+    );
+  }
+
+  private renderTemplateText(
+    text: string | null | undefined,
+    variables: Record<string, string>,
+  ) {
+    if (!text) return text;
+
+    return text.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key: string) =>
+      variables[key] ?? '',
+    );
+  }
+
+  private serializeTemplate(
+    definition: NotificationTemplateDefinition,
+    storedTemplate?: {
+      title: string;
+      body: string;
+      route: string | null;
+      enabled: boolean;
+      updated_at?: Date;
+    },
+  ) {
+    return {
+      ...definition,
+      title: storedTemplate?.title ?? definition.title,
+      body: storedTemplate?.body ?? definition.body,
+      route: storedTemplate ? storedTemplate.route : definition.route,
+      enabled: storedTemplate?.enabled ?? true,
+      customized: Boolean(storedTemplate),
+      updated_at: storedTemplate?.updated_at ?? null,
+    };
+  }
+
+  private async resolveTemplate(
+    key: NotificationTemplateKey,
+    variables: TemplateVariables,
+    fallback?: TemplateFallback,
+  ) {
+    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(key);
+    const storedTemplate = await this.prisma.notificationTemplate.findUnique({
+      where: { key },
+    });
+    const enabled = storedTemplate?.enabled ?? true;
+
+    if (!enabled) {
+      return null;
+    }
+
+    const stringVariables = this.stringifyTemplateVariables(variables);
+    const title =
+      storedTemplate?.title ?? definition?.title ?? fallback?.title ?? '';
+    const body = storedTemplate?.body ?? definition?.body ?? fallback?.body ?? '';
+    const route = storedTemplate
+      ? storedTemplate.route
+      : definition?.route ?? fallback?.route ?? null;
+
+    return {
+      title: this.renderTemplateText(title, stringVariables) ?? '',
+      body: this.renderTemplateText(body, stringVariables) ?? '',
+      route: this.renderTemplateText(route, stringVariables) ?? undefined,
     };
   }
 
@@ -375,6 +461,97 @@ export class NotificationsService {
     return this.sendToRecipients(senderId, uniqueUserIds, title, body, data, {
       requireClientRole: false,
     });
+  }
+
+  async sendInternalTemplate(
+    senderId: string,
+    userIds: string[],
+    templateKey: NotificationTemplateKey,
+    variables: TemplateVariables,
+    fallback: TemplateFallback,
+    data?: Record<string, string>,
+  ) {
+    const rendered = await this.resolveTemplate(templateKey, variables, fallback);
+
+    if (!rendered) {
+      return { success: true, sent: 0, failed: 0 };
+    }
+
+    return this.sendInternalNotifications(
+      senderId,
+      userIds,
+      rendered.title,
+      rendered.body,
+      {
+        ...(data ?? {}),
+        ...(rendered.route ? { route: rendered.route } : {}),
+      },
+    );
+  }
+
+  async listTemplates() {
+    const storedTemplates = await this.prisma.notificationTemplate.findMany();
+    const storedByKey = new Map(
+      storedTemplates.map((template) => [template.key, template]),
+    );
+
+    return DEFAULT_NOTIFICATION_TEMPLATES.map((definition) =>
+      this.serializeTemplate(definition, storedByKey.get(definition.key)),
+    );
+  }
+
+  async updateTemplate(
+    key: NotificationTemplateKey,
+    dto: UpdateNotificationTemplateDto,
+  ) {
+    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(key);
+
+    if (!definition) {
+      throw new NotFoundException('Notification template not found');
+    }
+
+    const route =
+      dto.route === undefined
+        ? undefined
+        : dto.route?.trim()
+          ? dto.route.trim()
+          : null;
+    const data = {
+      ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
+      ...(dto.body !== undefined ? { body: dto.body.trim() } : {}),
+      ...(route !== undefined ? { route } : {}),
+      ...(dto.enabled !== undefined ? { enabled: dto.enabled } : {}),
+    };
+
+    const storedTemplate = await this.prisma.notificationTemplate.upsert({
+      where: { key },
+      create: {
+        key,
+        name: definition.name,
+        description: definition.description,
+        category: definition.category,
+        title: data.title ?? definition.title,
+        body: data.body ?? definition.body,
+        route: data.route === undefined ? definition.route : data.route,
+        enabled: data.enabled ?? true,
+        variables: definition.variables,
+      },
+      update: data,
+    });
+
+    return this.serializeTemplate(definition, storedTemplate);
+  }
+
+  async resetTemplate(key: NotificationTemplateKey) {
+    const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(key);
+
+    if (!definition) {
+      throw new NotFoundException('Notification template not found');
+    }
+
+    await this.prisma.notificationTemplate.deleteMany({ where: { key } });
+
+    return this.serializeTemplate(definition);
   }
 
   async getHistory(senderId: string, query: NotificationQueryDto) {

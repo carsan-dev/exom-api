@@ -651,14 +651,18 @@ export class AchievementsService {
 
       await Promise.all(
         achievements.map((achievement) =>
-          this.notifications.sendInternalNotifications(
+          this.notifications.sendInternalTemplate(
             resolvedSenderId,
             [userId],
-            'Logro desbloqueado',
-            achievement.name,
+            'achievement_unlocked',
+            { achievementName: achievement.name },
+            {
+              title: 'Logro desbloqueado',
+              body: achievement.name,
+              route: '/achievements',
+            },
             {
               type: 'achievement',
-              route: '/achievements',
               achievement_id: achievement.id,
             },
           ),

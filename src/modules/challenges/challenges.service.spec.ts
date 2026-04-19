@@ -27,7 +27,7 @@ describe('ChallengesService', () => {
   };
   let notifications: {
     findSystemSenderId: jest.Mock;
-    sendInternalNotifications: jest.Mock;
+    sendInternalTemplate: jest.Mock;
   };
 
   beforeEach(() => {
@@ -51,7 +51,7 @@ describe('ChallengesService', () => {
     };
     notifications = {
       findSystemSenderId: jest.fn().mockResolvedValue('system-admin'),
-      sendInternalNotifications: jest.fn().mockResolvedValue({
+      sendInternalTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -107,14 +107,18 @@ describe('ChallengesService', () => {
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
     ).toHaveBeenCalledWith('client-1', prisma as unknown as PrismaService);
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'admin-1',
       ['client-1'],
-      'Reto completado: 5 comidas limpias',
-      'Buen trabajo. Has completado el reto.',
+      'challenge_completed',
+      { challengeName: '5 comidas limpias' },
+      {
+        title: 'Reto completado: 5 comidas limpias',
+        body: 'Buen trabajo. Has completado el reto.',
+        route: '/challenges',
+      },
       {
         type: 'challenge',
-        route: '/challenges',
         challenge_id: 'challenge-1',
       },
     );

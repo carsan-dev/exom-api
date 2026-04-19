@@ -40,7 +40,7 @@ describe('UsersService', () => {
     syncGlobalChallengesForCreatorClient: jest.Mock;
   };
   let notifications: {
-    sendInternalNotifications: jest.Mock;
+    sendInternalTemplate: jest.Mock;
   };
 
   beforeEach(() => {
@@ -69,7 +69,7 @@ describe('UsersService', () => {
       syncGlobalChallengesForCreatorClient: jest.fn().mockResolvedValue(undefined),
     };
     notifications = {
-      sendInternalNotifications: jest.fn().mockResolvedValue({
+      sendInternalTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -157,14 +157,18 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.create).toHaveBeenCalledWith({
       data: { admin_id: 'admin-1', client_id: 'client-1' },
     });
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'admin-1',
       ['admin-1'],
-      'Cliente asignado',
-      'Ada Rivera te ha sido asignado',
+      'admin_client_assigned',
+      { clientName: 'Ada Rivera', clientId: 'client-1' },
+      {
+        title: 'Cliente asignado',
+        body: 'Ada Rivera te ha sido asignado',
+        route: '/admin/clients/client-1',
+      },
       {
         type: 'client_assigned',
-        route: '/admin/clients/client-1',
         client_id: 'client-1',
       },
     );
@@ -407,14 +411,18 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.createMany).toHaveBeenCalledWith({
       data: [{ admin_id: 'admin-3', client_id: 'client-1' }],
     });
-    expect(notifications.sendInternalNotifications).toHaveBeenCalledWith(
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'super-admin-1',
       ['admin-2', 'admin-3'],
-      'Cliente asignado',
-      'Cliente te ha sido asignado',
+      'admin_client_assigned',
+      { clientName: 'Cliente', clientId: 'client-1' },
+      {
+        title: 'Cliente asignado',
+        body: 'Cliente te ha sido asignado',
+        route: '/admin/clients/client-1',
+      },
       {
         type: 'client_assigned',
-        route: '/admin/clients/client-1',
         client_id: 'client-1',
       },
     );
