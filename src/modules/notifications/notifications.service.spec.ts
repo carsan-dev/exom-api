@@ -60,6 +60,7 @@ describe('NotificationsService', () => {
     email: 'cliente@exom.dev',
     role: Role.CLIENT,
     fcm_token: 'token-123',
+    is_active: true,
   };
 
   beforeEach(() => {
@@ -93,11 +94,16 @@ describe('NotificationsService', () => {
   });
 
   it('throws when the sender does not have admin permissions', async () => {
-    prisma.user.findUnique.mockResolvedValueOnce({ id: 'client-sender', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValueOnce({
+      id: 'client-sender',
+      role: Role.CLIENT,
+    });
 
     await expect(
       service.sendToUser('client-sender', 'client-1', 'Titulo', 'Cuerpo'),
-    ).rejects.toThrow(new ForbiddenException('No tienes permisos para enviar notificaciones'));
+    ).rejects.toThrow(
+      new ForbiddenException('No tienes permisos para enviar notificaciones'),
+    );
 
     expect(prisma.adminClientAssignment.findMany).not.toHaveBeenCalled();
     expect(prisma.notification.create).not.toHaveBeenCalled();
@@ -116,7 +122,9 @@ describe('NotificationsService', () => {
     prisma.user.findUnique
       .mockResolvedValueOnce(adminUser)
       .mockResolvedValueOnce({ ...clientUser, fcm_token: null });
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.notification.create.mockResolvedValue(failedNotification);
 
     await expect(
@@ -141,15 +149,25 @@ describe('NotificationsService', () => {
   it('sends and persists a notification successfully', async () => {
     const sentNotification = createNotification();
 
-    prisma.user.findUnique.mockResolvedValueOnce(adminUser).mockResolvedValueOnce(clientUser);
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.user.findUnique
+      .mockResolvedValueOnce(adminUser)
+      .mockResolvedValueOnce(clientUser);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.notification.create.mockResolvedValue(sentNotification);
     sendMock.mockResolvedValue('message-id-123');
 
     await expect(
-      service.sendToUser('admin-1', 'client-1', 'Weekly recap', 'Completa tu recap', {
-        type: 'recap_reminder',
-      }),
+      service.sendToUser(
+        'admin-1',
+        'client-1',
+        'Weekly recap',
+        'Completa tu recap',
+        {
+          type: 'recap_reminder',
+        },
+      ),
     ).resolves.toEqual(sentNotification);
 
     expect(sendMock).toHaveBeenCalledWith({
@@ -198,9 +216,42 @@ describe('NotificationsService', () => {
     );
   });
 
+  it('skips FCM and records FAILED when the recipient is inactive', async () => {
+    const failed = createNotification({
+      status: NotificationStatus.FAILED,
+      error: 'Recipient inactive',
+    });
+
+    prisma.user.findUnique
+      .mockResolvedValueOnce(adminUser)
+      .mockResolvedValueOnce({ ...clientUser, is_active: false });
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
+    prisma.notification.create.mockResolvedValue(failed);
+
+    await expect(
+      service.sendToUser('admin-1', 'client-1', 'Titulo', 'Cuerpo'),
+    ).resolves.toEqual(failed);
+
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(prisma.notification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: NotificationStatus.FAILED,
+          error: 'Recipient inactive',
+        }),
+      }),
+    );
+  });
+
   it('preserves an explicit deep link route from the payload', async () => {
-    prisma.user.findUnique.mockResolvedValueOnce(adminUser).mockResolvedValueOnce(clientUser);
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.user.findUnique
+      .mockResolvedValueOnce(adminUser)
+      .mockResolvedValueOnce(clientUser);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.notification.create.mockResolvedValue(
       createNotification({
         title: 'Nuevo feedback',
@@ -213,10 +264,16 @@ describe('NotificationsService', () => {
     );
     sendMock.mockResolvedValue('message-id-456');
 
-    await service.sendToUser('admin-1', 'client-1', 'Nuevo feedback', 'Abre tu recap', {
-      type: 'recap_feedback',
-      route: '/recap/recap-1',
-    });
+    await service.sendToUser(
+      'admin-1',
+      'client-1',
+      'Nuevo feedback',
+      'Abre tu recap',
+      {
+        type: 'recap_feedback',
+        route: '/recap/recap-1',
+      },
+    );
 
     expect(sendMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -229,8 +286,12 @@ describe('NotificationsService', () => {
   });
 
   it('falls back to the recap route when recap feedback has no direct deep link', async () => {
-    prisma.user.findUnique.mockResolvedValueOnce(adminUser).mockResolvedValueOnce(clientUser);
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.user.findUnique
+      .mockResolvedValueOnce(adminUser)
+      .mockResolvedValueOnce(clientUser);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.notification.create.mockResolvedValue(
       createNotification({
         title: 'Nuevo feedback',
@@ -243,9 +304,15 @@ describe('NotificationsService', () => {
     );
     sendMock.mockResolvedValue('message-id-789');
 
-    await service.sendToUser('admin-1', 'client-1', 'Nuevo feedback', 'Abre tu recap', {
-      type: 'recap_feedback',
-    });
+    await service.sendToUser(
+      'admin-1',
+      'client-1',
+      'Nuevo feedback',
+      'Abre tu recap',
+      {
+        type: 'recap_feedback',
+      },
+    );
 
     expect(sendMock).toHaveBeenLastCalledWith(
       expect.objectContaining({

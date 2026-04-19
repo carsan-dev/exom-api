@@ -99,7 +99,9 @@ export class NotificationsService {
     }
 
     if (sender.role !== Role.ADMIN) {
-      throw new ForbiddenException('No tienes permisos para enviar notificaciones');
+      throw new ForbiddenException(
+        'No tienes permisos para enviar notificaciones',
+      );
     }
 
     const assignments = await this.prisma.adminClientAssignment.findMany({
@@ -118,11 +120,16 @@ export class NotificationsService {
     return assignments.map((assignment) => assignment.client_id);
   }
 
-  private async assertAccessibleRecipientIds(senderId: string, userIds: string[]) {
+  private async assertAccessibleRecipientIds(
+    senderId: string,
+    userIds: string[],
+  ) {
     const uniqueUserIds = [...new Set(userIds)];
 
     if (uniqueUserIds.length === 0) {
-      throw new BadRequestException('Debes seleccionar al menos un destinatario');
+      throw new BadRequestException(
+        'Debes seleccionar al menos un destinatario',
+      );
     }
 
     const accessibleClientIds = await this.resolveAccessibleClientIds(senderId);
@@ -131,7 +138,9 @@ export class NotificationsService {
     );
 
     if (inaccessibleUserIds.length > 0) {
-      throw new ForbiddenException('No tienes permisos para notificar a uno o mas usuarios');
+      throw new ForbiddenException(
+        'No tienes permisos para notificar a uno o mas usuarios',
+      );
     }
 
     return uniqueUserIds;
@@ -170,7 +179,13 @@ export class NotificationsService {
   ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, fcm_token: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        fcm_token: true,
+        role: true,
+        is_active: true,
+      },
     });
 
     if (!user) {
@@ -182,6 +197,20 @@ export class NotificationsService {
     }
 
     const payloadData = this.buildPayloadData(data);
+
+    if (!user.is_active) {
+      this.logger.warn(`Skipping notification to inactive user ${user.email}`);
+
+      return this.createNotificationRecord(
+        senderId,
+        user.id,
+        title,
+        body,
+        payloadData,
+        NotificationStatus.FAILED,
+        'Recipient inactive',
+      );
+    }
 
     if (!user.fcm_token) {
       this.logger.warn(`No FCM token registered for user ${user.email}`);
@@ -233,7 +262,8 @@ export class NotificationsService {
         NotificationStatus.SENT,
       );
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unexpected FCM error';
+      const message =
+        error instanceof Error ? error.message : 'Unexpected FCM error';
       this.logger.error(`FCM error for ${user.email}: ${message}`);
 
       return this.createNotificationRecord(
@@ -281,7 +311,9 @@ export class NotificationsService {
     body: string,
     data?: Record<string, string>,
   ) {
-    const [recipientId] = await this.assertAccessibleRecipientIds(senderId, [userId]);
+    const [recipientId] = await this.assertAccessibleRecipientIds(senderId, [
+      userId,
+    ]);
 
     return this.deliverToUser(senderId, recipientId, title, body, data, {
       requireClientRole: true,
@@ -295,7 +327,10 @@ export class NotificationsService {
     body: string,
     data?: Record<string, string>,
   ) {
-    const recipientIds = await this.assertAccessibleRecipientIds(senderId, userIds);
+    const recipientIds = await this.assertAccessibleRecipientIds(
+      senderId,
+      userIds,
+    );
 
     return this.sendToRecipients(senderId, recipientIds, title, body, data, {
       requireClientRole: true,
@@ -369,7 +404,9 @@ export class NotificationsService {
 
   async getStats(senderId: string) {
     const now = new Date();
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const today = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
 
     const where = { sender_id: senderId };
 
@@ -396,7 +433,10 @@ export class NotificationsService {
     };
   }
 
-  async getMyNotifications(recipientId: string, query: MyNotificationsQueryDto) {
+  async getMyNotifications(
+    recipientId: string,
+    query: MyNotificationsQueryDto,
+  ) {
     const where: Prisma.NotificationWhereInput = {
       recipient_id: recipientId,
       ...(query.unread_only ? { read_at: null } : {}),
@@ -462,10 +502,7 @@ export class NotificationsService {
     });
   }
 
-  async sendRecapReminder(
-    senderId: string,
-    clientId: string,
-  ) {
+  async sendRecapReminder(senderId: string, clientId: string) {
     return this.sendToUser(
       senderId,
       clientId,
@@ -473,5 +510,15 @@ export class NotificationsService {
       "Don't forget to complete your weekly recap!",
       { type: 'recap_reminder' },
     );
+  }
+
+  async findSystemSenderId(): Promise<string | null> {
+    const superAdmin = await this.prisma.user.findFirst({
+      where: { role: Role.SUPER_ADMIN, is_active: true },
+      orderBy: { created_at: 'asc' },
+      select: { id: true },
+    });
+
+    return superAdmin?.id ?? null;
   }
 }
