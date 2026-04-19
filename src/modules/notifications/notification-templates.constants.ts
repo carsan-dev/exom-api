@@ -25,6 +25,15 @@ export type NotificationTemplateDefinition = {
   variables: string[];
 };
 
+export type NotificationTemplateDeliveryInfo = {
+  type: 'event' | 'schedule' | 'manual';
+  label: string;
+  description: string;
+  timezone?: string;
+  cron?: string;
+  times?: string[];
+};
+
 export const NOTIFICATION_TEMPLATE_VARIABLE_HELP: Record<string, string> = {
   achievementName: 'Nombre del logro desbloqueado.',
   challengeName: 'Nombre del reto asignado o completado.',
@@ -39,6 +48,111 @@ export const NOTIFICATION_TEMPLATE_VARIABLE_HELP: Record<string, string> = {
   planSummary: 'Resumen del plan asignado, por ejemplo "un entrenamiento" o "2 días de dieta".',
   trainingsAssigned: 'Total de entrenamientos planificados en la semana.',
   trainingsCompleted: 'Entrenamientos completados por el cliente en la semana.',
+};
+
+export const NOTIFICATION_TEMPLATE_DELIVERY_INFO: Record<
+  NotificationTemplateKey,
+  NotificationTemplateDeliveryInfo
+> = {
+  plan_training_assigned: {
+    type: 'event',
+    label: 'Al asignar entrenamientos',
+    description:
+      'Se envía al cliente justo después de asignar entrenamientos desde planificación.',
+  },
+  plan_diet_assigned: {
+    type: 'event',
+    label: 'Al asignar dietas',
+    description:
+      'Se envía al cliente justo después de asignar dietas desde planificación.',
+  },
+  plan_updated: {
+    type: 'event',
+    label: 'Al actualizar plan mixto',
+    description:
+      'Se envía al cliente cuando una asignación mezcla entreno y dieta.',
+  },
+  training_reminder_daily: {
+    type: 'schedule',
+    label: 'Todos los días a las 09:00',
+    description:
+      'Recuerda entrenamientos pendientes del día a clientes activos.',
+    timezone: 'Europe/Madrid',
+    cron: '0 9 * * *',
+    times: ['09:00'],
+  },
+  diet_reminder_meal: {
+    type: 'schedule',
+    label: 'Todos los días a las 08:00, 13:00, 17:00 y 20:30',
+    description:
+      'Recuerda comidas pendientes. El sistema rellena la variable de comida según la hora.',
+    timezone: 'Europe/Madrid',
+    cron: '0 8 * * *, 0 13 * * *, 0 17 * * *, 30 20 * * *',
+    times: ['08:00', '13:00', '17:00', '20:30'],
+  },
+  recap_reminder_weekly: {
+    type: 'schedule',
+    label: 'Domingos a las 19:00',
+    description:
+      'Recuerda completar el recap semanal a clientes activos sin recap enviado.',
+    timezone: 'Europe/Madrid',
+    cron: '0 19 * * 0',
+    times: ['19:00'],
+  },
+  streak_at_risk: {
+    type: 'schedule',
+    label: 'Todos los días a las 20:00',
+    description:
+      'Avisa a clientes activos con racha que todavía no registraron progreso hoy.',
+    timezone: 'Europe/Madrid',
+    cron: '0 20 * * *',
+    times: ['20:00'],
+  },
+  achievement_unlocked: {
+    type: 'event',
+    label: 'Al desbloquear un logro',
+    description:
+      'Se envía al cliente justo después de conceder o detectar un logro.',
+  },
+  challenge_assigned: {
+    type: 'event',
+    label: 'Al asignar un reto',
+    description:
+      'Se envía al cliente cuando recibe un reto nuevo.',
+  },
+  challenge_completed: {
+    type: 'event',
+    label: 'Al completar un reto',
+    description:
+      'Se envía al cliente cuando el reto pasa a completado.',
+  },
+  streak_milestone: {
+    type: 'event',
+    label: 'Al alcanzar un hito de racha',
+    description:
+      'Se envía al llegar a 7, 30, 100 o 365 días de racha.',
+  },
+  admin_client_assigned: {
+    type: 'event',
+    label: 'Al asignar cliente a admin',
+    description:
+      'Se envía al admin cuando recibe un cliente asignado.',
+  },
+  admin_feedback_submitted: {
+    type: 'event',
+    label: 'Al subir feedback',
+    description:
+      'Se envía al admin cuando un cliente sube un feedback nuevo.',
+  },
+  admin_weekly_summary: {
+    type: 'schedule',
+    label: 'Lunes a las 09:00',
+    description:
+      'Envía al admin el resumen de la semana anterior por cliente asignado.',
+    timezone: 'Europe/Madrid',
+    cron: '0 9 * * 1',
+    times: ['09:00'],
+  },
 };
 
 export const DEFAULT_NOTIFICATION_TEMPLATES: NotificationTemplateDefinition[] = [

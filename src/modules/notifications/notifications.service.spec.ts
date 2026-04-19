@@ -365,6 +365,11 @@ describe('NotificationsService', () => {
           enabled: false,
           customized: true,
           is_system: true,
+          delivery_info: expect.objectContaining({
+            type: 'schedule',
+            label: 'Todos los días a las 08:00, 13:00, 17:00 y 20:30',
+            timezone: 'Europe/Madrid',
+          }),
           variable_help: expect.objectContaining({
             mealLabel: 'Nombre de la comida: desayuno, comida, snack o cena.',
           }),
@@ -406,6 +411,10 @@ describe('NotificationsService', () => {
           enabled: true,
           customized: true,
           is_system: false,
+          delivery_info: expect.objectContaining({
+            type: 'manual',
+            label: 'Manual, al enviar desde el panel',
+          }),
           variables: [],
           variable_help: {},
           updated_at: updatedAt,

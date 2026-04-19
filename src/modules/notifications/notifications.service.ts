@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY,
   DEFAULT_NOTIFICATION_TEMPLATES,
+  NOTIFICATION_TEMPLATE_DELIVERY_INFO,
   NOTIFICATION_TEMPLATE_VARIABLE_HELP,
   type NotificationTemplateDefinition,
   type NotificationTemplateKey,
@@ -159,6 +160,7 @@ export class NotificationsService {
       customized: Boolean(storedTemplate),
       is_system: true,
       variable_help: this.getVariableHelp(definition.variables),
+      delivery_info: NOTIFICATION_TEMPLATE_DELIVERY_INFO[definition.key],
       updated_at: storedTemplate?.updated_at ?? null,
     };
   }
@@ -177,6 +179,12 @@ export class NotificationsService {
       customized: true,
       is_system: false,
       variable_help: this.getVariableHelp(template.variables),
+      delivery_info: {
+        type: 'manual',
+        label: 'Manual, al enviar desde el panel',
+        description:
+          'No se ejecuta automáticamente. Se usa como texto reutilizable al enviar una notificación puntual.',
+      },
       updated_at: template.updated_at ?? null,
     };
   }
