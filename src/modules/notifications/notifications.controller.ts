@@ -7,6 +7,7 @@ import type { AuthenticatedUser } from '../../common/decorators/current-user.dec
 import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
 import { NotificationQueryDto } from './dto/notification-query.dto';
+import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import { SendNotificationDto, SendToAllClientsDto } from './dto/send-notification.dto';
 
 @ApiTags('Notifications')
@@ -72,6 +73,34 @@ export class NotificationsController {
   @ApiResponse({ status: 200, description: 'Estadisticas de notificaciones obtenidas correctamente' })
   getStats(@CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.getStats(user.id);
+  }
+
+  @Get('me')
+  @Roles(Role.CLIENT)
+  @ApiOperation({ summary: 'List notifications received by the current client' })
+  @ApiResponse({ status: 200, description: 'Notificaciones obtenidas correctamente' })
+  getMyNotifications(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: MyNotificationsQueryDto,
+  ) {
+    return this.notificationsService.getMyNotifications(user.id, query);
+  }
+
+  @Get('me/unread-count')
+  @Roles(Role.CLIENT)
+  @ApiOperation({ summary: 'Count unread notifications for the current client' })
+  @ApiResponse({ status: 200, description: 'Contador obtenido correctamente' })
+  getMyUnreadCount(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificationsService.getMyUnreadCount(user.id);
+  }
+
+  @Put('me/read-all')
+  @HttpCode(200)
+  @Roles(Role.CLIENT)
+  @ApiOperation({ summary: 'Mark all notifications as read for the current client' })
+  @ApiResponse({ status: 200, description: 'Notificaciones marcadas como leidas' })
+  markAllAsRead(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificationsService.markAllAsRead(user.id);
   }
 
   @Put(':id/read')

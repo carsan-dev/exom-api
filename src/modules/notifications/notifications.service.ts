@@ -10,6 +10,7 @@ import * as admin from 'firebase-admin';
 import { paginate } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationQueryDto } from './dto/notification-query.dto';
+import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 
 const notificationHistoryInclude = {
   recipient: {
@@ -393,6 +394,48 @@ export class NotificationsService {
       today: sentToday,
       failed,
     };
+  }
+
+  async getMyNotifications(recipientId: string, query: MyNotificationsQueryDto) {
+    const where: Prisma.NotificationWhereInput = {
+      recipient_id: recipientId,
+      ...(query.unread_only ? { read_at: null } : {}),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.notification.findMany({
+        where,
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        skip: query.skip,
+        take: query.limit,
+      }),
+      this.prisma.notification.count({ where }),
+    ]);
+
+    return paginate(data, total, query);
+  }
+
+  async getMyUnreadCount(recipientId: string) {
+    const count = await this.prisma.notification.count({
+      where: {
+        recipient_id: recipientId,
+        read_at: null,
+      },
+    });
+
+    return { count };
+  }
+
+  async markAllAsRead(recipientId: string) {
+    const result = await this.prisma.notification.updateMany({
+      where: {
+        recipient_id: recipientId,
+        read_at: null,
+      },
+      data: { read_at: new Date() },
+    });
+
+    return { updated: result.count };
   }
 
   async markAsRead(recipientId: string, notificationId: string) {
