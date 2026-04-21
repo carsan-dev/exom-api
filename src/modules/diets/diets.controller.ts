@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -23,7 +24,12 @@ import {
 } from '@nestjs/swagger';
 import { DietsService } from './diets.service';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
+import { DietNutritionalBadgesResponseDto } from './dto/diet-nutritional-badges-response.dto';
 import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
+import {
+  CatalogMutationResponseDto,
+  RenameCatalogValueDto,
+} from '../../common/dto/catalog-value.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -62,6 +68,36 @@ export class DietsController {
   ) {
     const date = query.date ? new Date(query.date) : undefined;
     return this.dietsService.findToday(user.id, date);
+  }
+
+  @Get('nutritional-badges')
+  @ApiOperation({
+    summary: 'List all unique nutritional badges used by active diets',
+  })
+  @ApiOkResponse({ type: DietNutritionalBadgesResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  findAllNutritionalBadges() {
+    return this.dietsService.findAllNutritionalBadges();
+  }
+
+  @Patch('nutritional-badges/rename')
+  @ApiOperation({
+    summary: 'Rename a nutritional badge across active diet meals',
+  })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  renameNutritionalBadge(@Body() dto: RenameCatalogValueDto) {
+    return this.dietsService.renameNutritionalBadge(dto.from, dto.to);
+  }
+
+  @Delete('nutritional-badges/:value')
+  @ApiOperation({
+    summary: 'Remove a nutritional badge from all active diet meals',
+  })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteNutritionalBadge(@Param('value') value: string) {
+    return this.dietsService.deleteNutritionalBadge(value);
   }
 
   @Get(':id')

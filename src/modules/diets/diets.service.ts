@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
@@ -20,6 +24,185 @@ const dietInclude = {
 export class DietsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private collectUnique(values: string[][]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const list of values) {
+      for (const raw of list) {
+        const normalized = this.normalizeCatalogValue(raw);
+
+        if (!normalized) {
+          continue;
+        }
+
+        const key = this.getCatalogKey(normalized);
+
+        if (!unique.has(key)) {
+          unique.set(key, normalized);
+        }
+      }
+    }
+
+    return Array.from(unique.values()).sort((left, right) =>
+      left.localeCompare(right, 'es', { sensitivity: 'base' }),
+    );
+  }
+
+  private normalizeCatalogValue(value: string): string {
+    return value.trim().replace(/\s+/g, ' ');
+  }
+
+  private getCatalogKey(value: string): string {
+    return this.normalizeCatalogValue(value).toLocaleLowerCase();
+  }
+
+  private replaceCatalogValue(
+    values: string[],
+    from: string,
+    to: string,
+  ): string[] {
+    const fromKey = this.getCatalogKey(from);
+    const normalizedTo = this.normalizeCatalogValue(to);
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const nextValue =
+        this.getCatalogKey(normalizedValue) === fromKey
+          ? normalizedTo
+          : normalizedValue;
+      const nextKey = this.getCatalogKey(nextValue);
+
+      if (!unique.has(nextKey)) {
+        unique.set(nextKey, nextValue);
+      }
+    }
+
+    return Array.from(unique.values());
+  }
+
+  private removeCatalogValue(
+    values: string[],
+    valueToRemove: string,
+  ): string[] {
+    const valueToRemoveKey = this.getCatalogKey(valueToRemove);
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (
+        !normalizedValue ||
+        this.getCatalogKey(normalizedValue) === valueToRemoveKey
+      ) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!unique.has(key)) {
+        unique.set(key, normalizedValue);
+      }
+    }
+
+    return Array.from(unique.values());
+  }
+
+  private hasCatalogChanged(
+    currentValues: string[],
+    nextValues: string[],
+  ): boolean {
+    return (
+      currentValues.length !== nextValues.length ||
+      currentValues.some((value, index) => value !== nextValues[index])
+    );
+  }
+
+  private async mutateNutritionalBadges(
+    value: string,
+    mutateValues: (values: string[]) => string[],
+  ) {
+    const normalizedValue = this.normalizeCatalogValue(value);
+
+    if (!normalizedValue) {
+      throw new BadRequestException(
+        'El valor del catálogo no puede estar vacío',
+      );
+    }
+
+    const meals = await this.prisma.meal.findMany({
+      where: { diet: { is_active: true } },
+      select: { id: true, nutritional_badges: true },
+    });
+
+    const updates = meals.flatMap((meal) => {
+      const nextBadges = mutateValues(meal.nutritional_badges);
+
+      if (!this.hasCatalogChanged(meal.nutritional_badges, nextBadges)) {
+        return [];
+      }
+
+      return this.prisma.meal.update({
+        where: { id: meal.id },
+        data: { nutritional_badges: nextBadges },
+      });
+    });
+
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
+    }
+
+    return {
+      value: normalizedValue,
+      affected_count: updates.length,
+    };
+  }
+
+  async findAllNutritionalBadges() {
+    const meals = await this.prisma.meal.findMany({
+      where: { diet: { is_active: true } },
+      select: { nutritional_badges: true },
+    });
+
+    return {
+      nutritional_badges: this.collectUnique(
+        meals.map((meal) => meal.nutritional_badges),
+      ),
+    };
+  }
+
+  renameNutritionalBadge(from: string, to: string) {
+    const normalizedFrom = this.normalizeCatalogValue(from);
+    const normalizedTo = this.normalizeCatalogValue(to);
+
+    if (!normalizedFrom || !normalizedTo) {
+      throw new BadRequestException(
+        'Los valores del catálogo no pueden estar vacíos',
+      );
+    }
+
+    if (
+      this.getCatalogKey(normalizedFrom) === this.getCatalogKey(normalizedTo)
+    ) {
+      throw new BadRequestException('El valor nuevo debe ser diferente');
+    }
+
+    return this.mutateNutritionalBadges(normalizedTo, (badges) =>
+      this.replaceCatalogValue(badges, normalizedFrom, normalizedTo),
+    );
+  }
+
+  deleteNutritionalBadge(value: string) {
+    return this.mutateNutritionalBadges(value, (badges) =>
+      this.removeCatalogValue(badges, value),
+    );
+  }
+
   async findAll(pagination: PaginationDto) {
     const [data, total] = await Promise.all([
       this.prisma.diet.findMany({
@@ -37,7 +220,9 @@ export class DietsService {
 
   async findToday(clientId: string, date?: Date) {
     const now = date ?? new Date();
-    const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const target = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
 
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },
@@ -117,7 +302,9 @@ export class DietsService {
         });
         const mealIds = existingMeals.map((m) => m.id);
 
-        await tx.mealIngredient.deleteMany({ where: { meal_id: { in: mealIds } } });
+        await tx.mealIngredient.deleteMany({
+          where: { meal_id: { in: mealIds } },
+        });
         await tx.meal.deleteMany({ where: { diet_id: id } });
       }
 
@@ -125,10 +312,18 @@ export class DietsService {
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
-          ...(dto.total_calories !== undefined && { total_calories: dto.total_calories }),
-          ...(dto.total_protein_g !== undefined && { total_protein_g: dto.total_protein_g }),
-          ...(dto.total_carbs_g !== undefined && { total_carbs_g: dto.total_carbs_g }),
-          ...(dto.total_fat_g !== undefined && { total_fat_g: dto.total_fat_g }),
+          ...(dto.total_calories !== undefined && {
+            total_calories: dto.total_calories,
+          }),
+          ...(dto.total_protein_g !== undefined && {
+            total_protein_g: dto.total_protein_g,
+          }),
+          ...(dto.total_carbs_g !== undefined && {
+            total_carbs_g: dto.total_carbs_g,
+          }),
+          ...(dto.total_fat_g !== undefined && {
+            total_fat_g: dto.total_fat_g,
+          }),
           ...(dto.meals !== undefined && {
             meals: {
               create: dto.meals.map((meal) => ({

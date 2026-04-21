@@ -1,7 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
-import { CreateExerciseDto, UpdateExerciseDto } from './dto/create-exercise.dto';
+import {
+  CreateExerciseDto,
+  UpdateExerciseDto,
+} from './dto/create-exercise.dto';
+
+type ExerciseCatalogField = 'muscle_groups' | 'equipment';
 
 @Injectable()
 export class ExercisesService {
@@ -28,6 +37,178 @@ export class ExercisesService {
 
     return Array.from(unique.values()).sort((left, right) =>
       left.localeCompare(right, 'es', { sensitivity: 'base' }),
+    );
+  }
+
+  private normalizeCatalogValue(value: string): string {
+    return value.trim().replace(/\s+/g, ' ');
+  }
+
+  private getCatalogKey(value: string): string {
+    return this.normalizeCatalogValue(value).toLocaleLowerCase();
+  }
+
+  private replaceCatalogValue(
+    values: string[],
+    from: string,
+    to: string,
+  ): string[] {
+    const fromKey = this.getCatalogKey(from);
+    const normalizedTo = this.normalizeCatalogValue(to);
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const nextValue =
+        this.getCatalogKey(normalizedValue) === fromKey
+          ? normalizedTo
+          : normalizedValue;
+      const nextKey = this.getCatalogKey(nextValue);
+
+      if (!unique.has(nextKey)) {
+        unique.set(nextKey, nextValue);
+      }
+    }
+
+    return Array.from(unique.values());
+  }
+
+  private removeCatalogValue(
+    values: string[],
+    valueToRemove: string,
+  ): string[] {
+    const valueToRemoveKey = this.getCatalogKey(valueToRemove);
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (
+        !normalizedValue ||
+        this.getCatalogKey(normalizedValue) === valueToRemoveKey
+      ) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!unique.has(key)) {
+        unique.set(key, normalizedValue);
+      }
+    }
+
+    return Array.from(unique.values());
+  }
+
+  private hasCatalogChanged(
+    currentValues: string[],
+    nextValues: string[],
+  ): boolean {
+    return (
+      currentValues.length !== nextValues.length ||
+      currentValues.some((value, index) => value !== nextValues[index])
+    );
+  }
+
+  private async mutateExerciseCatalog(
+    field: ExerciseCatalogField,
+    value: string,
+    mutateValues: (values: string[]) => string[],
+  ) {
+    const normalizedValue = this.normalizeCatalogValue(value);
+
+    if (!normalizedValue) {
+      throw new BadRequestException(
+        'El valor del catálogo no puede estar vacío',
+      );
+    }
+
+    const exercises =
+      field === 'muscle_groups'
+        ? await this.prisma.exercise.findMany({
+            where: { is_active: true },
+            select: { id: true, muscle_groups: true },
+          })
+        : await this.prisma.exercise.findMany({
+            where: { is_active: true },
+            select: { id: true, equipment: true },
+          });
+
+    const updates = exercises.flatMap((exercise) => {
+      const currentValues =
+        field === 'muscle_groups' ? exercise.muscle_groups : exercise.equipment;
+      const nextValues = mutateValues(currentValues);
+
+      if (!this.hasCatalogChanged(currentValues, nextValues)) {
+        return [];
+      }
+
+      return this.prisma.exercise.update({
+        where: { id: exercise.id },
+        data:
+          field === 'muscle_groups'
+            ? { muscle_groups: nextValues }
+            : { equipment: nextValues },
+      });
+    });
+
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
+    }
+
+    return {
+      value: normalizedValue,
+      affected_count: updates.length,
+    };
+  }
+
+  private async renameExerciseCatalogValue(
+    field: ExerciseCatalogField,
+    from: string,
+    to: string,
+  ) {
+    const normalizedFrom = this.normalizeCatalogValue(from);
+    const normalizedTo = this.normalizeCatalogValue(to);
+
+    if (!normalizedFrom || !normalizedTo) {
+      throw new BadRequestException(
+        'Los valores del catálogo no pueden estar vacíos',
+      );
+    }
+
+    if (
+      this.getCatalogKey(normalizedFrom) === this.getCatalogKey(normalizedTo)
+    ) {
+      throw new BadRequestException('El valor nuevo debe ser diferente');
+    }
+
+    return this.mutateExerciseCatalog(field, normalizedTo, (values) =>
+      this.replaceCatalogValue(values, normalizedFrom, normalizedTo),
+    );
+  }
+
+  renameMuscleGroup(from: string, to: string) {
+    return this.renameExerciseCatalogValue('muscle_groups', from, to);
+  }
+
+  deleteMuscleGroup(value: string) {
+    return this.mutateExerciseCatalog('muscle_groups', value, (values) =>
+      this.removeCatalogValue(values, value),
+    );
+  }
+
+  renameEquipment(from: string, to: string) {
+    return this.renameExerciseCatalogValue('equipment', from, to);
+  }
+
+  deleteEquipment(value: string) {
+    return this.mutateExerciseCatalog('equipment', value, (values) =>
+      this.removeCatalogValue(values, value),
     );
   }
 

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -20,6 +21,10 @@ import {
 import { TrainingsService } from './trainings.service';
 import { CreateTrainingDto, UpdateTrainingDto } from './dto/create-training.dto';
 import { TrainingTagsResponseDto } from './dto/training-tags-response.dto';
+import {
+  CatalogMutationResponseDto,
+  RenameCatalogValueDto,
+} from '../../common/dto/catalog-value.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -57,6 +62,22 @@ export class TrainingsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   findAllTags() {
     return this.trainingsService.findAllTags();
+  }
+
+  @Patch('tags/rename')
+  @ApiOperation({ summary: 'Rename a tag across active trainings' })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  renameTag(@Body() dto: RenameCatalogValueDto) {
+    return this.trainingsService.renameTag(dto.from, dto.to);
+  }
+
+  @Delete('tags/:value')
+  @ApiOperation({ summary: 'Remove a tag from all active trainings' })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteTag(@Param('value') value: string) {
+    return this.trainingsService.deleteTag(value);
   }
 
   @Get(':id')
