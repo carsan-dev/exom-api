@@ -7,6 +7,52 @@ import { CreateExerciseDto, UpdateExerciseDto } from './dto/create-exercise.dto'
 export class ExercisesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private collectUnique(values: string[][]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const list of values) {
+      for (const raw of list) {
+        const normalized = raw.trim();
+
+        if (!normalized) {
+          continue;
+        }
+
+        const key = normalized.toLocaleLowerCase();
+
+        if (!unique.has(key)) {
+          unique.set(key, normalized);
+        }
+      }
+    }
+
+    return Array.from(unique.values()).sort((left, right) =>
+      left.localeCompare(right, 'es', { sensitivity: 'base' }),
+    );
+  }
+
+  async findAllMuscleGroups() {
+    const exercises = await this.prisma.exercise.findMany({
+      where: { is_active: true },
+      select: { muscle_groups: true },
+    });
+
+    return {
+      muscle_groups: this.collectUnique(exercises.map((e) => e.muscle_groups)),
+    };
+  }
+
+  async findAllEquipment() {
+    const exercises = await this.prisma.exercise.findMany({
+      where: { is_active: true },
+      select: { equipment: true },
+    });
+
+    return {
+      equipment: this.collectUnique(exercises.map((e) => e.equipment)),
+    };
+  }
+
   async findAll(pagination: PaginationDto) {
     const [data, total] = await Promise.all([
       this.prisma.exercise.findMany({
