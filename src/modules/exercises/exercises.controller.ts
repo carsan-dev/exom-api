@@ -25,11 +25,11 @@ import {
 } from './dto/create-exercise.dto';
 import { ExerciseMuscleGroupsResponseDto } from './dto/exercise-muscle-groups-response.dto';
 import { ExerciseEquipmentResponseDto } from './dto/exercise-equipment-response.dto';
+import { ExercisesQueryDto } from './dto/exercises-query.dto';
 import {
   CatalogMutationResponseDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -43,9 +43,9 @@ export class ExercisesController {
   constructor(private readonly exercisesService: ExercisesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all active exercises (paginated)' })
-  findAll(@Query() pagination: PaginationDto) {
-    return this.exercisesService.findAll(pagination);
+  @ApiOperation({ summary: 'List all active exercises with optional search' })
+  findAll(@Query() query: ExercisesQueryDto) {
+    return this.exercisesService.findAll(query.search, query);
   }
 
   // NOTE: static routes (/muscle-groups, /equipment) MUST be declared before /:id

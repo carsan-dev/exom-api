@@ -19,6 +19,14 @@ const trainingExercisesInclude = {
   },
 };
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase('es-ES')
+    .normalize('NFD')
+    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
+    .normalize('NFC');
+}
+
 @Injectable()
 export class TrainingsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -28,7 +36,31 @@ export class TrainingsService {
   }
 
   private getCatalogKey(value: string): string {
-    return this.normalizeCatalogValue(value).toLocaleLowerCase();
+    return this.normalizeCatalogValue(value)
+      .toLocaleLowerCase('es-ES')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .normalize('NFC');
+  }
+
+  private normalizeCatalogValues(values: string[]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!unique.has(key)) {
+        unique.set(key, normalizedValue);
+      }
+    }
+
+    return Array.from(unique.values());
   }
 
   private replaceCatalogValue(
@@ -175,13 +207,13 @@ export class TrainingsService {
 
     for (const training of trainings) {
       for (const tag of training.tags) {
-        const normalizedTag = tag.trim();
+        const normalizedTag = this.normalizeCatalogValue(tag);
 
         if (!normalizedTag) {
           continue;
         }
 
-        const normalizedKey = normalizedTag.toLocaleLowerCase();
+        const normalizedKey = this.getCatalogKey(normalizedTag);
 
         if (!uniqueTags.has(normalizedKey)) {
           uniqueTags.set(normalizedKey, normalizedTag);
@@ -196,7 +228,29 @@ export class TrainingsService {
     };
   }
 
-  async findAll(pagination: PaginationDto) {
+  async findAll(search: string | undefined, pagination: PaginationDto) {
+    const normalizedSearch = search?.trim();
+
+    if (normalizedSearch) {
+      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
+      const trainings = await this.prisma.training.findMany({
+        where: { is_active: true },
+        orderBy: { created_at: 'desc' },
+        include: trainingExercisesInclude,
+      });
+
+      const filteredTrainings = trainings.filter((training) =>
+        normalizeSearchText(training.name).includes(normalizedSearchTerm),
+      );
+
+      const pageData = filteredTrainings.slice(
+        pagination.skip,
+        pagination.skip + (pagination.limit ?? 20),
+      );
+
+      return paginate(pageData, filteredTrainings.length, pagination);
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.training.findMany({
         where: { is_active: true },
@@ -258,7 +312,7 @@ export class TrainingsService {
           warmup_description: dto.warmup_description ?? null,
           warmup_duration_min: dto.warmup_duration_min ?? null,
           cooldown_description: dto.cooldown_description ?? null,
-          tags: dto.tags ?? [],
+          tags: this.normalizeCatalogValues(dto.tags ?? []),
           created_by: adminId,
         },
       });
@@ -308,7 +362,9 @@ export class TrainingsService {
           ...(dto.cooldown_description !== undefined && {
             cooldown_description: dto.cooldown_description,
           }),
-          ...(dto.tags !== undefined && { tags: dto.tags }),
+          ...(dto.tags !== undefined && {
+            tags: this.normalizeCatalogValues(dto.tags),
+          }),
         },
       });
 

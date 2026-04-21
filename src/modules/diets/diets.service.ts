@@ -20,6 +20,14 @@ const dietInclude = {
   },
 };
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase('es-ES')
+    .normalize('NFD')
+    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
+    .normalize('NFC');
+}
+
 @Injectable()
 export class DietsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -53,7 +61,31 @@ export class DietsService {
   }
 
   private getCatalogKey(value: string): string {
-    return this.normalizeCatalogValue(value).toLocaleLowerCase();
+    return this.normalizeCatalogValue(value)
+      .toLocaleLowerCase('es-ES')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .normalize('NFC');
+  }
+
+  private normalizeCatalogValues(values: string[]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!unique.has(key)) {
+        unique.set(key, normalizedValue);
+      }
+    }
+
+    return Array.from(unique.values());
   }
 
   private replaceCatalogValue(
@@ -203,7 +235,29 @@ export class DietsService {
     );
   }
 
-  async findAll(pagination: PaginationDto) {
+  async findAll(search: string | undefined, pagination: PaginationDto) {
+    const normalizedSearch = search?.trim();
+
+    if (normalizedSearch) {
+      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
+      const diets = await this.prisma.diet.findMany({
+        where: { is_active: true },
+        orderBy: { created_at: 'desc' },
+        include: dietInclude,
+      });
+
+      const filteredDiets = diets.filter((diet) =>
+        normalizeSearchText(diet.name).includes(normalizedSearchTerm),
+      );
+
+      const pageData = filteredDiets.slice(
+        pagination.skip,
+        pagination.skip + (pagination.limit ?? 20),
+      );
+
+      return paginate(pageData, filteredDiets.length, pagination);
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.diet.findMany({
         where: { is_active: true },
@@ -272,7 +326,9 @@ export class DietsService {
               protein_g: meal.protein_g ?? null,
               carbs_g: meal.carbs_g ?? null,
               fat_g: meal.fat_g ?? null,
-              nutritional_badges: meal.nutritional_badges ?? [],
+              nutritional_badges: this.normalizeCatalogValues(
+                meal.nutritional_badges ?? [],
+              ),
               order: meal.order ?? 0,
               ingredients: {
                 create: meal.ingredients.map((ing) => ({
@@ -334,7 +390,9 @@ export class DietsService {
                 protein_g: meal.protein_g ?? null,
                 carbs_g: meal.carbs_g ?? null,
                 fat_g: meal.fat_g ?? null,
-                nutritional_badges: meal.nutritional_badges ?? [],
+                nutritional_badges: this.normalizeCatalogValues(
+                  meal.nutritional_badges ?? [],
+                ),
                 order: meal.order ?? 0,
                 ingredients: {
                   create: meal.ingredients.map((ing) => ({

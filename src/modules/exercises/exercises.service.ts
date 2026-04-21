@@ -12,6 +12,14 @@ import {
 
 type ExerciseCatalogField = 'muscle_groups' | 'equipment';
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase('es-ES')
+    .normalize('NFD')
+    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
+    .normalize('NFC');
+}
+
 @Injectable()
 export class ExercisesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -21,13 +29,13 @@ export class ExercisesService {
 
     for (const list of values) {
       for (const raw of list) {
-        const normalized = raw.trim();
+        const normalized = this.normalizeCatalogValue(raw);
 
         if (!normalized) {
           continue;
         }
 
-        const key = normalized.toLocaleLowerCase();
+        const key = this.getCatalogKey(normalized);
 
         if (!unique.has(key)) {
           unique.set(key, normalized);
@@ -45,7 +53,31 @@ export class ExercisesService {
   }
 
   private getCatalogKey(value: string): string {
-    return this.normalizeCatalogValue(value).toLocaleLowerCase();
+    return this.normalizeCatalogValue(value)
+      .toLocaleLowerCase('es-ES')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .normalize('NFC');
+  }
+
+  private normalizeCatalogValues(values: string[]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const value of values) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!unique.has(key)) {
+        unique.set(key, normalizedValue);
+      }
+    }
+
+    return Array.from(unique.values());
   }
 
   private replaceCatalogValue(
@@ -234,7 +266,28 @@ export class ExercisesService {
     };
   }
 
-  async findAll(pagination: PaginationDto) {
+  async findAll(search: string | undefined, pagination: PaginationDto) {
+    const normalizedSearch = search?.trim();
+
+    if (normalizedSearch) {
+      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
+      const exercises = await this.prisma.exercise.findMany({
+        where: { is_active: true },
+        orderBy: { created_at: 'desc' },
+      });
+
+      const filteredExercises = exercises.filter((exercise) =>
+        normalizeSearchText(exercise.name).includes(normalizedSearchTerm),
+      );
+
+      const pageData = filteredExercises.slice(
+        pagination.skip,
+        pagination.skip + (pagination.limit ?? 20),
+      );
+
+      return paginate(pageData, filteredExercises.length, pagination);
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.exercise.findMany({
         where: { is_active: true },
@@ -264,8 +317,8 @@ export class ExercisesService {
     return this.prisma.exercise.create({
       data: {
         name: dto.name,
-        muscle_groups: dto.muscle_groups,
-        equipment: dto.equipment,
+        muscle_groups: this.normalizeCatalogValues(dto.muscle_groups),
+        equipment: this.normalizeCatalogValues(dto.equipment),
         level: dto.level,
         video_url: dto.video_url ?? null,
         video_stream_id: dto.video_stream_id ?? null,
@@ -286,9 +339,11 @@ export class ExercisesService {
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.muscle_groups !== undefined && {
-          muscle_groups: dto.muscle_groups,
+          muscle_groups: this.normalizeCatalogValues(dto.muscle_groups),
         }),
-        ...(dto.equipment !== undefined && { equipment: dto.equipment }),
+        ...(dto.equipment !== undefined && {
+          equipment: this.normalizeCatalogValues(dto.equipment),
+        }),
         ...(dto.level !== undefined && { level: dto.level }),
         ...(dto.video_url !== undefined && { video_url: dto.video_url }),
         ...(dto.video_stream_id !== undefined && {

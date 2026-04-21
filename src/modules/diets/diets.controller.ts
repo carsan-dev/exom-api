@@ -25,12 +25,12 @@ import {
 import { DietsService } from './diets.service';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
 import { DietNutritionalBadgesResponseDto } from './dto/diet-nutritional-badges-response.dto';
+import { DietsQueryDto } from './dto/diets-query.dto';
 import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
 import {
   CatalogMutationResponseDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -50,8 +50,8 @@ export class DietsController {
   @ApiOkResponse({ description: 'Diets listed successfully' })
   @ApiBadRequestResponse({ description: 'Invalid pagination parameters' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  findAll(@Query() pagination: PaginationDto) {
-    return this.dietsService.findAll(pagination);
+  findAll(@Query() query: DietsQueryDto) {
+    return this.dietsService.findAll(query.search, query);
   }
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts

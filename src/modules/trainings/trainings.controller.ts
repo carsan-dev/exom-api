@@ -21,11 +21,11 @@ import {
 import { TrainingsService } from './trainings.service';
 import { CreateTrainingDto, UpdateTrainingDto } from './dto/create-training.dto';
 import { TrainingTagsResponseDto } from './dto/training-tags-response.dto';
+import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import {
   CatalogMutationResponseDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -39,9 +39,9 @@ export class TrainingsController {
   constructor(private readonly trainingsService: TrainingsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List all active trainings (paginated)' })
-  findAll(@Query() pagination: PaginationDto) {
-    return this.trainingsService.findAll(pagination);
+  @ApiOperation({ summary: 'List all active trainings with optional search' })
+  findAll(@Query() query: TrainingsQueryDto) {
+    return this.trainingsService.findAll(query.search, query);
   }
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
