@@ -107,15 +107,15 @@ export class AssignmentsService {
     return 'plan';
   }
 
-  private routeForKind(kind: PlanNotifKind): string {
-    switch (kind) {
-      case 'training':
-        return '/trainings';
-      case 'diet':
-        return '/diets';
-      default:
-        return '/calendar';
-    }
+  private routeForKind(kind: PlanNotifKind, firstDate?: Date): string {
+    const base =
+      kind === 'training'
+        ? '/trainings'
+        : kind === 'diet'
+          ? '/diets'
+          : '/calendar';
+    if (!firstDate) return base;
+    return `${base}?date=${this.formatDate(firstDate)}`;
   }
 
   private async notifyPlanAssigned(params: {
@@ -123,8 +123,9 @@ export class AssignmentsService {
     clientId: string;
     kind: PlanNotifKind;
     dayCount: number;
+    firstDate?: Date;
   }) {
-    const { actorId, clientId, kind, dayCount } = params;
+    const { actorId, clientId, kind, dayCount, firstDate } = params;
     try {
       const planSummary =
         kind === 'training'
@@ -153,12 +154,13 @@ export class AssignmentsService {
           ? `Tu entrenador actualizó tu plan (${dayCount} días)`
           : `Tu entrenador asignó ${planSummary}`;
 
+      const dateVar = firstDate ? this.formatDate(firstDate) : '';
       await this.notifications.sendInternalTemplate(
         actorId,
         [clientId],
         templateKey,
-        { dayCount, planSummary },
-        { title, body, route: this.routeForKind(kind) },
+        { dayCount, planSummary, date: dateVar },
+        { title, body, route: this.routeForKind(kind, firstDate) },
         {
           type:
             kind === 'training'
@@ -448,11 +450,13 @@ export class AssignmentsService {
     if (uniqueDates.length > 0) {
       const kind = this.inferPlanKind([normalizedInput]);
       if (kind !== 'rest') {
+        const sortedDates = [...uniqueDates].sort();
         await this.notifyPlanAssigned({
           actorId: user.id,
           clientId: dto.client_id,
           kind,
           dayCount: uniqueDates.length,
+          firstDate: this.parseDate(sortedDates[0]),
         });
       }
     }
@@ -525,11 +529,13 @@ export class AssignmentsService {
     if (uniqueDays.length > 0) {
       const kind = this.inferPlanKind(uniqueDays);
       if (kind !== 'rest') {
+        const firstActive = uniqueDays.find((day) => !day.is_rest_day);
         await this.notifyPlanAssigned({
           actorId: user.id,
           clientId: dto.client_id,
           kind,
           dayCount: uniqueDays.length,
+          firstDate: (firstActive ?? uniqueDays[0]).date,
         });
       }
     }
@@ -609,7 +615,12 @@ export class AssignmentsService {
         const sourceDateKey = sourceDate.toISOString().split('T')[0];
         const source = sourceMap.get(sourceDateKey);
         if (!source) return null;
+        const offsetDays = Math.round(
+          (sourceDate.getTime() - sourceWeek.start.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
         return {
+          date: this.addDays(targetWeek.start, offsetDays),
           training_id: source.training_id,
           diet_id: source.diet_id,
           is_rest_day: source.is_rest_day,
@@ -620,11 +631,13 @@ export class AssignmentsService {
     if (copiedDays.length > 0) {
       const kind = this.inferPlanKind(copiedDays);
       if (kind !== 'rest') {
+        const firstActive = copiedDays.find((day) => !day.is_rest_day);
         await this.notifyPlanAssigned({
           actorId: user.id,
           clientId: dto.client_id,
           kind,
           dayCount: copiedDays.length,
+          firstDate: (firstActive ?? copiedDays[0]).date,
         });
       }
     }
@@ -718,6 +731,7 @@ export class AssignmentsService {
         clientId: assignment.client_id,
         kind,
         dayCount: 1,
+        firstDate: nextDate,
       });
     }
 

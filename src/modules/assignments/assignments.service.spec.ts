@@ -46,6 +46,7 @@ describe('AssignmentsService', () => {
       deleteMany: jest.Mock;
     };
     $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
   };
   let notifications: { sendInternalTemplate: jest.Mock };
 
@@ -95,6 +96,7 @@ describe('AssignmentsService', () => {
       $transaction: jest.fn(async (operations: Promise<unknown>[]) =>
         Promise.all(operations),
       ),
+      $queryRaw: jest.fn().mockResolvedValue(1),
     };
 
     notifications = {
@@ -164,11 +166,11 @@ describe('AssignmentsService', () => {
       'super-admin-1',
       ['client-1'],
       'plan_training_assigned',
-      { dayCount: 1, planSummary: 'un entrenamiento' },
+      { dayCount: 1, planSummary: 'un entrenamiento', date: '2026-03-30' },
       {
         title: 'Nuevo entrenamiento asignado',
         body: 'Tu entrenador asign\u00f3 un entrenamiento',
-        route: '/trainings',
+        route: '/trainings?date=2026-03-30',
       },
       { type: 'training' },
     );
@@ -362,11 +364,11 @@ describe('AssignmentsService', () => {
       'admin-1',
       ['client-1'],
       'plan_diet_assigned',
-      { dayCount: 2, planSummary: '2 d\u00edas de dieta' },
+      { dayCount: 2, planSummary: '2 d\u00edas de dieta', date: '2026-04-01' },
       {
         title: 'Nueva dieta asignada',
         body: 'Tu entrenador asign\u00f3 2 d\u00edas de dieta',
-        route: '/diets',
+        route: '/diets?date=2026-04-01',
       },
       { type: 'diet' },
     );
@@ -387,6 +389,57 @@ describe('AssignmentsService', () => {
     );
 
     expect(prisma.planAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it('copyWeek notifies with the first active copied target date', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.planAssignment.findMany.mockResolvedValue([
+      createAssignment({
+        id: 'assignment-source-wed',
+        date: new Date('2026-04-01T00:00:00.000Z'),
+      }),
+    ]);
+    prisma.planAssignment.upsert.mockResolvedValue(
+      createAssignment({
+        id: 'assignment-target-wed',
+        date: new Date('2026-04-08T00:00:00.000Z'),
+      }),
+    );
+    const getWeekSpy = jest.spyOn(service, 'getWeek').mockResolvedValue({
+      client_id: 'client-1',
+      week_start: '2026-04-06',
+      week_end: '2026-04-12',
+      days: [],
+    });
+
+    await expect(
+      service.copyWeek(adminUser, {
+        client_id: 'client-1',
+        source_week_start: '2026-03-30',
+        target_week_start: '2026-04-06',
+      }),
+    ).resolves.toEqual({
+      client_id: 'client-1',
+      week_start: '2026-04-06',
+      week_end: '2026-04-12',
+      days: [],
+    });
+
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+      'admin-1',
+      ['client-1'],
+      'plan_training_assigned',
+      { dayCount: 1, planSummary: 'un entrenamiento', date: '2026-04-08' },
+      {
+        title: 'Nuevo entrenamiento asignado',
+        body: 'Tu entrenador asignó un entrenamiento',
+        route: '/trainings?date=2026-04-08',
+      },
+      { type: 'training' },
+    );
+
+    getWeekSpy.mockRestore();
   });
 
   it('rejects update when moving an assignment to a date already occupied', async () => {
