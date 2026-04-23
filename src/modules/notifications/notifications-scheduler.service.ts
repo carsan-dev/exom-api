@@ -200,6 +200,7 @@ export class NotificationsSchedulerService {
     if (!sender) return;
 
     const today = this.todayUtcDate();
+    const todayKey = this.formatDate(today);
     const active = await this.activeClientIds();
     if (active.size === 0) return;
 
@@ -235,11 +236,11 @@ export class NotificationsSchedulerService {
       sender,
       pending,
       'training_reminder_daily',
-      {},
+      { date: todayKey },
       {
         title: 'Tu entreno de hoy te espera',
         body: 'Abre la app y empieza cuando puedas.',
-        route: '/trainings',
+        route: `/trainings?date=${todayKey}`,
       },
       { type: 'training_reminder' },
     );
@@ -250,6 +251,7 @@ export class NotificationsSchedulerService {
     if (!sender) return;
 
     const today = this.todayUtcDate();
+    const todayKey = this.formatDate(today);
     const active = await this.activeClientIds();
     if (active.size === 0) return;
 
@@ -314,11 +316,11 @@ export class NotificationsSchedulerService {
       sender,
       pending,
       'diet_reminder_meal',
-      { mealLabel: label },
+      { mealLabel: label, date: todayKey },
       {
         title: 'Hora de tu ' + label,
         body: 'Revisa tu plan y registra la comida cuando termines.',
-        route: '/diets',
+        route: `/diets?date=${todayKey}`,
       },
       { type: 'diet_reminder' },
     );

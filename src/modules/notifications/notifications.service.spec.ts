@@ -425,6 +425,46 @@ describe('NotificationsService', () => {
     );
   });
 
+  it('renders date-aware routes when sending internal templates', async () => {
+    prisma.notificationTemplate.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValueOnce(clientUser);
+    prisma.notification.create.mockResolvedValue(
+      createNotification({
+        title: 'Tu entreno de hoy te espera',
+        body: 'Abre la app y empieza cuando puedas.',
+        data: {
+          type: 'training_reminder',
+          route: '/trainings?date=2026-04-23',
+        },
+      }),
+    );
+    sendMock.mockResolvedValue('message-id-date-route');
+
+    await expect(
+      service.sendInternalTemplate(
+        'system-admin',
+        ['client-1'],
+        'training_reminder_daily',
+        { date: '2026-04-23' },
+        {
+          title: 'Tu entreno de hoy te espera',
+          body: 'Abre la app y empieza cuando puedas.',
+          route: '/trainings?date=2026-04-23',
+        },
+        { type: 'training_reminder' },
+      ),
+    ).resolves.toEqual({ success: true, sent: 1, failed: 0 });
+
+    expect(sendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          type: 'training_reminder',
+          route: '/trainings?date=2026-04-23',
+        },
+      }),
+    );
+  });
+
   it('updates a scheduled template schedule', async () => {
     prisma.notificationTemplateSchedule.findUnique.mockResolvedValue(null);
     prisma.notificationTemplateSchedule.upsert.mockResolvedValue({
