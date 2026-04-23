@@ -154,6 +154,15 @@ export class NotificationsController {
     return this.notificationsService.markAllAsRead(user.id);
   }
 
+  @Delete('me/read')
+  @HttpCode(200)
+  @Roles(Role.CLIENT)
+  @ApiOperation({ summary: 'Delete read notifications for the current client' })
+  @ApiResponse({ status: 200, description: 'Notificaciones leidas eliminadas' })
+  deleteRead(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificationsService.deleteRead(user.id);
+  }
+
   @Put(':id/read')
   @HttpCode(200)
   @Roles(Role.CLIENT)

@@ -51,6 +51,7 @@ describe('NotificationsService', () => {
     };
     notification: {
       create: jest.Mock;
+      deleteMany: jest.Mock;
     };
     notificationTemplate: {
       create: jest.Mock;
@@ -92,6 +93,7 @@ describe('NotificationsService', () => {
       },
       notification: {
         create: jest.fn(),
+        deleteMany: jest.fn(),
       },
       notificationTemplate: {
         create: jest.fn(),
@@ -644,6 +646,23 @@ describe('NotificationsService', () => {
     ).resolves.toEqual({
       key: 'manual_revision_mensual',
       deleted: true,
+    });
+  });
+
+  it('deletes read notifications for the current client', async () => {
+    prisma.notification.deleteMany.mockResolvedValue({ count: 3 });
+
+    await expect(service.deleteRead('client-1')).resolves.toEqual({
+      deleted: 3,
+    });
+
+    expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
+      where: {
+        recipient_id: 'client-1',
+        read_at: {
+          not: null,
+        },
+      },
     });
   });
 

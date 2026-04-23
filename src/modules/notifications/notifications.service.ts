@@ -1075,6 +1075,19 @@ export class NotificationsService {
     return { updated: result.count };
   }
 
+  async deleteRead(recipientId: string) {
+    const result = await this.prisma.notification.deleteMany({
+      where: {
+        recipient_id: recipientId,
+        read_at: {
+          not: null,
+        },
+      },
+    });
+
+    return { deleted: result.count };
+  }
+
   async markAsRead(recipientId: string, notificationId: string) {
     const notification = await this.prisma.notification.findFirst({
       where: {
