@@ -14,6 +14,10 @@ import { TrainingsQueryDto } from './dto/trainings-query.dto';
 
 type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
+type AchievementRuleConfigLike = {
+  training_type?: string;
+};
+
 const trainingExercisesInclude = {
   exercises: {
     orderBy: { order: 'asc' as const },
@@ -168,6 +172,16 @@ export class TrainingsService {
     return normalizedValue;
   }
 
+  private parseAchievementRuleConfig(
+    ruleConfig: Prisma.JsonValue | null,
+  ): AchievementRuleConfigLike | null {
+    if (!ruleConfig || typeof ruleConfig !== 'object' || Array.isArray(ruleConfig)) {
+      return null;
+    }
+
+    return ruleConfig as AchievementRuleConfigLike;
+  }
+
   private async mutateTags(
     value: string,
     mutateValues: (values: string[]) => string[],
@@ -233,6 +247,74 @@ export class TrainingsService {
     return this.mutateTags(value, (tags) =>
       this.removeCatalogValue(tags, value),
     );
+  }
+
+  async renameType(from: string, to: string) {
+    const normalizedFrom = this.normalizeTrainingTypeValue(from);
+    const normalizedTo = this.normalizeTrainingTypeValue(to);
+
+    if (
+      this.getCatalogKey(normalizedFrom) === this.getCatalogKey(normalizedTo)
+    ) {
+      throw new BadRequestException('El valor nuevo debe ser diferente');
+    }
+
+    const [trainings, achievements] = await Promise.all([
+      this.prisma.training.findMany({
+        where: { is_active: true },
+        select: { id: true, type: true },
+      }),
+      this.prisma.achievement.findMany({
+        where: { criteria_type: 'TRAINING_DAYS' },
+        select: { id: true, rule_config: true },
+      }),
+    ]);
+
+    const trainingUpdates = trainings.flatMap((training) =>
+      this.getCatalogKey(training.type) === this.getCatalogKey(normalizedFrom)
+        ? [
+            this.prisma.training.update({
+              where: { id: training.id },
+              data: { type: normalizedTo },
+            }),
+          ]
+        : [],
+    );
+
+    const achievementUpdates = achievements.flatMap((achievement) => {
+      const ruleConfig = this.parseAchievementRuleConfig(achievement.rule_config);
+      const trainingType = ruleConfig?.training_type;
+
+      if (
+        !trainingType ||
+        this.getCatalogKey(trainingType) !== this.getCatalogKey(normalizedFrom)
+      ) {
+        return [];
+      }
+
+      return [
+        this.prisma.achievement.update({
+          where: { id: achievement.id },
+          data: {
+            rule_config: {
+              ...ruleConfig,
+              training_type: normalizedTo,
+            } as Prisma.InputJsonValue,
+          },
+        }),
+      ];
+    });
+
+    const updates = [...trainingUpdates, ...achievementUpdates];
+
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
+    }
+
+    return {
+      value: normalizedTo,
+      affected_count: updates.length,
+    };
   }
 
   async findAllTags() {

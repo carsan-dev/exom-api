@@ -6,17 +6,29 @@ import { TrainingsService } from './trainings.service';
 describe('TrainingsService', () => {
   let service: TrainingsService;
   let prisma: {
+    $transaction: jest.Mock;
     training: {
       findMany: jest.Mock;
       count: jest.Mock;
+      update: jest.Mock;
+    };
+    achievement: {
+      findMany: jest.Mock;
+      update: jest.Mock;
     };
   };
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn().mockResolvedValue([]),
       training: {
         findMany: jest.fn(),
         count: jest.fn(),
+        update: jest.fn(),
+      },
+      achievement: {
+        findMany: jest.fn(),
+        update: jest.fn(),
       },
     };
 
@@ -119,5 +131,52 @@ describe('TrainingsService', () => {
     await expect(service.findAllTypes()).resolves.toEqual({
       types: ['FUERZA', 'HIIT', 'Pilates'],
     });
+  });
+
+  it('renames training types across trainings and achievement rules', async () => {
+    prisma.training.findMany.mockResolvedValue([
+      { id: 'training-1', type: 'Pilates' },
+      { id: 'training-2', type: 'HIIT' },
+      { id: 'training-3', type: 'pilates' },
+    ]);
+    prisma.achievement.findMany.mockResolvedValue([
+      {
+        id: 'achievement-1',
+        rule_config: { training_type: 'PILATES' },
+      },
+      {
+        id: 'achievement-2',
+        rule_config: { training_type: 'HIIT' },
+      },
+      {
+        id: 'achievement-3',
+        rule_config: null,
+      },
+    ]);
+    prisma.training.update.mockResolvedValue({});
+    prisma.achievement.update.mockResolvedValue({});
+
+    await expect(service.renameType('Pilates', 'Movilidad')).resolves.toEqual({
+      value: 'Movilidad',
+      affected_count: 3,
+    });
+
+    expect(prisma.training.update).toHaveBeenCalledTimes(2);
+    expect(prisma.training.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'training-1' },
+      data: { type: 'Movilidad' },
+    });
+    expect(prisma.training.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'training-3' },
+      data: { type: 'Movilidad' },
+    });
+    expect(prisma.achievement.update).toHaveBeenCalledWith({
+      where: { id: 'achievement-1' },
+      data: {
+        rule_config: { training_type: 'Movilidad' },
+      },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(3);
   });
 });

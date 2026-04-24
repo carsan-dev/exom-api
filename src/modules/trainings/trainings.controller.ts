@@ -79,6 +79,14 @@ export class TrainingsController {
     return this.trainingsService.findAllTypes();
   }
 
+  @Patch('types/rename')
+  @ApiOperation({ summary: 'Rename a training type across active trainings' })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  renameType(@Body() dto: RenameCatalogValueDto) {
+    return this.trainingsService.renameType(dto.from, dto.to);
+  }
+
   @Patch('tags/rename')
   @ApiOperation({ summary: 'Rename a tag across active trainings' })
   @ApiOkResponse({ type: CatalogMutationResponseDto })
