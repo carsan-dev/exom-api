@@ -5,12 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  AchievementUnlockSource,
-  Prisma,
-  Role,
-  TrainingType,
-} from '@prisma/client';
+import { AchievementUnlockSource, Prisma, Role } from '@prisma/client';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
@@ -41,7 +36,7 @@ type AchievementRuleRecord = {
 
 interface AchievementUserMetrics {
   trainingDays: number;
-  trainingDaysByType: Partial<Record<TrainingType, number>>;
+  trainingDaysByType: Record<string, number>;
   streakDays: number;
   completedChallenges: number;
   weightLogs: number;
@@ -81,6 +76,18 @@ export class AchievementsService {
     return ruleConfig as AchievementRuleConfig;
   }
 
+  private normalizeTrainingTypeValue(value: string) {
+    return value.trim().replace(/\s+/g, ' ');
+  }
+
+  private getTrainingTypeKey(value: string) {
+    return this.normalizeTrainingTypeValue(value)
+      .toLocaleLowerCase('es-ES')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .normalize('NFC');
+  }
+
   private validateRuleConfig(
     criteriaType: AchievementCriteriaType,
     ruleConfig: AchievementRuleConfig | null | undefined,
@@ -111,9 +118,23 @@ export class AchievementsService {
       );
     }
 
+    if (normalizedRuleConfig.training_type !== undefined) {
+      const normalizedTrainingType = this.normalizeTrainingTypeValue(
+        normalizedRuleConfig.training_type,
+      );
+
+      if (!normalizedTrainingType) {
+        throw new BadRequestException(
+          'rule_config.training_type debe ser un tipo de entrenamiento vÃ¡lido',
+        );
+      }
+
+      normalizedRuleConfig.training_type = normalizedTrainingType;
+    }
+
     if (
       normalizedRuleConfig.training_type !== undefined &&
-      !Object.values(TrainingType).includes(normalizedRuleConfig.training_type)
+      false
     ) {
       throw new BadRequestException(
         'rule_config.training_type debe ser un tipo de entrenamiento válido',
@@ -413,7 +434,7 @@ export class AchievementsService {
       },
     });
 
-    return assignments.reduce<Partial<Record<TrainingType, number>>>(
+    return assignments.reduce<Record<string, number>>(
       (accumulator, assignment) => {
         const trainingType = assignment.training?.type;
 
@@ -421,7 +442,9 @@ export class AchievementsService {
           return accumulator;
         }
 
-        accumulator[trainingType] = (accumulator[trainingType] ?? 0) + 1;
+        const trainingTypeKey = this.getTrainingTypeKey(trainingType);
+        accumulator[trainingTypeKey] =
+          (accumulator[trainingTypeKey] ?? 0) + 1;
         return accumulator;
       },
       {},
@@ -437,7 +460,9 @@ export class AchievementsService {
     switch (achievement.criteria_type) {
       case 'TRAINING_DAYS':
         return ruleConfig?.training_type
-          ? metrics.trainingDaysByType[ruleConfig.training_type] ?? 0
+          ? metrics.trainingDaysByType[
+              this.getTrainingTypeKey(ruleConfig.training_type)
+            ] ?? 0
           : metrics.trainingDays;
       case 'STREAK_DAYS':
         return metrics.streakDays;

@@ -1,6 +1,5 @@
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TrainingType } from '@prisma/client';
 import {
   IsIn,
   IsArray,
@@ -73,7 +72,7 @@ export class CreateAchievementDto {
     additionalProperties: true,
     nullable: true,
     description: 'Configuración adicional opcional para variantes de la regla',
-    example: { training_type: TrainingType.HIIT },
+    example: { training_type: 'HIIT' },
   })
   @IsOptional()
   @IsObject()
