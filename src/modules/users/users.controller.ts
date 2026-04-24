@@ -11,13 +11,13 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiProperty, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 import { UsersService } from './users.service';
+import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import { ClientAssignmentResponseDto } from './dto/client-assignment-response.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { UpdateClientProfileDto } from './dto/update-client-profile.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -28,6 +28,7 @@ import {
   AdminClientCalendarWeekQueryDto,
 } from './dto/admin-client-calendar-query.dto';
 import { AdminClientBodyHistoryQueryDto } from './dto/admin-client-metrics-query.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 class UpdateFcmTokenDto {
   @ApiProperty()
@@ -58,7 +59,7 @@ export class UsersController {
   @ApiResponse({ status: 200, description: 'Listado global de usuarios obtenido correctamente' })
   @ApiResponse({ status: 400, description: 'Parámetros de consulta inválidos' })
   findAll(@Query() query: AdminUsersQueryDto) {
-    return this.usersService.findAll(query.role, query);
+    return this.usersService.findAll(query);
   }
 
   @Post('users/admins')
@@ -135,8 +136,8 @@ export class UsersController {
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'Listar clientes visibles para la sesión actual' })
   @ApiResponse({ status: 200, description: 'Listado de clientes obtenido correctamente' })
-  getMyClients(@CurrentUser() admin: AuthenticatedUser, @Query() pagination?: PaginationDto) {
-    return this.usersService.getMyClients(admin.id, admin.role, pagination);
+  getMyClients(@CurrentUser() admin: AuthenticatedUser, @Query() query: AdminClientsQueryDto) {
+    return this.usersService.getMyClients(admin.id, admin.role, query);
   }
 
   @Get('clients/:id/assignments')

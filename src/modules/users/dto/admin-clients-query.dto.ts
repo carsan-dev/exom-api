@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { Role } from '@prisma/client';
+import { Level } from '@prisma/client';
 import {
   IsArray,
   IsDateString,
@@ -12,8 +12,11 @@ import {
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 const USER_STATUS_VALUES = ['ACTIVE', 'INACTIVE', 'LOCKED'] as const;
+const CLIENT_ASSIGNMENT_STATE_VALUES = ['ASSIGNED', 'UNASSIGNED'] as const;
 
 export type UserStatusFilter = (typeof USER_STATUS_VALUES)[number];
+export type ClientAssignmentStateFilter =
+  (typeof CLIENT_ASSIGNMENT_STATE_VALUES)[number];
 
 function toArray(value: unknown): string[] | undefined {
   if (value == null || value === '') return undefined;
@@ -35,19 +38,25 @@ function toArray(value: unknown): string[] | undefined {
   return undefined;
 }
 
-export class AdminUsersQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ enum: Role })
-  @IsOptional()
-  @IsEnum(Role)
-  role?: Role;
-
-  @ApiPropertyOptional({ description: 'Search users by name or email' })
+export class AdminClientsQueryDto extends PaginationDto {
+  @ApiPropertyOptional({ description: 'Search clients by name or email' })
   @IsOptional()
   @IsString()
   search?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter users by derived status',
+    description: 'Filter clients by level',
+    enum: Level,
+    isArray: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toArray(value))
+  @IsArray()
+  @IsEnum(Level, { each: true })
+  level?: Level[];
+
+  @ApiPropertyOptional({
+    description: 'Filter clients by derived status',
     isArray: true,
     enum: USER_STATUS_VALUES,
   })
@@ -58,14 +67,25 @@ export class AdminUsersQueryDto extends PaginationDto {
   status?: UserStatusFilter[];
 
   @ApiPropertyOptional({
-    description: 'Filter users created from this ISO date',
+    description: 'Filter clients by active admin assignment state',
+    isArray: true,
+    enum: CLIENT_ASSIGNMENT_STATE_VALUES,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toArray(value))
+  @IsArray()
+  @IsIn(CLIENT_ASSIGNMENT_STATE_VALUES, { each: true })
+  assignment_state?: ClientAssignmentStateFilter[];
+
+  @ApiPropertyOptional({
+    description: 'Filter clients created from this ISO date',
   })
   @IsOptional()
   @IsDateString()
   created_from?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter users created to this ISO date',
+    description: 'Filter clients created to this ISO date',
   })
   @IsOptional()
   @IsDateString()

@@ -11,6 +11,15 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import {
+  AdminClientsQueryDto,
+  type ClientAssignmentStateFilter,
+  type UserStatusFilter as ClientUserStatusFilter,
+} from './dto/admin-clients-query.dto';
+import {
+  AdminUsersQueryDto,
+  type UserStatusFilter,
+} from './dto/admin-users-query.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
@@ -50,6 +59,50 @@ type ManagedUserRecord = {
   } | null;
 };
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase('es-ES')
+    .normalize('NFD')
+    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
+    .normalize('NFC');
+}
+
+function getDerivedUserStatus(user: {
+  is_active: boolean;
+  is_locked: boolean;
+}): UserStatusFilter {
+  if (user.is_locked) {
+    return 'LOCKED';
+  }
+
+  if (user.is_active) {
+    return 'ACTIVE';
+  }
+
+  return 'INACTIVE';
+}
+
+function getDateRange(
+  from?: string,
+  to?: string,
+): Prisma.DateTimeFilter | undefined {
+  if (!from && !to) {
+    return undefined;
+  }
+
+  const range: Prisma.DateTimeFilter = {};
+
+  if (from) {
+    range.gte = new Date(`${from}T00:00:00.000Z`);
+  }
+
+  if (to) {
+    range.lte = new Date(`${to}T23:59:59.999Z`);
+  }
+
+  return range;
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -60,27 +113,72 @@ export class UsersService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  async findAll(roleFilter?: Role, pagination: PaginationDto = new PaginationDto()) {
-    const where = roleFilter ? { role: roleFilter } : {};
+  async findAll(
+    roleOrQuery?: Role | AdminUsersQueryDto,
+    pagination: PaginationDto = new PaginationDto(),
+  ) {
+    const query =
+      roleOrQuery && typeof roleOrQuery === 'object'
+        ? roleOrQuery
+        : Object.assign(new AdminUsersQueryDto(), pagination, {
+            ...(roleOrQuery ? { role: roleOrQuery } : {}),
+          });
+    const { role, search, status, created_from, created_to, skip, limit } = query;
+    const pageSize = limit ?? 20;
+    const normalizedSearch = search?.trim();
+    const createdAtRange = getDateRange(created_from, created_to);
+    const where: Prisma.UserWhereInput = {
+      ...(role ? { role } : {}),
+      ...(createdAtRange ? { created_at: createdAtRange } : {}),
+    };
+    const select = {
+      id: true,
+      email: true,
+      role: true,
+      is_active: true,
+      is_locked: true,
+      created_at: true,
+      profile: { select: { first_name: true, last_name: true, avatar_url: true } },
+    } as const;
+
+    if (normalizedSearch || status?.length) {
+      const users = await this.prisma.user.findMany({
+        where,
+        select,
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      });
+      const normalizedTerm = normalizedSearch
+        ? normalizeSearchText(normalizedSearch)
+        : null;
+      const filteredUsers = users.filter((user) => {
+        const matchesStatus =
+          !status?.length || status.includes(getDerivedUserStatus(user));
+        const matchesSearch =
+          !normalizedTerm ||
+          normalizeSearchText(
+            [user.email, user.profile?.first_name, user.profile?.last_name]
+              .filter(Boolean)
+              .join(' '),
+          ).includes(normalizedTerm);
+
+        return matchesStatus && matchesSearch;
+      });
+      const pageData = filteredUsers.slice(skip, skip + pageSize);
+
+      return paginate(pageData, filteredUsers.length, query);
+    }
+
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
-        skip: pagination.skip,
-        take: pagination.limit,
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          is_active: true,
-          is_locked: true,
-          created_at: true,
-          profile: { select: { first_name: true, last_name: true, avatar_url: true } },
-        },
+        skip,
+        take: pageSize,
+        select,
         orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.user.count({ where }),
     ]);
-    return paginate(data, total, pagination);
+    return paginate(data, total, query);
   }
 
   async createAdmin(dto: CreateAdminDto) {
@@ -291,8 +389,21 @@ export class UsersService {
   async getMyClients(
     currentUserId: string,
     currentUserRole: string,
-    pagination: PaginationDto = new PaginationDto(),
+    query: AdminClientsQueryDto = new AdminClientsQueryDto(),
   ) {
+    const {
+      search,
+      level,
+      status,
+      assignment_state,
+      created_from,
+      created_to,
+      skip,
+      limit,
+    } = query;
+    const pageSize = limit ?? 20;
+    const normalizedSearch = search?.trim();
+    const createdAtRange = getDateRange(created_from, created_to);
     const clientSelect = {
       id: true,
       email: true,
@@ -314,15 +425,102 @@ export class UsersService {
         select: { id: true },
       },
     } as const;
+    const mapClientWithAdminCount = <
+      T extends {
+        clientOf: { id: string }[];
+        is_active: boolean;
+        is_locked: boolean;
+        email: string;
+        profile: {
+          first_name?: string | null;
+          last_name?: string | null;
+        } | null;
+      },
+    >(
+      client: T,
+    ) => {
+      const { clientOf, ...clientData } = client;
+
+      return {
+        ...clientData,
+        active_admins_count: clientOf.length,
+      };
+    };
+    const matchesClientStatus = (
+      client: {
+        is_active: boolean;
+        is_locked: boolean;
+      },
+      statuses?: ClientUserStatusFilter[],
+    ) => !statuses?.length || statuses.includes(getDerivedUserStatus(client));
+    const matchesAssignmentState = (
+      activeAdminsCount: number,
+      assignmentStates?: ClientAssignmentStateFilter[],
+    ) => {
+      if (!assignmentStates?.length) {
+        return true;
+      }
+
+      const hasAssigned = activeAdminsCount > 0;
+      return (
+        (hasAssigned && assignmentStates.includes('ASSIGNED')) ||
+        (!hasAssigned && assignmentStates.includes('UNASSIGNED'))
+      );
+    };
+    const matchesClientSearch = (
+      client: {
+        email: string;
+        profile: {
+          first_name?: string | null;
+          last_name?: string | null;
+        } | null;
+      },
+      term: string | null,
+    ) =>
+      !term ||
+      normalizeSearchText(
+        [client.email, client.profile?.first_name, client.profile?.last_name]
+          .filter(Boolean)
+          .join(' '),
+      ).includes(term);
 
     if (currentUserRole === Role.SUPER_ADMIN) {
-      const where = { role: Role.CLIENT };
+      const where: Prisma.UserWhereInput = {
+        role: Role.CLIENT,
+        ...(level?.length ? { profile: { is: { level: { in: level } } } } : {}),
+        ...(createdAtRange ? { created_at: createdAtRange } : {}),
+      };
+
+      if (normalizedSearch || status?.length || assignment_state?.length) {
+        const clients = await this.prisma.user.findMany({
+          where,
+          select: clientSelect,
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        });
+        const normalizedTerm = normalizedSearch
+          ? normalizeSearchText(normalizedSearch)
+          : null;
+        const filteredClients = clients
+          .map(mapClientWithAdminCount)
+          .filter(
+            (client) =>
+              matchesClientStatus(client, status) &&
+              matchesAssignmentState(
+                client.active_admins_count ?? 0,
+                assignment_state,
+              ) &&
+              matchesClientSearch(client, normalizedTerm),
+          );
+        const pageData = filteredClients.slice(skip, skip + pageSize);
+
+        return paginate(pageData, filteredClients.length, query);
+      }
 
       const [clients, total] = await Promise.all([
         this.prisma.user.findMany({
           where,
-          skip: pagination.skip,
-          take: pagination.limit,
+          skip,
+          take: pageSize,
           select: clientSelect,
           orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
         }),
@@ -330,31 +528,55 @@ export class UsersService {
       ]);
 
       return paginate(
-        clients.map(({ clientOf, ...client }) => ({
-          ...client,
-          active_admins_count: clientOf.length,
-        })),
+        clients.map(mapClientWithAdminCount),
         total,
-        pagination,
+        query,
       );
     }
 
-    const where = {
+    const where: Prisma.AdminClientAssignmentWhereInput = {
       admin_id: currentUserId,
       is_active: true,
       client: {
         is: {
           role: Role.CLIENT,
+          ...(level?.length ? { profile: { is: { level: { in: level } } } } : {}),
+          ...(createdAtRange ? { created_at: createdAtRange } : {}),
         },
       },
     };
+
+    if (normalizedSearch || status?.length) {
+      const assignments = await this.prisma.adminClientAssignment.findMany({
+        where,
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        include: {
+          client: {
+            select: clientSelect,
+          },
+        },
+      });
+      const normalizedTerm = normalizedSearch
+        ? normalizeSearchText(normalizedSearch)
+        : null;
+      const filteredClients = assignments
+        .map(({ client }) => mapClientWithAdminCount(client))
+        .filter(
+          (client) =>
+            matchesClientStatus(client, status) &&
+            matchesClientSearch(client, normalizedTerm),
+        );
+      const pageData = filteredClients.slice(skip, skip + pageSize);
+
+      return paginate(pageData, filteredClients.length, query);
+    }
 
     const [assignments, total] = await Promise.all([
       this.prisma.adminClientAssignment.findMany({
         where,
         orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-        skip: pagination.skip,
-        take: pagination.limit,
+        skip,
+        take: pageSize,
         include: {
           client: {
             select: clientSelect,
@@ -365,16 +587,9 @@ export class UsersService {
     ]);
 
     return paginate(
-      assignments.map(({ client }) => {
-        const { clientOf, ...clientData } = client;
-
-        return {
-          ...clientData,
-          active_admins_count: clientOf.length,
-        };
-      }),
+      assignments.map(({ client }) => mapClientWithAdminCount(client)),
       total,
-      pagination,
+      query,
     );
   }
 
