@@ -12,6 +12,8 @@ import {
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 
+type PrismaClientLike = PrismaService | Prisma.TransactionClient;
+
 const trainingExercisesInclude = {
   exercises: {
     orderBy: { order: 'asc' as const },
@@ -32,6 +34,28 @@ function normalizeSearchText(value: string) {
 @Injectable()
 export class TrainingsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private collectUniqueCatalogValues(values: string[]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const rawValue of values) {
+      const normalizedValue = this.normalizeCatalogValue(rawValue);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!unique.has(key)) {
+        unique.set(key, normalizedValue);
+      }
+    }
+
+    return Array.from(unique.values()).sort((left, right) =>
+      left.localeCompare(right, 'es', { sensitivity: 'base' }),
+    );
+  }
 
   private normalizeCatalogValue(value: string): string {
     return value.trim().replace(/\s+/g, ' ');
@@ -132,6 +156,18 @@ export class TrainingsService {
     );
   }
 
+  private normalizeTrainingTypeValue(value: string) {
+    const normalizedValue = this.normalizeCatalogValue(value);
+
+    if (!normalizedValue) {
+      throw new BadRequestException(
+        'El tipo de entrenamiento no puede estar vacÃ­o',
+      );
+    }
+
+    return normalizedValue;
+  }
+
   private async mutateTags(
     value: string,
     mutateValues: (values: string[]) => string[],
@@ -205,27 +241,22 @@ export class TrainingsService {
       select: { tags: true },
     });
 
-    const uniqueTags = new Map<string, string>();
+    return {
+      tags: this.collectUniqueCatalogValues(
+        trainings.flatMap((training) => training.tags),
+      ),
+    };
+  }
 
-    for (const training of trainings) {
-      for (const tag of training.tags) {
-        const normalizedTag = this.normalizeCatalogValue(tag);
-
-        if (!normalizedTag) {
-          continue;
-        }
-
-        const normalizedKey = this.getCatalogKey(normalizedTag);
-
-        if (!uniqueTags.has(normalizedKey)) {
-          uniqueTags.set(normalizedKey, normalizedTag);
-        }
-      }
-    }
+  async findAllTypes() {
+    const trainings = await this.prisma.training.findMany({
+      where: { is_active: true },
+      select: { type: true },
+    });
 
     return {
-      tags: Array.from(uniqueTags.values()).sort((left, right) =>
-        left.localeCompare(right, 'es', { sensitivity: 'base' }),
+      types: this.collectUniqueCatalogValues(
+        trainings.map((training) => training.type),
       ),
     };
   }
@@ -329,7 +360,7 @@ export class TrainingsService {
       const training = await tx.training.create({
         data: {
           name: dto.name,
-          type: dto.type,
+          type: this.normalizeTrainingTypeValue(dto.type),
           level: dto.level,
           estimated_duration_min: dto.estimated_duration_min ?? null,
           estimated_calories: dto.estimated_calories ?? null,
@@ -369,7 +400,9 @@ export class TrainingsService {
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
-          ...(dto.type !== undefined && { type: dto.type }),
+          ...(dto.type !== undefined && {
+            type: this.normalizeTrainingTypeValue(dto.type),
+          }),
           ...(dto.level !== undefined && { level: dto.level }),
           ...(dto.estimated_duration_min !== undefined && {
             estimated_duration_min: dto.estimated_duration_min,

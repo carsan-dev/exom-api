@@ -10,8 +10,11 @@ import {
   Min,
   IsNotEmpty,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { Level, TrainingType } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
+import { Level } from '@prisma/client';
+
+const trimString = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value;
 
 export class TrainingExerciseDto {
   @ApiProperty()
@@ -45,9 +48,11 @@ export class CreateTrainingDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ enum: TrainingType })
-  @IsEnum(TrainingType)
-  type: TrainingType;
+  @ApiProperty({ example: 'FUERZA' })
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty()
+  type: string;
 
   @ApiProperty({ enum: Level })
   @IsEnum(Level)

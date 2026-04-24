@@ -24,6 +24,7 @@ import {
   UpdateTrainingDto,
 } from './dto/create-training.dto';
 import { TrainingTagsResponseDto } from './dto/training-tags-response.dto';
+import { TrainingTypesResponseDto } from './dto/training-types-response.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import {
   CatalogMutationResponseDto,
@@ -68,6 +69,14 @@ export class TrainingsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   findAllTags() {
     return this.trainingsService.findAllTags();
+  }
+
+  @Get('types')
+  @ApiOperation({ summary: 'List all unique types used by active trainings' })
+  @ApiOkResponse({ type: TrainingTypesResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  findAllTypes() {
+    return this.trainingsService.findAllTypes();
   }
 
   @Patch('tags/rename')

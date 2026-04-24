@@ -1,4 +1,4 @@
-import { Level, TrainingType } from '@prisma/client';
+import { Level } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { TrainingsService } from './trainings.service';
@@ -27,7 +27,7 @@ describe('TrainingsService', () => {
     const query = Object.assign(new TrainingsQueryDto(), {
       page: 1,
       limit: 20,
-      type: [TrainingType.HIIT],
+      type: ['HIIT'],
       level: [Level.INTERMEDIO],
       tags: ['Core'],
       duration_min: 20,
@@ -35,7 +35,7 @@ describe('TrainingsService', () => {
     });
     const expectedWhere = {
       is_active: true,
-      type: { in: [TrainingType.HIIT] },
+      type: { in: ['HIIT'] },
       level: { in: [Level.INTERMEDIO] },
       tags: { hasSome: ['Core'] },
       estimated_duration_min: {
@@ -78,7 +78,7 @@ describe('TrainingsService', () => {
       page: 2,
       limit: 1,
       search: 'movilidad',
-      type: [TrainingType.FLEXIBILIDAD],
+      type: ['FLEXIBILIDAD'],
     });
 
     prisma.training.findMany.mockResolvedValue([
@@ -98,7 +98,7 @@ describe('TrainingsService', () => {
     expect(prisma.training.findMany).toHaveBeenCalledWith({
       where: {
         is_active: true,
-        type: { in: [TrainingType.FLEXIBILIDAD] },
+        type: { in: ['FLEXIBILIDAD'] },
       },
       orderBy: { created_at: 'desc' },
       include: expect.objectContaining({
@@ -106,5 +106,18 @@ describe('TrainingsService', () => {
       }),
     });
     expect(prisma.training.count).not.toHaveBeenCalled();
+  });
+
+  it('lists unique training types from active trainings', async () => {
+    prisma.training.findMany.mockResolvedValue([
+      { type: 'FUERZA' },
+      { type: 'Pilates' },
+      { type: 'pilates' },
+      { type: 'HIIT' },
+    ]);
+
+    await expect(service.findAllTypes()).resolves.toEqual({
+      types: ['FUERZA', 'HIIT', 'Pilates'],
+    });
   });
 });

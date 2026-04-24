@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { Level, TrainingType } from '@prisma/client';
+import { Level } from '@prisma/client';
 import {
   IsArray,
   IsEnum,
@@ -10,6 +10,10 @@ import {
   Min,
 } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
+
+function normalizeCatalogValue(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
+}
 
 function toArray(value: unknown): string[] | undefined {
   if (value == null || value === '') return undefined;
@@ -22,11 +26,14 @@ function toArray(value: unknown): string[] | undefined {
         }
         return [];
       })
+      .map(normalizeCatalogValue)
       .filter(Boolean);
   }
-  if (typeof value === 'string') return value.split(',').filter(Boolean);
+  if (typeof value === 'string') {
+    return value.split(',').map(normalizeCatalogValue).filter(Boolean);
+  }
   if (typeof value === 'number' || typeof value === 'boolean') {
-    return [String(value)];
+    return [normalizeCatalogValue(String(value))];
   }
   return undefined;
 }
@@ -39,14 +46,14 @@ export class TrainingsQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({
     description: 'Filter by training type (in)',
-    enum: TrainingType,
     isArray: true,
+    type: String,
   })
   @IsOptional()
   @Transform(({ value }) => toArray(value))
   @IsArray()
-  @IsEnum(TrainingType, { each: true })
-  type?: TrainingType[];
+  @IsString({ each: true })
+  type?: string[];
 
   @ApiPropertyOptional({
     description: 'Filter by level (in)',

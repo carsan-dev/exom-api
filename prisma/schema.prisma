@@ -23,13 +23,6 @@ enum AuthProvider {
   apple
 }
 
-enum TrainingType {
-  FUERZA
-  CARDIO
-  HIIT
-  FLEXIBILIDAD
-}
-
 enum Level {
   PRINCIPIANTE
   INTERMEDIO
@@ -242,7 +235,7 @@ model ApprovalRequest {
 model Training {
   id                     String       @id @default(uuid())
   name                   String
-  type                   TrainingType
+  type                   String
   level                  Level        @default(PRINCIPIANTE)
   estimated_duration_min Int?
   estimated_calories     Int?
