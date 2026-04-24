@@ -37,7 +37,7 @@ export class IngredientsController {
   @Get()
   @ApiOperation({ summary: 'List ingredients with optional search' })
   findAll(@Query() query: IngredientsQueryDto) {
-    return this.ingredientsService.findAll(query.search, query);
+    return this.ingredientsService.findAll(query);
   }
 
   @Get(':id')

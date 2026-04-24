@@ -1,10 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
+import { paginate } from '../../common/dto/pagination.dto';
 import {
   CreateIngredientDto,
   UpdateIngredientDto,
 } from './dto/create-ingredient.dto';
+import { IngredientsQueryDto } from './dto/ingredients-query.dto';
 
 function normalizeSearchText(value: string) {
   return value
@@ -14,17 +16,121 @@ function normalizeSearchText(value: string) {
     .normalize('NFC');
 }
 
+function getDateRange(
+  from?: string,
+  to?: string,
+): Prisma.DateTimeFilter | undefined {
+  if (!from && !to) {
+    return undefined;
+  }
+
+  const range: Prisma.DateTimeFilter = {};
+
+  if (from) {
+    range.gte = new Date(`${from}T00:00:00.000Z`);
+  }
+
+  if (to) {
+    range.lte = new Date(`${to}T23:59:59.999Z`);
+  }
+
+  return range;
+}
+
 @Injectable()
 export class IngredientsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(search: string | undefined, pagination: PaginationDto) {
+  async findAll(query: IngredientsQueryDto) {
+    const {
+      search,
+      has_icon,
+      calories_per_100g_min,
+      calories_per_100g_max,
+      protein_per_100g_min,
+      protein_per_100g_max,
+      carbs_per_100g_min,
+      carbs_per_100g_max,
+      fat_per_100g_min,
+      fat_per_100g_max,
+      updated_from,
+      updated_to,
+      skip,
+      limit,
+    } = query;
+    const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
+    const updatedAtRange = getDateRange(updated_from, updated_to);
+    const iconStates = has_icon ?? [];
+    const shouldFilterWithIcon =
+      iconStates.length === 1 && iconStates[0] === 'WITH_ICON';
+    const shouldFilterWithoutIcon =
+      iconStates.length === 1 && iconStates[0] === 'WITHOUT_ICON';
+    const where: Prisma.IngredientWhereInput = {
+      is_active: true,
+      ...(shouldFilterWithIcon
+        ? {
+            icon: {
+              not: null,
+            },
+          }
+        : {}),
+      ...(shouldFilterWithoutIcon
+        ? {
+            OR: [{ icon: null }, { icon: '' }],
+          }
+        : {}),
+      ...(calories_per_100g_min != null || calories_per_100g_max != null
+        ? {
+            calories_per_100g: {
+              ...(calories_per_100g_min != null
+                ? { gte: calories_per_100g_min }
+                : {}),
+              ...(calories_per_100g_max != null
+                ? { lte: calories_per_100g_max }
+                : {}),
+            },
+          }
+        : {}),
+      ...(protein_per_100g_min != null || protein_per_100g_max != null
+        ? {
+            protein_per_100g: {
+              ...(protein_per_100g_min != null
+                ? { gte: protein_per_100g_min }
+                : {}),
+              ...(protein_per_100g_max != null
+                ? { lte: protein_per_100g_max }
+                : {}),
+            },
+          }
+        : {}),
+      ...(carbs_per_100g_min != null || carbs_per_100g_max != null
+        ? {
+            carbs_per_100g: {
+              ...(carbs_per_100g_min != null
+                ? { gte: carbs_per_100g_min }
+                : {}),
+              ...(carbs_per_100g_max != null
+                ? { lte: carbs_per_100g_max }
+                : {}),
+            },
+          }
+        : {}),
+      ...(fat_per_100g_min != null || fat_per_100g_max != null
+        ? {
+            fat_per_100g: {
+              ...(fat_per_100g_min != null ? { gte: fat_per_100g_min } : {}),
+              ...(fat_per_100g_max != null ? { lte: fat_per_100g_max } : {}),
+            },
+          }
+        : {}),
+      ...(updatedAtRange ? { updated_at: updatedAtRange } : {}),
+    };
 
     if (normalizedSearch) {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const ingredients = await this.prisma.ingredient.findMany({
-        where: { is_active: true },
+        where,
         orderBy: { name: 'asc' },
       });
 
@@ -33,28 +139,24 @@ export class IngredientsService {
       );
 
       const pageData = filteredIngredients.slice(
-        pagination.skip,
-        pagination.skip + (pagination.limit ?? 20),
+        skip,
+        skip + pageSize,
       );
 
-      return paginate(pageData, filteredIngredients.length, pagination);
+      return paginate(pageData, filteredIngredients.length, query);
     }
-
-    const where = {
-      is_active: true,
-    };
 
     const [data, total] = await Promise.all([
       this.prisma.ingredient.findMany({
         where,
-        skip: pagination.skip,
-        take: pagination.limit,
+        skip,
+        take: pageSize,
         orderBy: { name: 'asc' },
       }),
       this.prisma.ingredient.count({ where }),
     ]);
 
-    return paginate(data, total, pagination);
+    return paginate(data, total, query);
   }
 
   async findOne(id: string) {
