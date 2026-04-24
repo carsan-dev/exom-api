@@ -45,7 +45,7 @@ export class ExercisesController {
   @Get()
   @ApiOperation({ summary: 'List all active exercises with optional search' })
   findAll(@Query() query: ExercisesQueryDto) {
-    return this.exercisesService.findAll(query.search, query);
+    return this.exercisesService.findAll(query);
   }
 
   // NOTE: static routes (/muscle-groups, /equipment) MUST be declared before /:id

@@ -19,7 +19,10 @@ import {
   ApiResponse,
 } from '@nestjs/swagger';
 import { TrainingsService } from './trainings.service';
-import { CreateTrainingDto, UpdateTrainingDto } from './dto/create-training.dto';
+import {
+  CreateTrainingDto,
+  UpdateTrainingDto,
+} from './dto/create-training.dto';
 import { TrainingTagsResponseDto } from './dto/training-tags-response.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import {
@@ -41,12 +44,15 @@ export class TrainingsController {
   @Get()
   @ApiOperation({ summary: 'List all active trainings with optional search' })
   findAll(@Query() query: TrainingsQueryDto) {
-    return this.trainingsService.findAll(query.search, query);
+    return this.trainingsService.findAll(query);
   }
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
   @Get('today')
-  @ApiOperation({ summary: "Get training for the current client on a given date (defaults to today)" })
+  @ApiOperation({
+    summary:
+      'Get training for the current client on a given date (defaults to today)',
+  })
   @Roles(Role.CLIENT)
   findToday(
     @CurrentUser() user: AuthenticatedUser,
@@ -99,7 +105,10 @@ export class TrainingsController {
   @Put(':id')
   @RequiresApproval('training.update', 'training')
   @ApiOperation({ summary: 'Update a training (admin only)' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   update(
     @Param('id') id: string,
@@ -112,13 +121,13 @@ export class TrainingsController {
   @Delete(':id')
   @RequiresApproval('training.delete', 'training')
   @ApiOperation({ summary: 'Soft-delete a training (admin only)' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(
-    @Param('id') id: string,
-    @CurrentUser() _user: AuthenticatedUser,
-  ) {
+  remove(@Param('id') id: string, @CurrentUser() _user: AuthenticatedUser) {
     return this.trainingsService.remove(id);
   }
 }

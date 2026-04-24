@@ -3,12 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
+import { paginate } from '../../common/dto/pagination.dto';
 import {
   CreateExerciseDto,
   UpdateExerciseDto,
 } from './dto/create-exercise.dto';
+import { ExercisesQueryDto } from './dto/exercises-query.dto';
 
 type ExerciseCatalogField = 'muscle_groups' | 'equipment';
 
@@ -266,13 +268,23 @@ export class ExercisesService {
     };
   }
 
-  async findAll(search: string | undefined, pagination: PaginationDto) {
+  async findAll(query: ExercisesQueryDto) {
+    const { search, muscle_groups, equipment, level, skip, limit } = query;
+    const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
+    const where: Prisma.ExerciseWhereInput = {
+      is_active: true,
+      ...(muscle_groups?.length
+        ? { muscle_groups: { hasSome: muscle_groups } }
+        : {}),
+      ...(equipment?.length ? { equipment: { hasSome: equipment } } : {}),
+      ...(level?.length ? { level: { in: level } } : {}),
+    };
 
     if (normalizedSearch) {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const exercises = await this.prisma.exercise.findMany({
-        where: { is_active: true },
+        where,
         orderBy: { created_at: 'desc' },
       });
 
@@ -280,25 +292,22 @@ export class ExercisesService {
         normalizeSearchText(exercise.name).includes(normalizedSearchTerm),
       );
 
-      const pageData = filteredExercises.slice(
-        pagination.skip,
-        pagination.skip + (pagination.limit ?? 20),
-      );
+      const pageData = filteredExercises.slice(skip, skip + pageSize);
 
-      return paginate(pageData, filteredExercises.length, pagination);
+      return paginate(pageData, filteredExercises.length, query);
     }
 
     const [data, total] = await Promise.all([
       this.prisma.exercise.findMany({
-        where: { is_active: true },
-        skip: pagination.skip,
-        take: pagination.limit,
+        where,
+        skip,
+        take: pageSize,
         orderBy: { created_at: 'desc' },
       }),
-      this.prisma.exercise.count({ where: { is_active: true } }),
+      this.prisma.exercise.count({ where }),
     ]);
 
-    return paginate(data, total, pagination);
+    return paginate(data, total, query);
   }
 
   async findOne(id: string) {

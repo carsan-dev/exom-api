@@ -3,9 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
+import { paginate } from '../../common/dto/pagination.dto';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
+import { DietsQueryDto } from './dto/diets-query.dto';
 
 const dietInclude = {
   meals: {
@@ -26,6 +28,27 @@ function normalizeSearchText(value: string) {
     .normalize('NFD')
     .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
     .normalize('NFC');
+}
+
+function getDateRange(
+  from?: string,
+  to?: string,
+): Prisma.DateTimeFilter | undefined {
+  if (!from && !to) {
+    return undefined;
+  }
+
+  const range: Prisma.DateTimeFilter = {};
+
+  if (from) {
+    range.gte = new Date(`${from}T00:00:00.000Z`);
+  }
+
+  if (to) {
+    range.lte = new Date(`${to}T23:59:59.999Z`);
+  }
+
+  return range;
 }
 
 @Injectable()
@@ -235,13 +258,44 @@ export class DietsService {
     );
   }
 
-  async findAll(search: string | undefined, pagination: PaginationDto) {
+  async findAll(query: DietsQueryDto) {
+    const {
+      search,
+      nutritional_badges,
+      meal_types,
+      updated_from,
+      updated_to,
+      skip,
+      limit,
+    } = query;
+    const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
+    const updatedAtRange = getDateRange(updated_from, updated_to);
+    const where: Prisma.DietWhereInput = {
+      is_active: true,
+      ...(nutritional_badges?.length || meal_types?.length
+        ? {
+            meals: {
+              some: {
+                ...(meal_types?.length ? { type: { in: meal_types } } : {}),
+                ...(nutritional_badges?.length
+                  ? {
+                      nutritional_badges: {
+                        hasSome: nutritional_badges,
+                      },
+                    }
+                  : {}),
+              },
+            },
+          }
+        : {}),
+      ...(updatedAtRange ? { updated_at: updatedAtRange } : {}),
+    };
 
     if (normalizedSearch) {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const diets = await this.prisma.diet.findMany({
-        where: { is_active: true },
+        where,
         orderBy: { created_at: 'desc' },
         include: dietInclude,
       });
@@ -250,26 +304,23 @@ export class DietsService {
         normalizeSearchText(diet.name).includes(normalizedSearchTerm),
       );
 
-      const pageData = filteredDiets.slice(
-        pagination.skip,
-        pagination.skip + (pagination.limit ?? 20),
-      );
+      const pageData = filteredDiets.slice(skip, skip + pageSize);
 
-      return paginate(pageData, filteredDiets.length, pagination);
+      return paginate(pageData, filteredDiets.length, query);
     }
 
     const [data, total] = await Promise.all([
       this.prisma.diet.findMany({
-        where: { is_active: true },
-        skip: pagination.skip,
-        take: pagination.limit,
+        where,
+        skip,
+        take: pageSize,
         orderBy: { created_at: 'desc' },
         include: dietInclude,
       }),
-      this.prisma.diet.count({ where: { is_active: true } }),
+      this.prisma.diet.count({ where }),
     ]);
 
-    return paginate(data, total, pagination);
+    return paginate(data, total, query);
   }
 
   async findToday(clientId: string, date?: Date) {

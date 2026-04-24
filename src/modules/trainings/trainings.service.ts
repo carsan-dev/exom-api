@@ -3,12 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
+import { paginate } from '../../common/dto/pagination.dto';
 import {
   CreateTrainingDto,
   UpdateTrainingDto,
 } from './dto/create-training.dto';
+import { TrainingsQueryDto } from './dto/trainings-query.dto';
 
 const trainingExercisesInclude = {
   exercises: {
@@ -228,13 +230,38 @@ export class TrainingsService {
     };
   }
 
-  async findAll(search: string | undefined, pagination: PaginationDto) {
+  async findAll(query: TrainingsQueryDto) {
+    const {
+      search,
+      type,
+      level,
+      tags,
+      duration_min,
+      duration_max,
+      skip,
+      limit,
+    } = query;
+    const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
+    const where: Prisma.TrainingWhereInput = {
+      is_active: true,
+      ...(type?.length ? { type: { in: type } } : {}),
+      ...(level?.length ? { level: { in: level } } : {}),
+      ...(tags?.length ? { tags: { hasSome: tags } } : {}),
+      ...(duration_min != null || duration_max != null
+        ? {
+            estimated_duration_min: {
+              ...(duration_min != null ? { gte: duration_min } : {}),
+              ...(duration_max != null ? { lte: duration_max } : {}),
+            },
+          }
+        : {}),
+    };
 
     if (normalizedSearch) {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const trainings = await this.prisma.training.findMany({
-        where: { is_active: true },
+        where,
         orderBy: { created_at: 'desc' },
         include: trainingExercisesInclude,
       });
@@ -243,26 +270,23 @@ export class TrainingsService {
         normalizeSearchText(training.name).includes(normalizedSearchTerm),
       );
 
-      const pageData = filteredTrainings.slice(
-        pagination.skip,
-        pagination.skip + (pagination.limit ?? 20),
-      );
+      const pageData = filteredTrainings.slice(skip, skip + pageSize);
 
-      return paginate(pageData, filteredTrainings.length, pagination);
+      return paginate(pageData, filteredTrainings.length, query);
     }
 
     const [data, total] = await Promise.all([
       this.prisma.training.findMany({
-        where: { is_active: true },
-        skip: pagination.skip,
-        take: pagination.limit,
+        where,
+        skip,
+        take: pageSize,
         orderBy: { created_at: 'desc' },
         include: trainingExercisesInclude,
       }),
-      this.prisma.training.count({ where: { is_active: true } }),
+      this.prisma.training.count({ where }),
     ]);
 
-    return paginate(data, total, pagination);
+    return paginate(data, total, query);
   }
 
   async findToday(clientId: string, date?: Date) {

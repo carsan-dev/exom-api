@@ -51,7 +51,7 @@ export class DietsController {
   @ApiBadRequestResponse({ description: 'Invalid pagination parameters' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   findAll(@Query() query: DietsQueryDto) {
-    return this.dietsService.findAll(query.search, query);
+    return this.dietsService.findAll(query);
   }
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
