@@ -213,6 +213,7 @@ describe('NotificationsService', () => {
       data: {
         type: 'recap_reminder',
         route: '/recap',
+        notification_id: 'notification-1',
       },
       android: {
         priority: 'high',
@@ -314,6 +315,7 @@ describe('NotificationsService', () => {
         data: {
           type: 'recap_feedback',
           route: '/recap/recap-1',
+          notification_id: 'notification-1',
         },
       }),
     );
@@ -353,6 +355,7 @@ describe('NotificationsService', () => {
         data: {
           type: 'recap_feedback',
           route: '/recap',
+          notification_id: 'notification-1',
         },
       }),
     );
@@ -462,6 +465,7 @@ describe('NotificationsService', () => {
         data: {
           type: 'training_reminder',
           route: '/trainings?date=2026-04-23',
+          notification_id: 'notification-1',
         },
       }),
     );
@@ -730,7 +734,10 @@ describe('NotificationsService', () => {
 
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { source: 'template-test' },
+        data: {
+          source: 'template-test',
+          notification_id: 'notification-1',
+        },
         notification: {
           title: 'Hola Ada',
           body: 'Entrena hoy',

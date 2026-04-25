@@ -566,11 +566,25 @@ export class NotificationsService {
       );
     }
 
+    const record = await this.createNotificationRecord(
+      senderId,
+      user.id,
+      title,
+      body,
+      payloadData,
+      NotificationStatus.SENT,
+    );
+
+    const fcmData = {
+      ...(payloadData ?? {}),
+      notification_id: record.id,
+    };
+
     try {
       const messageId = await admin.messaging().send({
         token: user.fcm_token,
         notification: { title, body },
-        data: payloadData,
+        data: fcmData,
         android: {
           priority: 'high',
           notification: {
@@ -593,28 +607,20 @@ export class NotificationsService {
 
       this.logger.log(`FCM sent to ${user.email}: ${messageId}`);
 
-      return this.createNotificationRecord(
-        senderId,
-        user.id,
-        title,
-        body,
-        payloadData,
-        NotificationStatus.SENT,
-      );
+      return record;
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'Unexpected FCM error';
       this.logger.error(`FCM error for ${user.email}: ${message}`);
 
-      return this.createNotificationRecord(
-        senderId,
-        user.id,
-        title,
-        body,
-        payloadData,
-        NotificationStatus.FAILED,
-        message,
-      );
+      return this.prisma.notification.update({
+        where: { id: record.id },
+        data: {
+          status: NotificationStatus.FAILED,
+          error: message,
+        },
+        include: notificationHistoryInclude,
+      });
     }
   }
 
