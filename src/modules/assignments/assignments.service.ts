@@ -24,6 +24,8 @@ const assignmentInclude = {
       id: true,
       name: true,
       type: true,
+      types: true,
+      accentColor: true,
       level: true,
       estimated_duration_min: true,
       estimated_calories: true,
@@ -45,6 +47,8 @@ export interface AssignmentTrainingSummary {
   id: string;
   name: string;
   type: string;
+  types: string[];
+  accentColor: string | null;
   level: string;
   estimated_duration_min: number | null;
   estimated_calories: number | null;
@@ -89,6 +93,51 @@ export class AssignmentsService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
   ) {}
+
+  private normalizeCatalogValue(value: string) {
+    return value.trim().replace(/\s+/g, ' ');
+  }
+
+  private getCatalogKey(value: string) {
+    return this.normalizeCatalogValue(value)
+      .toLocaleLowerCase('es-ES')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .normalize('NFC');
+  }
+
+  private serializeAssignmentTraining(
+    training: AssignmentTrainingSummary | null,
+  ) {
+    if (!training) {
+      return null;
+    }
+
+    const uniqueTypes = new Map<string, string>();
+
+    for (const value of [...(training.types ?? []), training.type]) {
+      const normalizedValue = this.normalizeCatalogValue(value);
+
+      if (!normalizedValue) {
+        continue;
+      }
+
+      const key = this.getCatalogKey(normalizedValue);
+
+      if (!uniqueTypes.has(key)) {
+        uniqueTypes.set(key, normalizedValue);
+      }
+    }
+
+    const types = Array.from(uniqueTypes.values());
+
+    return {
+      ...training,
+      type: types[0] ?? this.normalizeCatalogValue(training.type),
+      types,
+      accentColor: training.accentColor ?? null,
+    };
+  }
 
   private inferPlanKind(
     days: Array<{
@@ -334,7 +383,7 @@ export class AssignmentsService {
       client_id: assignment.client_id,
       date: this.formatDate(assignment.date),
       is_rest_day: assignment.is_rest_day,
-      training: assignment.training,
+      training: this.serializeAssignmentTraining(assignment.training),
       diet: assignment.diet,
     };
   }
