@@ -18,6 +18,15 @@ type AchievementRuleConfigLike = {
   training_type?: string;
 };
 
+type TrainingCatalogRecord = {
+  type: string;
+  types?: string[] | null;
+};
+
+type TrainingResponseLike = TrainingCatalogRecord & {
+  accentColor?: string | null;
+};
+
 const trainingExercisesInclude = {
   exercises: {
     orderBy: { order: 'asc' as const },
@@ -26,6 +35,8 @@ const trainingExercisesInclude = {
     },
   },
 };
+
+const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 function normalizeSearchText(value: string) {
   return value
@@ -160,6 +171,75 @@ export class TrainingsService {
     );
   }
 
+  private resolveTrainingTypes(training: TrainingCatalogRecord): string[] {
+    return this.normalizeCatalogValues([
+      ...(training.types ?? []),
+      ...(training.type ? [training.type] : []),
+    ]);
+  }
+
+  private normalizeTrainingTypesInput(
+    training: Partial<TrainingCatalogRecord>,
+    requireAtLeastOne = true,
+  ): string[] {
+    const normalizedTypes = this.normalizeCatalogValues([
+      ...(training.types ?? []),
+      ...(training.type ? [training.type] : []),
+    ]);
+
+    if (requireAtLeastOne && normalizedTypes.length === 0) {
+      throw new BadRequestException(
+        'Debes indicar al menos un tipo de entrenamiento',
+      );
+    }
+
+    return normalizedTypes;
+  }
+
+  private resolveLegacyTrainingType(
+    training: Partial<TrainingCatalogRecord>,
+    normalizedTypes: string[],
+  ): string {
+    return normalizedTypes[0] ?? this.normalizeCatalogValue(training.type ?? '');
+  }
+
+  private normalizeTrainingAccentColor(value: string | null | undefined) {
+    if (value == null) {
+      return null;
+    }
+
+    const normalizedValue = value.trim();
+
+    if (!normalizedValue) {
+      return null;
+    }
+
+    if (!TRAINING_ACCENT_COLOR_REGEX.test(normalizedValue)) {
+      throw new BadRequestException(
+        'El color del entrenamiento debe ser un valor hex valido',
+      );
+    }
+
+    return `#${normalizedValue.replace(/^#/, '').toUpperCase()}`;
+  }
+
+  private serializeTraining<T extends TrainingResponseLike>(training: T) {
+    const types = this.resolveTrainingTypes(training);
+
+    return {
+      ...training,
+      type: this.resolveLegacyTrainingType(training, types),
+      types,
+      accentColor: training.accentColor ?? null,
+    };
+  }
+
+  private serializeTrainingCollection<T extends TrainingResponseLike>(
+    trainings: T[],
+  ) {
+    return trainings.map((training) => this.serializeTraining(training));
+  }
+
   private normalizeTrainingTypeValue(value: string) {
     const normalizedValue = this.normalizeCatalogValue(value);
 
@@ -262,7 +342,7 @@ export class TrainingsService {
     const [trainings, achievements] = await Promise.all([
       this.prisma.training.findMany({
         where: { is_active: true },
-        select: { id: true, type: true },
+        select: { id: true, type: true, types: true },
       }),
       this.prisma.achievement.findMany({
         where: { criteria_type: 'TRAINING_DAYS' },
@@ -270,16 +350,35 @@ export class TrainingsService {
       }),
     ]);
 
-    const trainingUpdates = trainings.flatMap((training) =>
-      this.getCatalogKey(training.type) === this.getCatalogKey(normalizedFrom)
-        ? [
-            this.prisma.training.update({
-              where: { id: training.id },
-              data: { type: normalizedTo },
-            }),
-          ]
-        : [],
-    );
+    const trainingUpdates = trainings.flatMap((training) => {
+      const currentTypes = this.resolveTrainingTypes(training);
+      const nextTypes = this.replaceCatalogValue(
+        currentTypes,
+        normalizedFrom,
+        normalizedTo,
+      );
+      const currentLegacyType = this.resolveLegacyTrainingType(
+        training,
+        currentTypes,
+      );
+      const nextLegacyType = this.resolveLegacyTrainingType(training, nextTypes);
+      const shouldUpdateTypes = this.hasCatalogChanged(currentTypes, nextTypes);
+      const shouldUpdateLegacyType = currentLegacyType !== nextLegacyType;
+
+      if (!shouldUpdateTypes && !shouldUpdateLegacyType) {
+        return [];
+      }
+
+      return [
+        this.prisma.training.update({
+          where: { id: training.id },
+          data: {
+            ...(shouldUpdateTypes ? { types: nextTypes } : {}),
+            ...(shouldUpdateLegacyType ? { type: nextLegacyType } : {}),
+          },
+        }),
+      ];
+    });
 
     const achievementUpdates = achievements.flatMap((achievement) => {
       const ruleConfig = this.parseAchievementRuleConfig(achievement.rule_config);
@@ -333,12 +432,12 @@ export class TrainingsService {
   async findAllTypes() {
     const trainings = await this.prisma.training.findMany({
       where: { is_active: true },
-      select: { type: true },
+      select: { type: true, types: true },
     });
 
     return {
       types: this.collectUniqueCatalogValues(
-        trainings.map((training) => training.type),
+        trainings.flatMap((training) => this.resolveTrainingTypes(training)),
       ),
     };
   }
@@ -356,9 +455,19 @@ export class TrainingsService {
     } = query;
     const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
+    const normalizedTypeFilters = type?.length
+      ? this.normalizeCatalogValues(type)
+      : [];
     const where: Prisma.TrainingWhereInput = {
       is_active: true,
-      ...(type?.length ? { type: { in: type } } : {}),
+      ...(normalizedTypeFilters.length
+        ? {
+            OR: [
+              { types: { hasSome: normalizedTypeFilters } },
+              { type: { in: normalizedTypeFilters } },
+            ],
+          }
+        : {}),
       ...(level?.length ? { level: { in: level } } : {}),
       ...(tags?.length ? { tags: { hasSome: tags } } : {}),
       ...(duration_min != null || duration_max != null
@@ -383,7 +492,9 @@ export class TrainingsService {
         normalizeSearchText(training.name).includes(normalizedSearchTerm),
       );
 
-      const pageData = filteredTrainings.slice(skip, skip + pageSize);
+      const pageData = this.serializeTrainingCollection(
+        filteredTrainings.slice(skip, skip + pageSize),
+      );
 
       return paginate(pageData, filteredTrainings.length, query);
     }
@@ -399,7 +510,7 @@ export class TrainingsService {
       this.prisma.training.count({ where }),
     ]);
 
-    return paginate(data, total, query);
+    return paginate(this.serializeTrainingCollection(data), total, query);
   }
 
   async findToday(clientId: string, date?: Date) {
@@ -421,7 +532,7 @@ export class TrainingsService {
       return null;
     }
 
-    return assignment.training;
+    return this.serializeTraining(assignment.training);
   }
 
   async findOne(id: string) {
@@ -434,15 +545,21 @@ export class TrainingsService {
       throw new NotFoundException('Entrenamiento no encontrado');
     }
 
-    return training;
+    return this.serializeTraining(training);
   }
 
   async create(adminId: string, dto: CreateTrainingDto) {
+    const normalizedTypes = this.normalizeTrainingTypesInput(dto);
+    const legacyType = this.resolveLegacyTrainingType(dto, normalizedTypes);
+    const accentColor = this.normalizeTrainingAccentColor(dto.accentColor);
+
     return this.prisma.$transaction(async (tx) => {
       const training = await tx.training.create({
         data: {
           name: dto.name,
-          type: this.normalizeTrainingTypeValue(dto.type),
+          type: legacyType,
+          types: normalizedTypes,
+          accentColor,
           level: dto.level,
           estimated_duration_min: dto.estimated_duration_min ?? null,
           estimated_calories: dto.estimated_calories ?? null,
@@ -471,19 +588,37 @@ export class TrainingsService {
         where: { id: training.id },
         include: trainingExercisesInclude,
       });
-    });
+    }).then((training) => this.serializeTraining(training!));
   }
 
   async update(id: string, dto: UpdateTrainingDto) {
     await this.findOne(id);
+
+    const shouldUpdateTrainingTypes =
+      dto.types !== undefined || dto.type !== undefined;
+    const normalizedTypes = shouldUpdateTrainingTypes
+      ? this.normalizeTrainingTypesInput(dto)
+      : null;
+    const legacyType =
+      normalizedTypes != null
+        ? this.resolveLegacyTrainingType(dto, normalizedTypes)
+        : null;
+    const accentColor =
+      dto.accentColor !== undefined
+        ? this.normalizeTrainingAccentColor(dto.accentColor)
+        : undefined;
 
     return this.prisma.$transaction(async (tx) => {
       await tx.training.update({
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
-          ...(dto.type !== undefined && {
-            type: this.normalizeTrainingTypeValue(dto.type),
+          ...(normalizedTypes !== null && {
+            type: legacyType!,
+            types: normalizedTypes,
+          }),
+          ...(dto.accentColor !== undefined && {
+            accentColor,
           }),
           ...(dto.level !== undefined && { level: dto.level }),
           ...(dto.estimated_duration_min !== undefined && {
@@ -529,7 +664,7 @@ export class TrainingsService {
         where: { id },
         include: trainingExercisesInclude,
       });
-    });
+    }).then((training) => this.serializeTraining(training!));
   }
 
   async remove(id: string) {

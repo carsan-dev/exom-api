@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import {
+  ArrayMinSize,
   IsString,
   IsEnum,
   IsOptional,
@@ -9,12 +10,29 @@ import {
   IsInt,
   Min,
   IsNotEmpty,
+  Matches,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Level } from '@prisma/client';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value;
+
+const trimStringArray = ({ value }: { value: unknown }) =>
+  Array.isArray(value)
+    ? value
+        .map((entry) =>
+          typeof entry === 'string'
+            ? entry.trim().replace(/\s+/g, ' ')
+            : entry,
+        )
+        .filter((entry) => typeof entry === 'string' && entry.length > 0)
+    : value;
+
+const trimOptionalString = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
+
+const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 export class TrainingExerciseDto {
   @ApiProperty()
@@ -51,11 +69,37 @@ export class CreateTrainingDto {
   @IsString()
   name: string;
 
-  @ApiProperty({ example: 'FUERZA' })
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['FUERZA', 'CARDIO'],
+  })
+  @IsOptional()
+  @Transform(trimStringArray)
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  types?: string[];
+
+  @ApiPropertyOptional({ example: 'FUERZA' })
   @Transform(trimString)
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  type: string;
+  type?: string;
+
+  @ApiPropertyOptional({
+    example: '#C5E384',
+    nullable: true,
+    description: 'Color visual del entrenamiento en formato hex.',
+  })
+  @Transform(trimOptionalString)
+  @IsOptional()
+  @IsString()
+  @Matches(TRAINING_ACCENT_COLOR_REGEX, {
+    message: 'accentColor debe ser un color hex valido',
+  })
+  accentColor?: string | null;
 
   @ApiProperty({ enum: Level })
   @IsEnum(Level)

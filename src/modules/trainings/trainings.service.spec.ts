@@ -47,7 +47,7 @@ describe('TrainingsService', () => {
     });
     const expectedWhere = {
       is_active: true,
-      type: { in: ['HIIT'] },
+      OR: [{ types: { hasSome: ['HIIT'] } }, { type: { in: ['HIIT'] } }],
       level: { in: [Level.INTERMEDIO] },
       tags: { hasSome: ['Core'] },
       estimated_duration_min: {
@@ -57,12 +57,26 @@ describe('TrainingsService', () => {
     };
 
     prisma.training.findMany.mockResolvedValue([
-      { id: 'training-1', exercises: [] },
+      {
+        id: 'training-1',
+        type: 'HIIT',
+        types: ['HIIT'],
+        accentColor: null,
+        exercises: [],
+      },
     ]);
     prisma.training.count.mockResolvedValue(1);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'training-1', exercises: [] }],
+      data: [
+        {
+          id: 'training-1',
+          type: 'HIIT',
+          types: ['HIIT'],
+          accentColor: null,
+          exercises: [],
+        },
+      ],
       total: 1,
       page: 1,
       limit: 20,
@@ -94,13 +108,43 @@ describe('TrainingsService', () => {
     });
 
     prisma.training.findMany.mockResolvedValue([
-      { id: 'training-1', name: 'Movilidad articular', exercises: [] },
-      { id: 'training-2', name: 'Movilídad de hombro', exercises: [] },
-      { id: 'training-3', name: 'Cardio exprés', exercises: [] },
+      {
+        id: 'training-1',
+        name: 'Movilidad articular',
+        type: 'FLEXIBILIDAD',
+        types: ['FLEXIBILIDAD'],
+        accentColor: null,
+        exercises: [],
+      },
+      {
+        id: 'training-2',
+        name: 'Movilidad de hombro',
+        type: 'FLEXIBILIDAD',
+        types: ['FLEXIBILIDAD'],
+        accentColor: null,
+        exercises: [],
+      },
+      {
+        id: 'training-3',
+        name: 'Cardio expres',
+        type: 'CARDIO',
+        types: ['CARDIO'],
+        accentColor: null,
+        exercises: [],
+      },
     ]);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'training-2', name: 'Movilídad de hombro', exercises: [] }],
+      data: [
+        {
+          id: 'training-2',
+          name: 'Movilidad de hombro',
+          type: 'FLEXIBILIDAD',
+          types: ['FLEXIBILIDAD'],
+          accentColor: null,
+          exercises: [],
+        },
+      ],
       total: 2,
       page: 2,
       limit: 1,
@@ -110,7 +154,10 @@ describe('TrainingsService', () => {
     expect(prisma.training.findMany).toHaveBeenCalledWith({
       where: {
         is_active: true,
-        type: { in: ['FLEXIBILIDAD'] },
+        OR: [
+          { types: { hasSome: ['FLEXIBILIDAD'] } },
+          { type: { in: ['FLEXIBILIDAD'] } },
+        ],
       },
       orderBy: { created_at: 'desc' },
       include: expect.objectContaining({
@@ -122,22 +169,22 @@ describe('TrainingsService', () => {
 
   it('lists unique training types from active trainings', async () => {
     prisma.training.findMany.mockResolvedValue([
-      { type: 'FUERZA' },
-      { type: 'Pilates' },
-      { type: 'pilates' },
-      { type: 'HIIT' },
+      { type: 'FUERZA', types: ['FUERZA'] },
+      { type: 'Pilates', types: ['Pilates', 'Cardio'] },
+      { type: 'pilates', types: [] },
+      { type: 'HIIT', types: ['HIIT', 'cardio'] },
     ]);
 
     await expect(service.findAllTypes()).resolves.toEqual({
-      types: ['FUERZA', 'HIIT', 'Pilates'],
+      types: ['Cardio', 'FUERZA', 'HIIT', 'Pilates'],
     });
   });
 
   it('renames training types across trainings and achievement rules', async () => {
     prisma.training.findMany.mockResolvedValue([
-      { id: 'training-1', type: 'Pilates' },
-      { id: 'training-2', type: 'HIIT' },
-      { id: 'training-3', type: 'pilates' },
+      { id: 'training-1', type: 'Pilates', types: ['Pilates'] },
+      { id: 'training-2', type: 'HIIT', types: ['HIIT', 'Pilates'] },
+      { id: 'training-3', type: 'pilates', types: [] },
     ]);
     prisma.achievement.findMany.mockResolvedValue([
       {
@@ -158,17 +205,21 @@ describe('TrainingsService', () => {
 
     await expect(service.renameType('Pilates', 'Movilidad')).resolves.toEqual({
       value: 'Movilidad',
-      affected_count: 3,
+      affected_count: 4,
     });
 
-    expect(prisma.training.update).toHaveBeenCalledTimes(2);
+    expect(prisma.training.update).toHaveBeenCalledTimes(3);
     expect(prisma.training.update).toHaveBeenNthCalledWith(1, {
       where: { id: 'training-1' },
-      data: { type: 'Movilidad' },
+      data: { type: 'Movilidad', types: ['Movilidad'] },
     });
     expect(prisma.training.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'training-2' },
+      data: { types: ['HIIT', 'Movilidad'] },
+    });
+    expect(prisma.training.update).toHaveBeenNthCalledWith(3, {
       where: { id: 'training-3' },
-      data: { type: 'Movilidad' },
+      data: { type: 'Movilidad', types: ['Movilidad'] },
     });
     expect(prisma.achievement.update).toHaveBeenCalledWith({
       where: { id: 'achievement-1' },
@@ -177,6 +228,6 @@ describe('TrainingsService', () => {
       },
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(3);
+    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(4);
   });
 });
