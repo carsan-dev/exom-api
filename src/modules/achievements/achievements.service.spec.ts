@@ -273,6 +273,67 @@ describe('AchievementsService', () => {
     );
   });
 
+  it('counts a combined training day for every included type', async () => {
+    prisma.achievement.findMany.mockResolvedValue([
+      {
+        id: 'ach-cardio',
+        name: 'Cardio x1',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 1,
+        rule_config: { training_type: 'CARDIO' },
+      },
+      {
+        id: 'ach-fuerza',
+        name: 'Fuerza x1',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 1,
+        rule_config: { training_type: 'FUERZA' },
+      },
+    ]);
+    prisma.dayProgress.findMany.mockResolvedValue([
+      { date: new Date('2026-04-01T00:00:00.000Z') },
+    ]);
+    prisma.planAssignment.findMany.mockResolvedValue([
+      {
+        training: {
+          type: 'FUERZA',
+          types: ['FUERZA', 'CARDIO'],
+        },
+      },
+    ]);
+    prisma.challengeClient.count.mockResolvedValue(0);
+    prisma.bodyMetric.count.mockResolvedValue(0);
+    prisma.streak.findUnique.mockResolvedValue({ current_days: 0 });
+    prisma.userAchievement.findMany.mockResolvedValue([]);
+    prisma.userAchievement.createMany.mockResolvedValue({ count: 2 });
+    prisma.userAchievement.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.evaluateAutomaticAchievementsForUser('client-1'),
+    ).resolves.toEqual({
+      user_id: 'client-1',
+      evaluated: 2,
+      granted: 2,
+      revoked: 0,
+    });
+
+    expect(prisma.userAchievement.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          user_id: 'client-1',
+          achievement_id: 'ach-cardio',
+          unlock_source: AchievementUnlockSource.AUTOMATIC,
+        },
+        {
+          user_id: 'client-1',
+          achievement_id: 'ach-fuerza',
+          unlock_source: AchievementUnlockSource.AUTOMATIC,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
   it('keeps manually granted automatic achievements during recomputation', async () => {
     prisma.achievement.findMany.mockResolvedValue([
       {

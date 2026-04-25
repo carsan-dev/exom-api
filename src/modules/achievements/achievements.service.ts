@@ -88,6 +88,29 @@ export class AchievementsService {
       .normalize('NFC');
   }
 
+  private resolveTrainingTypes(training: {
+    type?: string | null;
+    types?: string[] | null;
+  }) {
+    const uniqueTypes = new Map<string, string>();
+
+    for (const rawType of [...(training.types ?? []), training.type ?? '']) {
+      const normalizedType = this.normalizeTrainingTypeValue(rawType);
+
+      if (!normalizedType) {
+        continue;
+      }
+
+      const typeKey = this.getTrainingTypeKey(normalizedType);
+
+      if (!uniqueTypes.has(typeKey)) {
+        uniqueTypes.set(typeKey, normalizedType);
+      }
+    }
+
+    return Array.from(uniqueTypes.values());
+  }
+
   private validateRuleConfig(
     criteriaType: AchievementCriteriaType,
     ruleConfig: AchievementRuleConfig | null | undefined,
@@ -429,22 +452,27 @@ export class AchievementsService {
       },
       select: {
         training: {
-          select: { type: true },
+          select: { type: true, types: true },
         },
       },
     });
 
     return assignments.reduce<Record<string, number>>(
       (accumulator, assignment) => {
-        const trainingType = assignment.training?.type;
+        const trainingTypes = assignment.training
+          ? this.resolveTrainingTypes(assignment.training)
+          : [];
 
-        if (!trainingType) {
+        if (trainingTypes.length === 0) {
           return accumulator;
         }
 
-        const trainingTypeKey = this.getTrainingTypeKey(trainingType);
-        accumulator[trainingTypeKey] =
-          (accumulator[trainingTypeKey] ?? 0) + 1;
+        for (const trainingType of trainingTypes) {
+          const trainingTypeKey = this.getTrainingTypeKey(trainingType);
+          accumulator[trainingTypeKey] =
+            (accumulator[trainingTypeKey] ?? 0) + 1;
+        }
+
         return accumulator;
       },
       {},
