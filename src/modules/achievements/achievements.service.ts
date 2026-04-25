@@ -10,7 +10,10 @@ import type { AuthenticatedUser } from '../../common/decorators/current-user.dec
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CreateAchievementDto, GrantAchievementDto } from './dto/create-achievement.dto';
+import {
+  CreateAchievementDto,
+  GrantAchievementDto,
+} from './dto/create-achievement.dto';
 import { UpdateAchievementDto } from './dto/update-achievement.dto';
 import {
   AchievementFiltersDto,
@@ -59,7 +62,9 @@ export class AchievementsService {
   private isOfficialCriteriaType(
     value: string,
   ): value is AchievementCriteriaType {
-    return ACHIEVEMENT_CRITERIA_TYPES.includes(value as AchievementCriteriaType);
+    return ACHIEVEMENT_CRITERIA_TYPES.includes(
+      value as AchievementCriteriaType,
+    );
   }
 
   private parseRuleConfig(
@@ -121,7 +126,10 @@ export class AchievementsService {
         ) as AchievementRuleConfig)
       : null;
 
-    if (!normalizedRuleConfig || Object.keys(normalizedRuleConfig).length === 0) {
+    if (
+      !normalizedRuleConfig ||
+      Object.keys(normalizedRuleConfig).length === 0
+    ) {
       return null;
     }
 
@@ -148,17 +156,14 @@ export class AchievementsService {
 
       if (!normalizedTrainingType) {
         throw new BadRequestException(
-          'rule_config.training_type debe ser un tipo de entrenamiento vÃ¡lido',
+          'rule_config.training_type debe ser un tipo de entrenamiento válido',
         );
       }
 
       normalizedRuleConfig.training_type = normalizedTrainingType;
     }
 
-    if (
-      normalizedRuleConfig.training_type !== undefined &&
-      false
-    ) {
+    if (normalizedRuleConfig.training_type !== undefined && false) {
       throw new BadRequestException(
         'rule_config.training_type debe ser un tipo de entrenamiento válido',
       );
@@ -201,7 +206,9 @@ export class AchievementsService {
         : null);
 
     if (!nextCriteriaType) {
-      throw new BadRequestException('El logro tiene un criteria_type no soportado');
+      throw new BadRequestException(
+        'El logro tiene un criteria_type no soportado',
+      );
     }
 
     const nextRuleConfig =
@@ -217,7 +224,9 @@ export class AchievementsService {
 
     const data: Prisma.AchievementUpdateInput = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
-      ...(dto.description !== undefined ? { description: dto.description } : {}),
+      ...(dto.description !== undefined
+        ? { description: dto.description }
+        : {}),
       ...(dto.icon_url !== undefined ? { icon_url: dto.icon_url } : {}),
       ...(dto.criteria_type !== undefined
         ? { criteria_type: dto.criteria_type }
@@ -488,9 +497,9 @@ export class AchievementsService {
     switch (achievement.criteria_type) {
       case 'TRAINING_DAYS':
         return ruleConfig?.training_type
-          ? metrics.trainingDaysByType[
+          ? (metrics.trainingDaysByType[
               this.getTrainingTypeKey(ruleConfig.training_type)
-            ] ?? 0
+            ] ?? 0)
           : metrics.trainingDays;
       case 'STREAK_DAYS':
         return metrics.streakDays;
@@ -508,9 +517,10 @@ export class AchievementsService {
     achievements: AchievementRuleRecord[],
   ) {
     return achievements
-      .filter((achievement) =>
-        this.resolveAchievementProgress(achievement, metrics) >=
-        achievement.criteria_value,
+      .filter(
+        (achievement) =>
+          this.resolveAchievementProgress(achievement, metrics) >=
+          achievement.criteria_value,
       )
       .map((achievement) => achievement.id);
   }
@@ -525,7 +535,9 @@ export class AchievementsService {
       return { granted: 0, revoked: 0 };
     }
 
-    const scopedAchievementIds = achievements.map((achievement) => achievement.id);
+    const scopedAchievementIds = achievements.map(
+      (achievement) => achievement.id,
+    );
     const eligibleAchievementIds = this.buildEligibleAchievementIds(
       metrics,
       achievements,
@@ -608,7 +620,9 @@ export class AchievementsService {
       };
     }
 
-    const scopedAchievementIds = achievements.map((achievement) => achievement.id);
+    const scopedAchievementIds = achievements.map(
+      (achievement) => achievement.id,
+    );
     const results = await Promise.all(
       userIds.map((userId) =>
         this.evaluateAutomaticAchievementsForUser(
@@ -730,14 +744,19 @@ export class AchievementsService {
 
   async findAll(filters: AchievementFiltersDto) {
     const where: {
-      OR?: { name?: { contains: string; mode: 'insensitive' }; description?: { contains: string; mode: 'insensitive' } }[];
+      OR?: {
+        name?: { contains: string; mode: 'insensitive' };
+        description?: { contains: string; mode: 'insensitive' };
+      }[];
       criteria_type?: string;
     } = {};
 
     if (filters.search?.trim()) {
       where.OR = [
         { name: { contains: filters.search.trim(), mode: 'insensitive' } },
-        { description: { contains: filters.search.trim(), mode: 'insensitive' } },
+        {
+          description: { contains: filters.search.trim(), mode: 'insensitive' },
+        },
       ];
     }
 
@@ -867,29 +886,26 @@ export class AchievementsService {
     dto: UpdateAchievementDto,
     _admin: Pick<AuthenticatedUser, 'id' | 'role'>,
   ) {
-    const achievement = await this.prisma.achievement.findUnique({ where: { id } });
+    const achievement = await this.prisma.achievement.findUnique({
+      where: { id },
+    });
 
     if (!achievement) {
       throw new NotFoundException('Achievement not found');
     }
 
-    const {
-      data,
-      currentRuleConfig,
-      nextCriteriaType,
-      normalizedRuleConfig,
-    } = this.buildAchievementUpdateData(achievement, dto);
+    const { data, currentRuleConfig, nextCriteriaType, normalizedRuleConfig } =
+      this.buildAchievementUpdateData(achievement, dto);
     const wasAutomatic = achievement.criteria_type !== 'CUSTOM';
 
     const shouldRecompute =
       nextCriteriaType !== 'CUSTOM' &&
-      (
-        achievement.criteria_type !== nextCriteriaType ||
+      (achievement.criteria_type !== nextCriteriaType ||
         dto.criteria_value !== undefined ||
         JSON.stringify(currentRuleConfig ?? null) !==
-          JSON.stringify(normalizedRuleConfig ?? null)
-      );
-    const shouldClearGlobalUnlocks = nextCriteriaType === 'CUSTOM' && wasAutomatic;
+          JSON.stringify(normalizedRuleConfig ?? null));
+    const shouldClearGlobalUnlocks =
+      nextCriteriaType === 'CUSTOM' && wasAutomatic;
 
     const updatedAchievement = await this.prisma.achievement.update({
       where: { id },
@@ -897,7 +913,9 @@ export class AchievementsService {
     });
 
     if (shouldRecompute) {
-      await this.recomputeAutomaticAchievementsGlobally([updatedAchievement.id]);
+      await this.recomputeAutomaticAchievementsGlobally([
+        updatedAchievement.id,
+      ]);
     }
 
     if (shouldClearGlobalUnlocks) {
@@ -908,7 +926,9 @@ export class AchievementsService {
   }
 
   async remove(id: string) {
-    const achievement = await this.prisma.achievement.findUnique({ where: { id } });
+    const achievement = await this.prisma.achievement.findUnique({
+      where: { id },
+    });
 
     if (!achievement) {
       throw new NotFoundException('Achievement not found');

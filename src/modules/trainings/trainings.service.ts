@@ -200,7 +200,9 @@ export class TrainingsService {
     training: Partial<TrainingCatalogRecord>,
     normalizedTypes: string[],
   ): string {
-    return normalizedTypes[0] ?? this.normalizeCatalogValue(training.type ?? '');
+    return (
+      normalizedTypes[0] ?? this.normalizeCatalogValue(training.type ?? '')
+    );
   }
 
   private normalizeTrainingAccentColor(value: string | null | undefined) {
@@ -245,7 +247,7 @@ export class TrainingsService {
 
     if (!normalizedValue) {
       throw new BadRequestException(
-        'El tipo de entrenamiento no puede estar vacÃ­o',
+        'El tipo de entrenamiento no puede estar vací­o',
       );
     }
 
@@ -255,7 +257,11 @@ export class TrainingsService {
   private parseAchievementRuleConfig(
     ruleConfig: Prisma.JsonValue | null,
   ): AchievementRuleConfigLike | null {
-    if (!ruleConfig || typeof ruleConfig !== 'object' || Array.isArray(ruleConfig)) {
+    if (
+      !ruleConfig ||
+      typeof ruleConfig !== 'object' ||
+      Array.isArray(ruleConfig)
+    ) {
       return null;
     }
 
@@ -361,7 +367,10 @@ export class TrainingsService {
         training,
         currentTypes,
       );
-      const nextLegacyType = this.resolveLegacyTrainingType(training, nextTypes);
+      const nextLegacyType = this.resolveLegacyTrainingType(
+        training,
+        nextTypes,
+      );
       const shouldUpdateTypes = this.hasCatalogChanged(currentTypes, nextTypes);
       const shouldUpdateLegacyType = currentLegacyType !== nextLegacyType;
 
@@ -381,7 +390,9 @@ export class TrainingsService {
     });
 
     const achievementUpdates = achievements.flatMap((achievement) => {
-      const ruleConfig = this.parseAchievementRuleConfig(achievement.rule_config);
+      const ruleConfig = this.parseAchievementRuleConfig(
+        achievement.rule_config,
+      );
       const trainingType = ruleConfig?.training_type;
 
       if (
@@ -553,42 +564,44 @@ export class TrainingsService {
     const legacyType = this.resolveLegacyTrainingType(dto, normalizedTypes);
     const accentColor = this.normalizeTrainingAccentColor(dto.accentColor);
 
-    return this.prisma.$transaction(async (tx) => {
-      const training = await tx.training.create({
-        data: {
-          name: dto.name,
-          type: legacyType,
-          types: normalizedTypes,
-          accentColor,
-          level: dto.level,
-          estimated_duration_min: dto.estimated_duration_min ?? null,
-          estimated_calories: dto.estimated_calories ?? null,
-          warmup_description: dto.warmup_description ?? null,
-          warmup_duration_min: dto.warmup_duration_min ?? null,
-          cooldown_description: dto.cooldown_description ?? null,
-          tags: this.normalizeCatalogValues(dto.tags ?? []),
-          created_by: adminId,
-        },
-      });
-
-      if (dto.exercises && dto.exercises.length > 0) {
-        await tx.trainingExercise.createMany({
-          data: dto.exercises.map((ex) => ({
-            training_id: training.id,
-            exercise_id: ex.exercise_id,
-            order: ex.order,
-            sets: ex.sets,
-            reps_or_duration: ex.reps_or_duration,
-            rest_seconds: ex.rest_seconds ?? 60,
-          })),
+    return this.prisma
+      .$transaction(async (tx) => {
+        const training = await tx.training.create({
+          data: {
+            name: dto.name,
+            type: legacyType,
+            types: normalizedTypes,
+            accentColor,
+            level: dto.level,
+            estimated_duration_min: dto.estimated_duration_min ?? null,
+            estimated_calories: dto.estimated_calories ?? null,
+            warmup_description: dto.warmup_description ?? null,
+            warmup_duration_min: dto.warmup_duration_min ?? null,
+            cooldown_description: dto.cooldown_description ?? null,
+            tags: this.normalizeCatalogValues(dto.tags ?? []),
+            created_by: adminId,
+          },
         });
-      }
 
-      return tx.training.findUnique({
-        where: { id: training.id },
-        include: trainingExercisesInclude,
-      });
-    }).then((training) => this.serializeTraining(training!));
+        if (dto.exercises && dto.exercises.length > 0) {
+          await tx.trainingExercise.createMany({
+            data: dto.exercises.map((ex) => ({
+              training_id: training.id,
+              exercise_id: ex.exercise_id,
+              order: ex.order,
+              sets: ex.sets,
+              reps_or_duration: ex.reps_or_duration,
+              rest_seconds: ex.rest_seconds ?? 60,
+            })),
+          });
+        }
+
+        return tx.training.findUnique({
+          where: { id: training.id },
+          include: trainingExercisesInclude,
+        });
+      })
+      .then((training) => this.serializeTraining(training!));
   }
 
   async update(id: string, dto: UpdateTrainingDto) {
@@ -608,63 +621,65 @@ export class TrainingsService {
         ? this.normalizeTrainingAccentColor(dto.accentColor)
         : undefined;
 
-    return this.prisma.$transaction(async (tx) => {
-      await tx.training.update({
-        where: { id },
-        data: {
-          ...(dto.name !== undefined && { name: dto.name }),
-          ...(normalizedTypes !== null && {
-            type: legacyType!,
-            types: normalizedTypes,
-          }),
-          ...(dto.accentColor !== undefined && {
-            accentColor,
-          }),
-          ...(dto.level !== undefined && { level: dto.level }),
-          ...(dto.estimated_duration_min !== undefined && {
-            estimated_duration_min: dto.estimated_duration_min,
-          }),
-          ...(dto.estimated_calories !== undefined && {
-            estimated_calories: dto.estimated_calories,
-          }),
-          ...(dto.warmup_description !== undefined && {
-            warmup_description: dto.warmup_description,
-          }),
-          ...(dto.warmup_duration_min !== undefined && {
-            warmup_duration_min: dto.warmup_duration_min,
-          }),
-          ...(dto.cooldown_description !== undefined && {
-            cooldown_description: dto.cooldown_description,
-          }),
-          ...(dto.tags !== undefined && {
-            tags: this.normalizeCatalogValues(dto.tags),
-          }),
-        },
-      });
+    return this.prisma
+      .$transaction(async (tx) => {
+        await tx.training.update({
+          where: { id },
+          data: {
+            ...(dto.name !== undefined && { name: dto.name }),
+            ...(normalizedTypes !== null && {
+              type: legacyType!,
+              types: normalizedTypes,
+            }),
+            ...(dto.accentColor !== undefined && {
+              accentColor,
+            }),
+            ...(dto.level !== undefined && { level: dto.level }),
+            ...(dto.estimated_duration_min !== undefined && {
+              estimated_duration_min: dto.estimated_duration_min,
+            }),
+            ...(dto.estimated_calories !== undefined && {
+              estimated_calories: dto.estimated_calories,
+            }),
+            ...(dto.warmup_description !== undefined && {
+              warmup_description: dto.warmup_description,
+            }),
+            ...(dto.warmup_duration_min !== undefined && {
+              warmup_duration_min: dto.warmup_duration_min,
+            }),
+            ...(dto.cooldown_description !== undefined && {
+              cooldown_description: dto.cooldown_description,
+            }),
+            ...(dto.tags !== undefined && {
+              tags: this.normalizeCatalogValues(dto.tags),
+            }),
+          },
+        });
 
-      if (dto.exercises !== undefined) {
-        // Re-sync: delete all existing and recreate
-        await tx.trainingExercise.deleteMany({ where: { training_id: id } });
+        if (dto.exercises !== undefined) {
+          // Re-sync: delete all existing and recreate
+          await tx.trainingExercise.deleteMany({ where: { training_id: id } });
 
-        if (dto.exercises.length > 0) {
-          await tx.trainingExercise.createMany({
-            data: dto.exercises.map((ex) => ({
-              training_id: id,
-              exercise_id: ex.exercise_id,
-              order: ex.order,
-              sets: ex.sets,
-              reps_or_duration: ex.reps_or_duration,
-              rest_seconds: ex.rest_seconds ?? 60,
-            })),
-          });
+          if (dto.exercises.length > 0) {
+            await tx.trainingExercise.createMany({
+              data: dto.exercises.map((ex) => ({
+                training_id: id,
+                exercise_id: ex.exercise_id,
+                order: ex.order,
+                sets: ex.sets,
+                reps_or_duration: ex.reps_or_duration,
+                rest_seconds: ex.rest_seconds ?? 60,
+              })),
+            });
+          }
         }
-      }
 
-      return tx.training.findUnique({
-        where: { id },
-        include: trainingExercisesInclude,
-      });
-    }).then((training) => this.serializeTraining(training!));
+        return tx.training.findUnique({
+          where: { id },
+          include: trainingExercisesInclude,
+        });
+      })
+      .then((training) => this.serializeTraining(training!));
   }
 
   async remove(id: string) {
