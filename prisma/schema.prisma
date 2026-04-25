@@ -285,6 +285,7 @@ model TrainingExercise {
   order            Int
   sets             Int
   reps_or_duration String
+  /// Descanso entre series, en segundos.
   rest_seconds     Int    @default(60)
 
   training Training @relation(fields: [training_id], references: [id], onDelete: Cascade)

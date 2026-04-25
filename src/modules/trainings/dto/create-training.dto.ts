@@ -36,7 +36,10 @@ export class TrainingExerciseDto {
   @IsString()
   reps_or_duration: string;
 
-  @ApiPropertyOptional({ default: 60 })
+  @ApiPropertyOptional({
+    default: 60,
+    description: 'Descanso entre series del ejercicio, en segundos.',
+  })
   @IsOptional()
   @IsInt()
   @Min(0)
