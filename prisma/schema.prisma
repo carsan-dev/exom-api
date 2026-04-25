@@ -236,6 +236,8 @@ model Training {
   id                     String       @id @default(uuid())
   name                   String
   type                   String
+  types                  String[]     @default([])
+  accentColor            String?
   level                  Level        @default(PRINCIPIANTE)
   estimated_duration_min Int?
   estimated_calories     Int?
