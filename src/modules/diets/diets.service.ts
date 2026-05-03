@@ -339,6 +339,7 @@ export class DietsService {
   async findAll(query: DietsQueryDto) {
     const {
       search,
+      tags,
       nutritional_badges,
       meal_types,
       updated_from,
@@ -351,6 +352,7 @@ export class DietsService {
     const updatedAtRange = getDateRange(updated_from, updated_to);
     const where: Prisma.DietWhereInput = {
       is_active: true,
+      ...(tags?.length ? { tags: { hasSome: tags } } : {}),
       ...(nutritional_badges?.length || meal_types?.length
         ? {
             meals: {

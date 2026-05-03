@@ -21,9 +21,15 @@ function toArray(value: unknown): string[] | undefined {
         }
         return [];
       })
+      .map((entry) => entry.trim().replace(/\s+/g, ' '))
       .filter(Boolean);
   }
-  if (typeof value === 'string') return value.split(',').filter(Boolean);
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((entry) => entry.trim().replace(/\s+/g, ' '))
+      .filter(Boolean);
+  }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return [String(value)];
   }
@@ -46,6 +52,17 @@ export class DietsQueryDto extends PaginationDto {
   @IsArray()
   @IsString({ each: true })
   nutritional_badges?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Filter by internal diet tags (hasSome)',
+    isArray: true,
+    type: String,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toArray(value))
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @ApiPropertyOptional({
     description: 'Filter by meal types on meals (in)',
