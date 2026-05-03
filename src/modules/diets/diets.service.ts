@@ -218,6 +218,46 @@ export class DietsService {
     };
   }
 
+  private async mutateTags(
+    value: string,
+    mutateValues: (values: string[]) => string[],
+  ) {
+    const normalizedValue = this.normalizeCatalogValue(value);
+
+    if (!normalizedValue) {
+      throw new BadRequestException(
+        'El valor del catÃ¡logo no puede estar vacÃ­o',
+      );
+    }
+
+    const diets = await this.prisma.diet.findMany({
+      where: { is_active: true },
+      select: { id: true, tags: true },
+    });
+
+    const updates = diets.flatMap((diet) => {
+      const nextTags = mutateValues(diet.tags);
+
+      if (!this.hasCatalogChanged(diet.tags, nextTags)) {
+        return [];
+      }
+
+      return this.prisma.diet.update({
+        where: { id: diet.id },
+        data: { tags: nextTags },
+      });
+    });
+
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
+    }
+
+    return {
+      value: normalizedValue,
+      affected_count: updates.length,
+    };
+  }
+
   async findAllNutritionalBadges() {
     const meals = await this.prisma.meal.findMany({
       where: { diet: { is_active: true } },
@@ -229,6 +269,44 @@ export class DietsService {
         meals.map((meal) => meal.nutritional_badges),
       ),
     };
+  }
+
+  async findAllTags() {
+    const diets = await this.prisma.diet.findMany({
+      where: { is_active: true },
+      select: { tags: true },
+    });
+
+    return {
+      tags: this.collectUnique(diets.map((diet) => diet.tags)),
+    };
+  }
+
+  renameTag(from: string, to: string) {
+    const normalizedFrom = this.normalizeCatalogValue(from);
+    const normalizedTo = this.normalizeCatalogValue(to);
+
+    if (!normalizedFrom || !normalizedTo) {
+      throw new BadRequestException(
+        'Los valores del catÃ¡logo no pueden estar vacÃ­os',
+      );
+    }
+
+    if (
+      this.getCatalogKey(normalizedFrom) === this.getCatalogKey(normalizedTo)
+    ) {
+      throw new BadRequestException('El valor nuevo debe ser diferente');
+    }
+
+    return this.mutateTags(normalizedTo, (tags) =>
+      this.replaceCatalogValue(tags, normalizedFrom, normalizedTo),
+    );
+  }
+
+  deleteTag(value: string) {
+    return this.mutateTags(value, (tags) =>
+      this.removeCatalogValue(tags, value),
+    );
   }
 
   renameNutritionalBadge(from: string, to: string) {
@@ -342,7 +420,8 @@ export class DietsService {
       return null;
     }
 
-    return assignment.diet;
+    const { tags: _tags, ...clientDiet } = assignment.diet;
+    return clientDiet;
   }
 
   async findOne(id: string) {
@@ -363,6 +442,7 @@ export class DietsService {
       const diet = await tx.diet.create({
         data: {
           name: dto.name,
+          tags: this.normalizeCatalogValues(dto.tags ?? []),
           total_calories: dto.total_calories ?? null,
           total_protein_g: dto.total_protein_g ?? null,
           total_carbs_g: dto.total_carbs_g ?? null,
@@ -419,6 +499,9 @@ export class DietsService {
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.tags !== undefined && {
+            tags: this.normalizeCatalogValues(dto.tags),
+          }),
           ...(dto.total_calories !== undefined && {
             total_calories: dto.total_calories,
           }),

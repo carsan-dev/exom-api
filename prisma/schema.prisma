@@ -302,6 +302,7 @@ model TrainingExercise {
 model Diet {
   id              String   @id @default(uuid())
   name            String
+  tags            String[] @default([])
   total_calories  Int?
   total_protein_g Float?
   total_carbs_g   Float?

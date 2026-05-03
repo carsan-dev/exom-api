@@ -100,6 +100,12 @@ export class CreateDietDto {
   @IsNotEmpty()
   name: string;
 
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()

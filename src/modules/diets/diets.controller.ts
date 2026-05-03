@@ -25,6 +25,7 @@ import {
 import { DietsService } from './diets.service';
 import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
 import { DietNutritionalBadgesResponseDto } from './dto/diet-nutritional-badges-response.dto';
+import { DietTagsResponseDto } from './dto/diet-tags-response.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
 import {
@@ -80,6 +81,16 @@ export class DietsController {
     return this.dietsService.findAllNutritionalBadges();
   }
 
+  @Get('tags')
+  @ApiOperation({
+    summary: 'List all unique tags used by active diets',
+  })
+  @ApiOkResponse({ type: DietTagsResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  findAllTags() {
+    return this.dietsService.findAllTags();
+  }
+
   @Patch('nutritional-badges/rename')
   @ApiOperation({
     summary: 'Rename a nutritional badge across active diet meals',
@@ -98,6 +109,22 @@ export class DietsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   deleteNutritionalBadge(@Param('value') value: string) {
     return this.dietsService.deleteNutritionalBadge(value);
+  }
+
+  @Patch('tags/rename')
+  @ApiOperation({ summary: 'Rename a tag across active diets' })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  renameTag(@Body() dto: RenameCatalogValueDto) {
+    return this.dietsService.renameTag(dto.from, dto.to);
+  }
+
+  @Delete('tags/:value')
+  @ApiOperation({ summary: 'Remove a tag from all active diets' })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteTag(@Param('value') value: string) {
+    return this.dietsService.deleteTag(value);
   }
 
   @Get(':id')
