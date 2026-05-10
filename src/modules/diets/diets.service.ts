@@ -538,6 +538,8 @@ export class DietsService {
     meal: CreateMealDto | CreateMealVariantDto,
     parentMealId?: string,
   ): Prisma.MealCreateInput {
+    this.validateMealIngredientEquivalents(meal.ingredients);
+
     return {
       diet: { connect: { id: dietId } },
       ...(parentMealId ? { parent: { connect: { id: parentMealId } } } : {}),
@@ -557,9 +559,27 @@ export class DietsService {
           ingredient_id: ing.ingredient_id,
           quantity: ing.quantity,
           unit: ing.unit,
+          grams_equivalent:
+            ing.unit === 'g' ? ing.quantity : (ing.grams_equivalent ?? null),
         })),
       },
     };
+  }
+
+  private validateMealIngredientEquivalents(
+    ingredients: CreateMealDto['ingredients'],
+  ) {
+    const missingEquivalent = ingredients.some(
+      (ingredient) =>
+        ingredient.unit !== 'g' &&
+        (!ingredient.grams_equivalent || ingredient.grams_equivalent <= 0),
+    );
+
+    if (missingEquivalent) {
+      throw new BadRequestException(
+        'Las medidas caseras necesitan equivalente en gramos',
+      );
+    }
   }
 
   private async createMeals(

@@ -31,6 +31,12 @@ export class MealIngredientDto {
   @ApiProperty({ enum: MeasureUnit })
   @IsEnum(MeasureUnit)
   unit: MeasureUnit;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  grams_equivalent?: number;
 }
 
 class MealBaseDto {

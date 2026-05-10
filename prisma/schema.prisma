@@ -375,6 +375,7 @@ model MealIngredient {
   ingredient_id String
   quantity      Float
   unit          MeasureUnit @default(g)
+  grams_equivalent Float?
 
   meal       Meal       @relation(fields: [meal_id], references: [id], onDelete: Cascade)
   ingredient Ingredient @relation(fields: [ingredient_id], references: [id], onDelete: Restrict)

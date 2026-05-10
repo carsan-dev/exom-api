@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   ForbiddenException,
   NotFoundException,
@@ -53,6 +54,8 @@ export class MealsService {
   }
 
   async create(dietId: string, dto: CreateMealDto) {
+    this.validateMealIngredientEquivalents(dto.ingredients);
+
     return this.prisma.meal.create({
       data: {
         diet_id: dietId,
@@ -70,6 +73,8 @@ export class MealsService {
             ingredient_id: ing.ingredient_id,
             quantity: ing.quantity,
             unit: ing.unit,
+            grams_equivalent:
+              ing.unit === 'g' ? ing.quantity : (ing.grams_equivalent ?? null),
           })),
         },
       },
@@ -140,6 +145,22 @@ export class MealsService {
     if (diet.created_by !== adminId) {
       throw new ForbiddenException(
         'No tienes permiso para modificar esta dieta',
+      );
+    }
+  }
+
+  private validateMealIngredientEquivalents(
+    ingredients: CreateMealDto['ingredients'],
+  ) {
+    const missingEquivalent = ingredients.some(
+      (ingredient) =>
+        ingredient.unit !== 'g' &&
+        (!ingredient.grams_equivalent || ingredient.grams_equivalent <= 0),
+    );
+
+    if (missingEquivalent) {
+      throw new BadRequestException(
+        'Las medidas caseras necesitan equivalente en gramos',
       );
     }
   }
