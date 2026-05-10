@@ -8,7 +8,6 @@ ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'serving';
 ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'to_taste';
 
 ALTER TABLE "meals" ADD COLUMN "parent_meal_id" TEXT;
-ALTER TABLE "meal_ingredients" ADD COLUMN "grams_equivalent" DOUBLE PRECISION;
 
 ALTER TABLE "meals"
   ADD CONSTRAINT "meals_parent_meal_id_fkey"
