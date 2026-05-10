@@ -22,6 +22,7 @@ interface AssignmentContext {
   date: Date;
   trainingExerciseIds: Set<string>;
   mealIds: Set<string>;
+  mealGroupById: Map<string, string>;
 }
 
 @Injectable()
@@ -71,12 +72,14 @@ export class ProgressService {
         diet: {
           select: {
             meals: {
-              select: { id: true },
+              select: { id: true, parent_meal_id: true },
             },
           },
         },
       },
     });
+
+    const dietMeals = assignment?.diet?.meals ?? [];
 
     return {
       date,
@@ -85,7 +88,10 @@ export class ProgressService {
           (exercise) => exercise.exercise_id,
         ) ?? [],
       ),
-      mealIds: new Set(assignment?.diet?.meals.map((meal) => meal.id) ?? []),
+      mealIds: new Set(dietMeals.map((meal) => meal.id)),
+      mealGroupById: new Map(
+        dietMeals.map((meal) => [meal.id, meal.parent_meal_id ?? meal.id]),
+      ),
     };
   }
 
@@ -296,9 +302,15 @@ export class ProgressService {
     });
 
     const currentMeals: string[] = existing ? existing.meals_completed : [];
-    const updatedMeals = currentMeals.includes(dto.meal_id)
-      ? currentMeals
-      : [...currentMeals, dto.meal_id];
+    const targetGroupId =
+      assignment.mealGroupById.get(dto.meal_id) ?? dto.meal_id;
+    const updatedMeals = [
+      ...currentMeals.filter(
+        (mealId) =>
+          (assignment.mealGroupById.get(mealId) ?? mealId) !== targetGroupId,
+      ),
+      dto.meal_id,
+    ];
 
     const progress = await this.prisma.$transaction(async (tx) => {
       const result = await tx.dayProgress.upsert({

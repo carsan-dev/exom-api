@@ -148,4 +148,50 @@ describe('ProgressService', () => {
       { type: 'streak' },
     );
   });
+
+  it('replaces a completed meal variant with the selected sibling', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: null,
+      diet: {
+        meals: [
+          { id: 'meal-main', parent_meal_id: null },
+          { id: 'variant-1', parent_meal_id: 'meal-main' },
+          { id: 'variant-2', parent_meal_id: 'meal-main' },
+        ],
+      },
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      meals_completed: ['variant-1'],
+      exercises_completed: [],
+      notes: null,
+      training_completed: false,
+    });
+    prisma.dayProgress.upsert.mockResolvedValue({
+      id: 'progress-1',
+      meals_completed: ['variant-2'],
+    });
+
+    await expect(
+      service.markMealCompleted('client-1', {
+        date: '2026-05-10',
+        meal_id: 'variant-2',
+      }),
+    ).resolves.toEqual({
+      id: 'progress-1',
+      meals_completed: ['variant-2'],
+    });
+
+    expect(prisma.dayProgress.upsert).toHaveBeenCalledWith({
+      where: {
+        client_id_date: {
+          client_id: 'client-1',
+          date: new Date('2026-05-10T00:00:00.000Z'),
+        },
+      },
+      create: expect.any(Object),
+      update: {
+        meals_completed: ['variant-2'],
+      },
+    });
+  });
 });
