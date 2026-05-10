@@ -14,6 +14,16 @@ const mealInclude = {
       ingredient: true,
     },
   },
+  variants: {
+    orderBy: { order: 'asc' as const },
+    include: {
+      ingredients: {
+        include: {
+          ingredient: true,
+        },
+      },
+    },
+  },
 };
 
 @Injectable()

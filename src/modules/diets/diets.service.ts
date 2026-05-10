@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -6,11 +6,21 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
-import { CreateDietDto, UpdateDietDto } from './dto/create-diet.dto';
+import {
+  CreateDietDto,
+  CreateMealDto,
+  CreateMealVariantDto,
+  UpdateDietDto,
+} from './dto/create-diet.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
 
-const dietInclude = {
-  meals: {
+const mealInclude = {
+  ingredients: {
+    include: {
+      ingredient: true,
+    },
+  },
+  variants: {
     orderBy: { order: 'asc' as const },
     include: {
       ingredients: {
@@ -19,6 +29,14 @@ const dietInclude = {
         },
       },
     },
+  },
+};
+
+const dietInclude = {
+  meals: {
+    where: { parent_meal_id: null },
+    orderBy: { order: 'asc' as const },
+    include: mealInclude,
   },
 };
 
@@ -226,7 +244,7 @@ export class DietsService {
 
     if (!normalizedValue) {
       throw new BadRequestException(
-        'El valor del catÃ¡logo no puede estar vacÃ­o',
+        'El valor del catálogo no puede estar vacío',
       );
     }
 
@@ -288,7 +306,7 @@ export class DietsService {
 
     if (!normalizedFrom || !normalizedTo) {
       throw new BadRequestException(
-        'Los valores del catÃ¡logo no pueden estar vacÃ­os',
+        'Los valores del catálogo no pueden estar vacíos',
       );
     }
 
@@ -450,33 +468,15 @@ export class DietsService {
           total_carbs_g: dto.total_carbs_g ?? null,
           total_fat_g: dto.total_fat_g ?? null,
           created_by: adminId,
-          meals: {
-            create: dto.meals.map((meal) => ({
-              type: meal.type,
-              name: meal.name,
-              image_url: meal.image_url ?? null,
-              calories: meal.calories ?? null,
-              protein_g: meal.protein_g ?? null,
-              carbs_g: meal.carbs_g ?? null,
-              fat_g: meal.fat_g ?? null,
-              nutritional_badges: this.normalizeCatalogValues(
-                meal.nutritional_badges ?? [],
-              ),
-              order: meal.order ?? 0,
-              ingredients: {
-                create: meal.ingredients.map((ing) => ({
-                  ingredient_id: ing.ingredient_id,
-                  quantity: ing.quantity,
-                  unit: ing.unit,
-                })),
-              },
-            })),
-          },
         },
-        include: dietInclude,
       });
 
-      return diet;
+      await this.createMeals(tx, diet.id, dto.meals);
+
+      return tx.diet.findUniqueOrThrow({
+        where: { id: diet.id },
+        include: dietInclude,
+      });
     });
   }
 
@@ -485,19 +485,13 @@ export class DietsService {
 
     return this.prisma.$transaction(async (tx) => {
       if (dto.meals !== undefined) {
-        const existingMeals = await tx.meal.findMany({
-          where: { diet_id: id },
-          select: { id: true },
-        });
-        const mealIds = existingMeals.map((m) => m.id);
-
         await tx.mealIngredient.deleteMany({
-          where: { meal_id: { in: mealIds } },
+          where: { meal: { diet_id: id } },
         });
         await tx.meal.deleteMany({ where: { diet_id: id } });
       }
 
-      return tx.diet.update({
+      await tx.diet.update({
         where: { id },
         data: {
           ...(dto.name !== undefined && { name: dto.name }),
@@ -516,31 +510,15 @@ export class DietsService {
           ...(dto.total_fat_g !== undefined && {
             total_fat_g: dto.total_fat_g,
           }),
-          ...(dto.meals !== undefined && {
-            meals: {
-              create: dto.meals.map((meal) => ({
-                type: meal.type,
-                name: meal.name,
-                image_url: meal.image_url ?? null,
-                calories: meal.calories ?? null,
-                protein_g: meal.protein_g ?? null,
-                carbs_g: meal.carbs_g ?? null,
-                fat_g: meal.fat_g ?? null,
-                nutritional_badges: this.normalizeCatalogValues(
-                  meal.nutritional_badges ?? [],
-                ),
-                order: meal.order ?? 0,
-                ingredients: {
-                  create: meal.ingredients.map((ing) => ({
-                    ingredient_id: ing.ingredient_id,
-                    quantity: ing.quantity,
-                    unit: ing.unit,
-                  })),
-                },
-              })),
-            },
-          }),
         },
+      });
+
+      if (dto.meals !== undefined) {
+        await this.createMeals(tx, id, dto.meals);
+      }
+
+      return tx.diet.findUniqueOrThrow({
+        where: { id },
         include: dietInclude,
       });
     });
@@ -553,5 +531,54 @@ export class DietsService {
       where: { id },
       data: { is_active: false },
     });
+  }
+
+  private getMealCreateData(
+    dietId: string,
+    meal: CreateMealDto | CreateMealVariantDto,
+    parentMealId?: string,
+  ): Prisma.MealCreateInput {
+    return {
+      diet: { connect: { id: dietId } },
+      ...(parentMealId ? { parent: { connect: { id: parentMealId } } } : {}),
+      type: meal.type,
+      name: meal.name,
+      image_url: meal.image_url ?? null,
+      calories: meal.calories ?? null,
+      protein_g: meal.protein_g ?? null,
+      carbs_g: meal.carbs_g ?? null,
+      fat_g: meal.fat_g ?? null,
+      nutritional_badges: this.normalizeCatalogValues(
+        meal.nutritional_badges ?? [],
+      ),
+      order: meal.order ?? 0,
+      ingredients: {
+        create: meal.ingredients.map((ing) => ({
+          ingredient_id: ing.ingredient_id,
+          quantity: ing.quantity,
+          unit: ing.unit,
+        })),
+      },
+    };
+  }
+
+  private async createMeals(
+    tx: Prisma.TransactionClient,
+    dietId: string,
+    meals: CreateMealDto[],
+  ) {
+    for (const meal of meals) {
+      const createdMeal = await tx.meal.create({
+        data: this.getMealCreateData(dietId, meal),
+        select: { id: true },
+      });
+
+      for (const variant of meal.variants ?? []) {
+        await tx.meal.create({
+          data: this.getMealCreateData(dietId, variant, createdMeal.id),
+          select: { id: true },
+        });
+      }
+    }
   }
 }

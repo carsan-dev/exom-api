@@ -40,6 +40,14 @@ enum MeasureUnit {
   g
   ml
   piece
+  tablespoon
+  teaspoon
+  handful
+  glass
+  cup
+  pinch
+  serving
+  to_taste
 }
 
 enum ChallengeType {
@@ -321,6 +329,7 @@ model Diet {
 model Meal {
   id                 String   @id @default(uuid())
   diet_id            String
+  parent_meal_id     String?
   type               MealType
   name               String
   image_url          String?
@@ -334,8 +343,11 @@ model Meal {
   updated_at         DateTime @updatedAt
 
   diet        Diet             @relation(fields: [diet_id], references: [id], onDelete: Cascade)
+  parent      Meal?            @relation("MealVariants", fields: [parent_meal_id], references: [id], onDelete: Cascade)
+  variants    Meal[]           @relation("MealVariants")
   ingredients MealIngredient[]
 
+  @@index([parent_meal_id])
   @@map("meals")
 }
 

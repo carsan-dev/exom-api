@@ -33,7 +33,7 @@ export class MealIngredientDto {
   unit: MeasureUnit;
 }
 
-export class CreateMealDto {
+class MealBaseDto {
   @ApiProperty({ enum: MealType })
   @IsEnum(MealType)
   type: MealType;
@@ -91,6 +91,17 @@ export class CreateMealDto {
   @IsInt()
   @Min(0)
   order?: number = 0;
+}
+
+export class CreateMealVariantDto extends MealBaseDto {}
+
+export class CreateMealDto extends MealBaseDto {
+  @ApiPropertyOptional({ type: [CreateMealVariantDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateMealVariantDto)
+  variants?: CreateMealVariantDto[];
 }
 
 export class CreateDietDto {
