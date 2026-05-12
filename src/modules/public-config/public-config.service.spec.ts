@@ -5,7 +5,7 @@ import { PublicConfigService } from './public-config.service';
 const envValues: Record<string, string> = {
   APP_BASE_URL: 'https://exommethod.com',
   ANDROID_STORE_URL: 'https://play.google.com/store/apps/details?id=com.exommethod.exom',
-  IOS_STORE_URL: 'https://apps.apple.com/app/id0000000000',
+  IOS_STORE_URL: 'https://testflight.apple.com/',
   LATEST_ANDROID_VERSION: '1.0.0',
   LATEST_IOS_VERSION: '1.0.0',
   MIN_ANDROID_BUILD: '6',
@@ -50,6 +50,9 @@ describe('PublicConfigService', () => {
     prisma.mobileAppConfig.findUnique.mockResolvedValue(null);
 
     await expect(service.getMobileAppConfig()).resolves.toMatchObject({
+      android_store_url:
+        'https://play.google.com/store/apps/details?id=com.exommethod.exom',
+      ios_store_url: 'https://testflight.apple.com/',
       latest_android_version: '1.0.0',
       latest_ios_version: '1.0.0',
       min_android_build: 6,

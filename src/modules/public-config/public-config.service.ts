@@ -5,6 +5,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MobileAppConfigResponseDto } from './dto/mobile-app-config-response.dto';
 import { UpdateMobileReleaseDto } from './dto/update-mobile-release.dto';
 
+const DEFAULT_ANDROID_STORE_URL =
+  'https://play.google.com/store/apps/details?id=com.exommethod.exom';
+const DEFAULT_IOS_STORE_URL = 'https://testflight.apple.com/';
+
 @Injectable()
 export class PublicConfigService {
   private readonly configId = 'default';
@@ -83,9 +87,12 @@ export class PublicConfigService {
     return {
       android_store_url: this.config.get<string>(
         'ANDROID_STORE_URL',
-        `${appBaseUrl}/app`,
+        DEFAULT_ANDROID_STORE_URL,
       ),
-      ios_store_url: this.config.get<string>('IOS_STORE_URL', `${appBaseUrl}/app`),
+      ios_store_url: this.config.get<string>(
+        'IOS_STORE_URL',
+        DEFAULT_IOS_STORE_URL,
+      ),
       latest_android_version: this.config.get<string>('LATEST_ANDROID_VERSION', ''),
       latest_ios_version: this.config.get<string>('LATEST_IOS_VERSION', ''),
       min_android_build: this.getNumber('MIN_ANDROID_BUILD'),
