@@ -1,12 +1,80 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
 import { MobileAppConfigResponseDto } from './dto/mobile-app-config-response.dto';
+import { UpdateMobileReleaseDto } from './dto/update-mobile-release.dto';
 
 @Injectable()
 export class PublicConfigService {
-  constructor(private readonly config: ConfigService) {}
+  private readonly configId = 'default';
 
-  getMobileAppConfig(): MobileAppConfigResponseDto {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async getMobileAppConfig(): Promise<MobileAppConfigResponseDto> {
+    const stored = await this.prisma.mobileAppConfig.findUnique({
+      where: { id: this.configId },
+    });
+
+    if (stored) {
+      return {
+        android_store_url: stored.android_store_url,
+        ios_store_url: stored.ios_store_url,
+        latest_android_version: stored.latest_android_version,
+        latest_ios_version: stored.latest_ios_version,
+        min_android_build: stored.min_android_build,
+        min_ios_build: stored.min_ios_build,
+        recommended_android_build: stored.recommended_android_build,
+        recommended_ios_build: stored.recommended_ios_build,
+        force_android_update: stored.force_android_update,
+        force_ios_update: stored.force_ios_update,
+        update_title: stored.update_title,
+        update_message: stored.update_message,
+        support_url: stored.support_url,
+        privacy_policy_url: stored.privacy_policy_url,
+      };
+    }
+
+    return this.getEnvMobileAppConfig();
+  }
+
+  async updateMobileRelease(
+    dto: UpdateMobileReleaseDto,
+  ): Promise<MobileAppConfigResponseDto> {
+    const base = this.getEnvMobileAppConfig();
+    const createData: Prisma.MobileAppConfigCreateInput = {
+      id: this.configId,
+      ...base,
+    };
+
+    const stored = await this.prisma.mobileAppConfig.upsert({
+      where: { id: this.configId },
+      create: this.buildReleaseCreate(createData, dto),
+      update: this.buildReleaseUpdate(dto),
+    });
+
+    return {
+      android_store_url: stored.android_store_url,
+      ios_store_url: stored.ios_store_url,
+      latest_android_version: stored.latest_android_version,
+      latest_ios_version: stored.latest_ios_version,
+      min_android_build: stored.min_android_build,
+      min_ios_build: stored.min_ios_build,
+      recommended_android_build: stored.recommended_android_build,
+      recommended_ios_build: stored.recommended_ios_build,
+      force_android_update: stored.force_android_update,
+      force_ios_update: stored.force_ios_update,
+      update_title: stored.update_title,
+      update_message: stored.update_message,
+      support_url: stored.support_url,
+      privacy_policy_url: stored.privacy_policy_url,
+    };
+  }
+
+  private getEnvMobileAppConfig(): MobileAppConfigResponseDto {
     const appBaseUrl = this.config.get<string>(
       'APP_BASE_URL',
       'https://exommethod.com',
@@ -40,6 +108,69 @@ export class PublicConfigService {
         `${appBaseUrl}/privacy`,
       ),
     };
+  }
+
+  private buildReleaseUpdate(
+    dto: UpdateMobileReleaseDto,
+  ): Prisma.MobileAppConfigUpdateInput {
+    const isAndroid = dto.platform === 'android';
+    const update: Prisma.MobileAppConfigUpdateInput = isAndroid
+      ? { latest_android_version: dto.version }
+      : { latest_ios_version: dto.version };
+
+    if (dto.policy === 'none') {
+      return update;
+    }
+
+    if (isAndroid) {
+      update.recommended_android_build = dto.build;
+      update.force_android_update = dto.policy === 'blocking';
+      if (dto.policy === 'blocking') {
+        update.min_android_build = dto.build;
+      }
+      return update;
+    }
+
+    update.recommended_ios_build = dto.build;
+    update.force_ios_update = dto.policy === 'blocking';
+    if (dto.policy === 'blocking') {
+      update.min_ios_build = dto.build;
+    }
+    return update;
+  }
+
+  private buildReleaseCreate(
+    base: Prisma.MobileAppConfigCreateInput,
+    dto: UpdateMobileReleaseDto,
+  ): Prisma.MobileAppConfigCreateInput {
+    const create = { ...base };
+    const isAndroid = dto.platform === 'android';
+
+    if (isAndroid) {
+      create.latest_android_version = dto.version;
+    } else {
+      create.latest_ios_version = dto.version;
+    }
+
+    if (dto.policy === 'none') {
+      return create;
+    }
+
+    if (isAndroid) {
+      create.recommended_android_build = dto.build;
+      create.force_android_update = dto.policy === 'blocking';
+      if (dto.policy === 'blocking') {
+        create.min_android_build = dto.build;
+      }
+      return create;
+    }
+
+    create.recommended_ios_build = dto.build;
+    create.force_ios_update = dto.policy === 'blocking';
+    if (dto.policy === 'blocking') {
+      create.min_ios_build = dto.build;
+    }
+    return create;
   }
 
   private getNumber(key: string): number {

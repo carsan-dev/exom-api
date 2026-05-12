@@ -213,6 +213,28 @@ model NotificationTemplateSchedule {
   @@map("notification_template_schedules")
 }
 
+model MobileAppConfig {
+  id                        String   @id @default("default")
+  android_store_url         String   @default("")
+  ios_store_url             String   @default("")
+  latest_android_version    String   @default("")
+  latest_ios_version        String   @default("")
+  min_android_build         Int      @default(0)
+  min_ios_build             Int      @default(0)
+  recommended_android_build Int      @default(0)
+  recommended_ios_build     Int      @default(0)
+  force_android_update      Boolean  @default(false)
+  force_ios_update          Boolean  @default(false)
+  update_title              String   @default("Actualizacion disponible")
+  update_message            String   @default("Hay una nueva version de EXOM disponible.")
+  support_url               String   @default("")
+  privacy_policy_url        String   @default("")
+  created_at                DateTime @default(now())
+  updated_at                DateTime @updatedAt
+
+  @@map("mobile_app_config")
+}
+
 model ApprovalRequest {
   id               String         @id @default(uuid())
   requester_id     String
