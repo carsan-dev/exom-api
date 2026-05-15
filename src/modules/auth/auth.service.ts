@@ -5,11 +5,13 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 import { LoginDto, SocialLoginDto } from './dto/login.dto';
 
 class FirebasePasswordAuthError extends Error {
@@ -30,6 +32,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Optional() private readonly emailService?: EmailService,
   ) {
     this.maxAttempts = parseInt(this.config.get('LOGIN_MAX_ATTEMPTS', '3'));
     this.firebaseWebApiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
@@ -363,7 +366,14 @@ export class AuthService {
     const normalizedEmail = email.trim().toLowerCase();
 
     try {
-      await this.sendPasswordResetEmail(normalizedEmail);
+      if (this.emailService) {
+        await this.emailService.sendPasswordActionEmail(
+          normalizedEmail,
+          'password-reset',
+        );
+      } else {
+        await this.sendPasswordResetEmail(normalizedEmail);
+      }
     } catch (err) {
       // Do not reveal whether the email exists.
       this.logger.warn(`Password reset request failed silently: ${err}`);

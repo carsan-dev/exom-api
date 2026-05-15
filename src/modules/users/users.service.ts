@@ -5,11 +5,13 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
+import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   AdminClientsQueryDto,
@@ -111,6 +113,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly emailService?: EmailService,
   ) {}
 
   async findAll(
@@ -213,7 +216,7 @@ export class UsersService {
     });
 
     if (shouldSendInvitation) {
-      await this.sendPasswordResetEmail(email);
+      await this.sendInvitationEmail(email);
     }
 
     return this.serializeUserSummary(user);
@@ -269,7 +272,7 @@ export class UsersService {
     });
 
     if (shouldSendInvitation) {
-      await this.sendPasswordResetEmail(email);
+      await this.sendInvitationEmail(email);
     }
 
     if (currentUserRole === Role.ADMIN) {
@@ -900,6 +903,15 @@ export class UsersService {
     return randomBytes(24).toString('base64url').slice(0, 32);
   }
 
+  private async sendInvitationEmail(email: string): Promise<void> {
+    if (this.emailService) {
+      await this.emailService.sendPasswordActionEmail(email, 'invitation');
+      return;
+    }
+
+    await this.sendPasswordResetEmail(email);
+  }
+
   private async sendPasswordResetEmail(email: string): Promise<void> {
     const apiKey = process.env.FIREBASE_WEB_API_KEY;
     if (!apiKey) {
@@ -954,7 +966,7 @@ export class UsersService {
       await this.assertClientAccess(currentUserId, currentUserRole, targetUserId);
     }
 
-    await this.sendPasswordResetEmail(target.email);
+    await this.sendInvitationEmail(target.email);
     return { message: 'Invitación reenviada' };
   }
 
