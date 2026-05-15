@@ -360,14 +360,42 @@ export class AuthService {
   }
 
   async forgotPassword(email: string): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+
     try {
-      await admin.auth().getUserByEmail(email);
-      const resetLink = await admin.auth().generatePasswordResetLink(email);
-      this.logger.log(
-        `Password reset link generated for ${email}: ${resetLink}`,
-      );
-    } catch {
+      await this.sendPasswordResetEmail(normalizedEmail);
+    } catch (err) {
       // Do not reveal whether the email exists.
+      this.logger.warn(`Password reset request failed silently: ${err}`);
+    }
+  }
+
+  private async sendPasswordResetEmail(email: string) {
+    if (!this.firebaseWebApiKey) {
+      this.logger.warn('FIREBASE_WEB_API_KEY is not configured');
+      return;
+    }
+
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${this.firebaseWebApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestType: 'PASSWORD_RESET',
+          email,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      this.logger.error(
+        `Firebase password reset email failed: ${response.status} ${body}`,
+      );
+      throw new InternalServerErrorException(
+        'No se pudo enviar el email de recuperaci\u00f3n.',
+      );
     }
   }
 

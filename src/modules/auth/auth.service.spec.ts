@@ -262,4 +262,39 @@ describe('AuthService', () => {
       new UnauthorizedException('Usuario no encontrado'),
     );
   });
+
+  it('sends a password reset email through Firebase Auth', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+    });
+
+    await expect(
+      service.forgotPassword('  CLIENT@EXOM.DEV  '),
+    ).resolves.toBeUndefined();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=test-web-api-key',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(JSON.parse(request.body)).toEqual({
+      requestType: 'PASSWORD_RESET',
+      email: 'client@exom.dev',
+    });
+  });
+
+  it('does not reveal password reset delivery failures', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve('EMAIL_NOT_FOUND'),
+    });
+
+    await expect(
+      service.forgotPassword('missing@exom.dev'),
+    ).resolves.toBeUndefined();
+  });
 });
