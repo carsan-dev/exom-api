@@ -9,6 +9,7 @@ import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ApprovalInterceptor } from './common/interceptors/approval.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { initFirebase } from './config/firebase.config';
+import { UploadsService } from './modules/uploads/uploads.service';
 
 async function bootstrap() {
   // Initialize Firebase Admin SDK before everything
@@ -41,7 +42,7 @@ async function bootstrap() {
   // Global response transform interceptor
   const reflector = app.get(Reflector);
   app.useGlobalInterceptors(
-    new TransformInterceptor(),
+    new TransformInterceptor(app.get(UploadsService)),
     app.get(ApprovalInterceptor),
   );
 

@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
@@ -12,12 +17,17 @@ export class UploadsService {
   private readonly publicUrl: string;
   private readonly isDev: boolean;
   private readonly localUploadsDir: string;
+  private readonly signedReadExpiresIn: number;
 
   constructor(private readonly config: ConfigService) {
     this.bucket = this.config.get<string>('R2_BUCKET_NAME', '');
     this.publicUrl = this.config.get<string>('R2_PUBLIC_URL', '');
     this.isDev = this.config.get<string>('NODE_ENV') !== 'production';
     this.localUploadsDir = path.join(process.cwd(), 'uploads');
+    this.signedReadExpiresIn = parseInt(
+      this.config.get<string>('R2_SIGNED_READ_EXPIRES_SECONDS', '21600'),
+      10,
+    );
 
     this.s3Client = new S3Client({
       region: 'auto',
@@ -44,18 +54,45 @@ export class UploadsService {
       expiresIn,
     });
 
+    const file_url = this.buildStoredFileUrl(fileKey);
     return {
       upload_url,
-      file_url: `${this.publicUrl}/${fileKey}`,
+      file_url,
+      signed_read_url: await this.getSignedReadUrl(file_url),
       expires_at: new Date(Date.now() + expiresIn * 1000),
     };
+  }
+
+  async getSignedReadUrl(
+    fileUrl: string | null | undefined,
+    expiresIn: number = this.signedReadExpiresIn,
+  ): Promise<string | null> {
+    if (!fileUrl) {
+      return null;
+    }
+
+    if (this.isDev || fileUrl.includes('X-Amz-Signature=')) {
+      return fileUrl;
+    }
+
+    const fileKey = this.extractManagedFileKey(fileUrl);
+    if (!fileKey) {
+      return fileUrl;
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: fileKey,
+    });
+
+    return getSignedUrl(this.s3Client, command, { expiresIn });
   }
 
   async uploadFile(
     buffer: Buffer,
     fileKey: string,
     contentType: string,
-  ): Promise<{ file_url: string }> {
+  ): Promise<{ file_url: string; signed_read_url?: string | null }> {
     if (this.isDev) {
       return this.uploadFileLocal(buffer, fileKey);
     }
@@ -69,7 +106,11 @@ export class UploadsService {
 
     await this.s3Client.send(command);
 
-    return { file_url: `${this.publicUrl}/${fileKey}` };
+    const file_url = this.buildStoredFileUrl(fileKey);
+    return {
+      file_url,
+      signed_read_url: await this.getSignedReadUrl(file_url),
+    };
   }
 
   async deleteFileByUrl(fileUrl: string): Promise<boolean> {
@@ -117,12 +158,42 @@ export class UploadsService {
     return true;
   }
 
+  private buildStoredFileUrl(fileKey: string): string {
+    if (!this.publicUrl) {
+      return `r2://${fileKey}`;
+    }
+
+    return `${this.publicUrl}/${fileKey}`;
+  }
+
+  private extractManagedFileKey(fileUrl: string): string | null {
+    if (fileUrl.startsWith('r2://')) {
+      return fileUrl.slice('r2://'.length);
+    }
+
+    if (this.publicUrl && fileUrl.startsWith(`${this.publicUrl}/`)) {
+      return fileUrl.slice(this.publicUrl.length + 1);
+    }
+
+    const localMarker = '/uploads/local/';
+    const markerIndex = fileUrl.indexOf(localMarker);
+    if (markerIndex >= 0) {
+      return fileUrl.slice(markerIndex + localMarker.length);
+    }
+
+    return null;
+  }
+
   private extractFileKeyFromUrl(fileUrl: string): string | null {
     if (!fileUrl) {
       return null;
     }
 
-    if (fileUrl.startsWith(`${this.publicUrl}/`)) {
+    if (fileUrl.startsWith('r2://')) {
+      return fileUrl.slice('r2://'.length);
+    }
+
+    if (this.publicUrl && fileUrl.startsWith(`${this.publicUrl}/`)) {
       return fileUrl.slice(this.publicUrl.length + 1);
     }
 
