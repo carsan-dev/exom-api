@@ -78,32 +78,4 @@ export class UploadsController {
     return this.uploadsService.uploadFile(file.buffer, fileKey, contentType);
   }
 
-  @Post('exercise-video')
-  @ApiOperation({ summary: 'Transcode and upload an exercise video to R2' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @HttpCode(HttpStatus.OK)
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['file', 'file_key'],
-      properties: {
-        file: { type: 'string', format: 'binary' },
-        file_key: { type: 'string' },
-      },
-    },
-  })
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 500 * 1024 * 1024 } }))
-  uploadExerciseVideo(
-    @UploadedFile() file: Express.Multer.File,
-    @Body('file_key') fileKey: string,
-  ) {
-    if (!file) throw new BadRequestException('file is required');
-    if (!fileKey) throw new BadRequestException('file_key is required');
-
-    return this.uploadsService.transcodeAndUploadExerciseVideo(
-      file.buffer,
-      fileKey,
-    );
-  }
 }

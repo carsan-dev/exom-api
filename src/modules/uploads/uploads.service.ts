@@ -9,9 +9,6 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
 
 @Injectable()
 export class UploadsService {
@@ -114,98 +111,6 @@ export class UploadsService {
       file_url,
       signed_read_url: await this.getSignedReadUrl(file_url),
     };
-  }
-
-  async transcodeAndUploadExerciseVideo(
-    buffer: Buffer,
-    fileKey: string,
-  ): Promise<{ file_url: string; signed_read_url?: string | null }> {
-    const tempDir = await fs.promises.mkdtemp(
-      path.join(os.tmpdir(), 'exom-video-'),
-    );
-    const inputPath = path.join(tempDir, `${randomUUID()}.mov`);
-    const outputPath = path.join(tempDir, `${randomUUID()}.mp4`);
-
-    try {
-      await fs.promises.writeFile(inputPath, buffer);
-      await this.runFfmpeg(inputPath, outputPath);
-      const outputBuffer = await fs.promises.readFile(outputPath);
-
-      return this.uploadFile(outputBuffer, fileKey, 'video/mp4');
-    } finally {
-      await fs.promises.rm(tempDir, { recursive: true, force: true });
-    }
-  }
-
-  private runFfmpeg(inputPath: string, outputPath: string): Promise<void> {
-    const ffmpegPath = this.config.get<string>('FFMPEG_PATH', 'ffmpeg');
-    const args = [
-      '-y',
-      '-i',
-      inputPath,
-      '-vf',
-      [
-        'zscale=t=linear:npl=100',
-        'format=gbrpf32le',
-        'zscale=p=bt709',
-        'tonemap=tonemap=hable:desat=0',
-        'zscale=t=bt709:m=bt709:r=tv',
-        "scale='if(gt(iw,ih),-2,1080)':'if(gt(iw,ih),1080,-2)':flags=lanczos",
-        'format=yuv420p',
-      ].join(','),
-      '-c:v',
-      'libx264',
-      '-preset',
-      'fast',
-      '-profile:v',
-      'high',
-      '-level:v',
-      '4.1',
-      '-colorspace',
-      'bt709',
-      '-color_primaries',
-      'bt709',
-      '-color_trc',
-      'bt709',
-      '-color_range',
-      'tv',
-      '-b:v',
-      '3500k',
-      '-maxrate',
-      '4400k',
-      '-bufsize',
-      '8750k',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '96k',
-      '-movflags',
-      '+faststart',
-      outputPath,
-    ];
-
-    return new Promise((resolve, reject) => {
-      const child = spawn(ffmpegPath, args, { windowsHide: true });
-      let stderr = '';
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      child.on('error', reject);
-      child.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-
-        reject(
-          new Error(
-            `ffmpeg failed with code ${code}: ${stderr.slice(-2000)}`,
-          ),
-        );
-      });
-    });
   }
 
   async deleteFileByUrl(fileUrl: string): Promise<boolean> {
