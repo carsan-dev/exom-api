@@ -43,6 +43,11 @@ enum MeasureUnit {
   tablespoon
   teaspoon
   handful
+  slice
+  palm
+  fist
+  ladle
+  cold_cut_slice
   glass
   cup
   pinch

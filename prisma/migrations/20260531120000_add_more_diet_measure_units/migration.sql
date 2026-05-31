@@ -1,0 +1,5 @@
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'slice';
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'palm';
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'fist';
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'ladle';
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'cold_cut_slice';
