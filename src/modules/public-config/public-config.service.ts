@@ -7,7 +7,7 @@ import { UpdateMobileReleaseDto } from './dto/update-mobile-release.dto';
 
 const DEFAULT_ANDROID_STORE_URL =
   'https://play.google.com/store/apps/details?id=com.exommethod.exom';
-const DEFAULT_IOS_STORE_URL = 'https://testflight.apple.com/';
+const DEFAULT_IOS_STORE_URL = 'https://apps.apple.com/es/app/exom/id6763056692';
 
 @Injectable()
 export class PublicConfigService {
