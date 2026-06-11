@@ -31,6 +31,13 @@ describe('PublicConfigService', () => {
   };
 
   beforeEach(() => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        resultCount: 1,
+        results: [{ version: '1.0.0' }],
+      }),
+    } as unknown as Response);
     prisma = {
       mobileAppConfig: {
         findUnique: jest.fn(),
@@ -44,6 +51,10 @@ describe('PublicConfigService', () => {
       config as unknown as ConfigService,
       prisma as unknown as PrismaService,
     );
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it('falls back to environment config when no database row exists', async () => {
@@ -192,5 +203,71 @@ describe('PublicConfigService', () => {
         },
       }),
     );
+  });
+
+  it('suppresses ios update prompts until the App Store publishes the configured version', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        resultCount: 1,
+        results: [{ version: '1.0.0' }],
+      }),
+    });
+    prisma.mobileAppConfig.findUnique.mockResolvedValue({
+      android_store_url: 'android-url',
+      ios_store_url: 'ios-url',
+      latest_android_version: '1.0.0',
+      latest_ios_version: '1.0.1',
+      min_android_build: 0,
+      min_ios_build: 59,
+      recommended_android_build: 0,
+      recommended_ios_build: 59,
+      force_android_update: false,
+      force_ios_update: true,
+      update_title: 'Update',
+      update_message: 'Message',
+      support_url: 'support',
+      privacy_policy_url: 'privacy',
+    });
+
+    await expect(service.getMobileAppConfig()).resolves.toMatchObject({
+      latest_ios_version: '1.0.1',
+      min_ios_build: 0,
+      recommended_ios_build: 0,
+      force_ios_update: false,
+    });
+  });
+
+  it('keeps ios update prompts when the configured version is already public', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({
+        resultCount: 1,
+        results: [{ version: '1.0.1' }],
+      }),
+    });
+    prisma.mobileAppConfig.findUnique.mockResolvedValue({
+      android_store_url: 'android-url',
+      ios_store_url: 'ios-url',
+      latest_android_version: '1.0.0',
+      latest_ios_version: '1.0.1',
+      min_android_build: 0,
+      min_ios_build: 59,
+      recommended_android_build: 0,
+      recommended_ios_build: 59,
+      force_android_update: false,
+      force_ios_update: true,
+      update_title: 'Update',
+      update_message: 'Message',
+      support_url: 'support',
+      privacy_policy_url: 'privacy',
+    });
+
+    await expect(service.getMobileAppConfig()).resolves.toMatchObject({
+      latest_ios_version: '1.0.1',
+      min_ios_build: 59,
+      recommended_ios_build: 59,
+      force_ios_update: true,
+    });
   });
 });

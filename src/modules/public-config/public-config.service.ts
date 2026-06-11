@@ -8,6 +8,8 @@ import { UpdateMobileReleaseDto } from './dto/update-mobile-release.dto';
 const DEFAULT_ANDROID_STORE_URL =
   'https://play.google.com/store/apps/details?id=com.exommethod.exom';
 const DEFAULT_IOS_STORE_URL = 'https://apps.apple.com/es/app/exom/id6763056692';
+const APP_STORE_LOOKUP_URL = 'https://itunes.apple.com/lookup';
+const DEFAULT_IOS_APP_STORE_ID = '6763056692';
 
 @Injectable()
 export class PublicConfigService {
@@ -24,7 +26,7 @@ export class PublicConfigService {
     });
 
     if (stored) {
-      return {
+      return this.gateIosUpdateByPublishedVersion({
         android_store_url: stored.android_store_url,
         ios_store_url: stored.ios_store_url,
         latest_android_version: stored.latest_android_version,
@@ -39,10 +41,10 @@ export class PublicConfigService {
         update_message: stored.update_message,
         support_url: stored.support_url,
         privacy_policy_url: stored.privacy_policy_url,
-      };
+      });
     }
 
-    return this.getEnvMobileAppConfig();
+    return this.gateIosUpdateByPublishedVersion(this.getEnvMobileAppConfig());
   }
 
   async updateMobileRelease(
@@ -115,6 +117,72 @@ export class PublicConfigService {
         `${appBaseUrl}/privacy`,
       ),
     };
+  }
+
+  private async gateIosUpdateByPublishedVersion(
+    config: MobileAppConfigResponseDto,
+  ): Promise<MobileAppConfigResponseDto> {
+    if (
+      !config.latest_ios_version ||
+      (config.recommended_ios_build <= 0 && config.min_ios_build <= 0)
+    ) {
+      return config;
+    }
+
+    const publishedVersion = await this.fetchPublishedIosVersion();
+
+    if (!publishedVersion || !this.isSameVersion(publishedVersion, config.latest_ios_version)) {
+      return {
+        ...config,
+        min_ios_build: 0,
+        recommended_ios_build: 0,
+        force_ios_update: false,
+      };
+    }
+
+    return config;
+  }
+
+  private async fetchPublishedIosVersion(): Promise<string | null> {
+    const appStoreId = this.config.get<string>(
+      'IOS_APP_STORE_ID',
+      DEFAULT_IOS_APP_STORE_ID,
+    );
+    const country = this.config.get<string>('IOS_APP_STORE_COUNTRY', 'es');
+    const url = `${APP_STORE_LOOKUP_URL}?id=${encodeURIComponent(appStoreId)}&country=${encodeURIComponent(country)}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const payload = (await response.json()) as {
+        resultCount?: number;
+        results?: Array<{ version?: unknown }>;
+      };
+
+      if (!payload.resultCount || !Array.isArray(payload.results)) {
+        return null;
+      }
+
+      const version = payload.results[0]?.version;
+      return typeof version === 'string' && version.trim()
+        ? version.trim()
+        : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private isSameVersion(left: string, right: string) {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
   }
 
   private buildReleaseUpdate(
