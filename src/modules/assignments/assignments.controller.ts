@@ -20,6 +20,10 @@ import {
 } from '@nestjs/swagger';
 import { AssignmentsService } from './assignments.service';
 import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
+import {
+  CreateAutoAssignmentRuleDto,
+  GetActiveAutoAssignmentRuleQueryDto,
+} from './dto/auto-assignment-rule.dto';
 import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
@@ -34,6 +38,46 @@ import { Role } from '@prisma/client';
 @Controller('assignments')
 export class AssignmentsController {
   constructor(private readonly assignmentsService: AssignmentsService) {}
+
+  @Post('auto-rules')
+  @ApiOperation({ summary: 'Create or replace the active weekly auto-assignment rule' })
+  @ApiOkResponse({ description: 'Auto-assignment rule saved successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid auto-assignment payload' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiNotFoundResponse({ description: 'Client, training, or diet not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  createAutoRule(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateAutoAssignmentRuleDto,
+  ) {
+    return this.assignmentsService.createAutoRule(user, dto);
+  }
+
+  @Get('auto-rules/active')
+  @ApiOperation({ summary: 'Get the active weekly auto-assignment rule for a client' })
+  @ApiOkResponse({ description: 'Active auto-assignment rule fetched successfully' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiNotFoundResponse({ description: 'Client not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  getActiveAutoRule(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: GetActiveAutoAssignmentRuleQueryDto,
+  ) {
+    return this.assignmentsService.getActiveAutoRule(user, query);
+  }
+
+  @Put('auto-rules/:id/deactivate')
+  @ApiOperation({ summary: 'Deactivate a weekly auto-assignment rule' })
+  @ApiOkResponse({ description: 'Auto-assignment rule deactivated successfully' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiNotFoundResponse({ description: 'Auto-assignment rule not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deactivateAutoRule(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.assignmentsService.deactivateAutoRule(user, id);
+  }
 
   @Post('batch')
   @ApiOperation({ summary: 'Assign training/diet/rest day combinations per date' })

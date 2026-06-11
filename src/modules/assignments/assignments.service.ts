@@ -8,6 +8,10 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  CreateAutoAssignmentRuleDto,
+  GetActiveAutoAssignmentRuleQueryDto,
+} from './dto/auto-assignment-rule.dto';
 import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
 import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
@@ -39,6 +43,36 @@ const assignmentInclude = {
       total_protein_g: true,
       total_carbs_g: true,
       total_fat_g: true,
+    },
+  },
+};
+
+const autoAssignmentRuleInclude = {
+  days: {
+    orderBy: { weekday: 'asc' as const },
+    include: {
+      training: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          types: true,
+          accentColor: true,
+          level: true,
+          estimated_duration_min: true,
+          estimated_calories: true,
+        },
+      },
+      diet: {
+        select: {
+          id: true,
+          name: true,
+          total_calories: true,
+          total_protein_g: true,
+          total_carbs_g: true,
+          total_fat_g: true,
+        },
+      },
     },
   },
 };
@@ -83,6 +117,28 @@ interface AssignmentRange {
 interface AssignmentMonthRange extends AssignmentRange {
   year: number;
   month: number;
+}
+
+interface AutoAssignmentRuleDayRecord {
+  id: string;
+  weekday: number;
+  training_id: string | null;
+  diet_id: string | null;
+  is_rest_day: boolean;
+  training: AssignmentTrainingSummary | null;
+  diet: AssignmentDietSummary | null;
+}
+
+interface AutoAssignmentRuleRecord {
+  id: string;
+  client_id: string;
+  admin_id: string | null;
+  source_week_start: Date;
+  starts_on: Date;
+  ends_on: Date | null;
+  is_active: boolean;
+  deactivated_at: Date | null;
+  days: AutoAssignmentRuleDayRecord[];
 }
 
 @Injectable()
@@ -458,6 +514,235 @@ export class AssignmentsService {
     });
   }
 
+  private isoWeekday(date: Date) {
+    const weekday = date.getUTCDay();
+    return weekday === 0 ? 7 : weekday;
+  }
+
+  private serializeAutoRule(rule: AutoAssignmentRuleRecord | null) {
+    if (!rule) {
+      return null;
+    }
+
+    return {
+      id: rule.id,
+      client_id: rule.client_id,
+      admin_id: rule.admin_id,
+      source_week_start: this.formatDate(rule.source_week_start),
+      starts_on: this.formatDate(rule.starts_on),
+      ends_on: rule.ends_on ? this.formatDate(rule.ends_on) : null,
+      is_active: rule.is_active,
+      deactivated_at: rule.deactivated_at?.toISOString() ?? null,
+      days: rule.days.map((day) => ({
+        id: day.id,
+        weekday: day.weekday,
+        training_id: day.training_id,
+        diet_id: day.diet_id,
+        is_rest_day: day.is_rest_day,
+        training: this.serializeAssignmentTraining(day.training),
+        diet: day.diet,
+      })),
+    };
+  }
+
+  private async materializeAutoAssignmentsForRange(
+    clientId: string,
+    range: AssignmentRange,
+  ) {
+    const activeRules = await this.prisma.autoAssignmentRule.findMany({
+      where: {
+        client_id: clientId,
+        is_active: true,
+        starts_on: { lte: range.end },
+        OR: [{ ends_on: null }, { ends_on: { gte: range.start } }],
+      },
+      include: { days: true },
+      orderBy: { created_at: 'asc' },
+    });
+
+    if (activeRules.length === 0) {
+      return;
+    }
+
+    const existingAssignments = await this.prisma.planAssignment.findMany({
+      where: {
+        client_id: clientId,
+        date: {
+          gte: range.start,
+          lte: range.end,
+        },
+      },
+      select: { date: true },
+    });
+    const occupiedDates = new Set(
+      existingAssignments.map((assignment) => this.formatDate(assignment.date)),
+    );
+    const createOperations: Array<
+      ReturnType<typeof this.prisma.planAssignment.create>
+    > = [];
+
+    for (const rule of activeRules) {
+      const ruleDays = new Map(rule.days.map((day) => [day.weekday, day]));
+
+      for (const date of range.dates) {
+        const dateKey = this.formatDate(date);
+
+        if (occupiedDates.has(dateKey)) {
+          continue;
+        }
+
+        if (date < rule.starts_on || (rule.ends_on && date > rule.ends_on)) {
+          continue;
+        }
+
+        const day = ruleDays.get(this.isoWeekday(date));
+
+        if (!day) {
+          continue;
+        }
+
+        createOperations.push(
+          this.prisma.planAssignment.create({
+            data: {
+              client_id: clientId,
+              admin_id: rule.admin_id,
+              date,
+              training_id: day.is_rest_day ? null : day.training_id,
+              diet_id: day.is_rest_day ? null : day.diet_id,
+              is_rest_day: day.is_rest_day,
+              auto_assignment_rule_id: rule.id,
+            },
+          }),
+        );
+        occupiedDates.add(dateKey);
+      }
+    }
+
+    if (createOperations.length > 0) {
+      await this.prisma.$transaction(createOperations);
+    }
+  }
+
+  async createAutoRule(
+    user: AuthenticatedUser,
+    dto: CreateAutoAssignmentRuleDto,
+  ) {
+    await this.assertClientAccess(user, dto.client_id);
+
+    const sourceWeek = this.buildWeekRange(dto.source_week_start);
+    const startsOn = this.parseDate(dto.starts_on);
+    const endsOn = dto.ends_on ? this.parseDate(dto.ends_on) : null;
+
+    if (endsOn && endsOn < startsOn) {
+      throw new BadRequestException(
+        'La fecha fin debe ser posterior o igual a la fecha de inicio',
+      );
+    }
+
+    const uniqueWeekdays = new Set<number>();
+    const normalizedDays = dto.days
+      .map((day) => ({
+        weekday: day.weekday,
+        ...this.normalizeAssignmentInput(day),
+      }))
+      .sort((left, right) => left.weekday - right.weekday);
+
+    for (const day of normalizedDays) {
+      if (uniqueWeekdays.has(day.weekday)) {
+        throw new BadRequestException(
+          'No puedes configurar dos autoasignaciones para el mismo día de la semana',
+        );
+      }
+
+      uniqueWeekdays.add(day.weekday);
+    }
+
+    await Promise.all(
+      normalizedDays.map((day) =>
+        this.validatePlanReferences(day.training_id, day.diet_id),
+      ),
+    );
+
+    const [, rule] = await this.prisma.$transaction([
+      this.prisma.autoAssignmentRule.updateMany({
+        where: {
+          client_id: dto.client_id,
+          is_active: true,
+        },
+        data: {
+          is_active: false,
+          deactivated_at: new Date(),
+        },
+      }),
+      this.prisma.autoAssignmentRule.create({
+        data: {
+          client_id: dto.client_id,
+          admin_id: user.id,
+          source_week_start: sourceWeek.start,
+          starts_on: startsOn,
+          ends_on: endsOn,
+          days: {
+            create: normalizedDays.map((day) => ({
+              weekday: day.weekday,
+              training_id: day.training_id,
+              diet_id: day.diet_id,
+              is_rest_day: day.is_rest_day,
+            })),
+          },
+        },
+        include: autoAssignmentRuleInclude,
+      }),
+    ]);
+
+    return this.serializeAutoRule(rule);
+  }
+
+  async getActiveAutoRule(
+    user: AuthenticatedUser,
+    query: GetActiveAutoAssignmentRuleQueryDto,
+  ) {
+    await this.assertClientAccess(user, query.client_id);
+
+    const rule = await this.prisma.autoAssignmentRule.findFirst({
+      where: {
+        client_id: query.client_id,
+        is_active: true,
+      },
+      include: autoAssignmentRuleInclude,
+      orderBy: { created_at: 'desc' },
+    });
+
+    return this.serializeAutoRule(rule);
+  }
+
+  async deactivateAutoRule(user: AuthenticatedUser, ruleId: string) {
+    const rule = await this.prisma.autoAssignmentRule.findUnique({
+      where: { id: ruleId },
+      select: {
+        id: true,
+        client_id: true,
+        is_active: true,
+      },
+    });
+
+    if (!rule) {
+      throw new NotFoundException('Autoasignación no encontrada');
+    }
+
+    await this.assertClientAccess(user, rule.client_id);
+
+    const updatedRule = await this.prisma.autoAssignmentRule.update({
+      where: { id: ruleId },
+      data: {
+        is_active: false,
+        deactivated_at: new Date(),
+      },
+      include: autoAssignmentRuleInclude,
+    });
+
+    return this.serializeAutoRule(updatedRule);
+  }
+
   async bulkAssign(user: AuthenticatedUser, dto: BulkAssignmentDto) {
     await this.assertClientAccess(user, dto.client_id);
 
@@ -701,6 +986,7 @@ export class AssignmentsService {
     await this.assertClientAccess(user, query.client_id);
 
     const weekRange = this.buildWeekRange(query.week_start);
+    await this.materializeAutoAssignmentsForRange(query.client_id, weekRange);
     const assignments = await this.getAssignmentsForRange(query.client_id, weekRange);
 
     return this.serializeWeekAssignments(query.client_id, weekRange, assignments);
@@ -710,6 +996,7 @@ export class AssignmentsService {
     await this.assertClientAccess(user, query.client_id);
 
     const monthRange = this.buildMonthRange(query.year, query.month);
+    await this.materializeAutoAssignmentsForRange(query.client_id, monthRange);
     const assignments = await this.getAssignmentsForRange(query.client_id, monthRange);
 
     return this.serializeMonthAssignments(query.client_id, monthRange, assignments);

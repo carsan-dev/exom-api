@@ -288,6 +288,7 @@ model Training {
 
   exercises   TrainingExercise[]
   assignments PlanAssignment[]
+  autoAssignmentRuleDays AutoAssignmentRuleDay[]
 
   @@map("trainings")
 }
@@ -349,6 +350,7 @@ model Diet {
 
   meals       Meal[]
   assignments PlanAssignment[]
+  autoAssignmentRuleDays AutoAssignmentRuleDay[]
 
   @@map("diets")
 }
@@ -420,6 +422,7 @@ model PlanAssignment {
   date        DateTime @db.Date
   training_id String?
   diet_id     String?
+  auto_assignment_rule_id String?
   is_rest_day Boolean  @default(false)
   notes       String?
   created_at  DateTime @default(now())
@@ -427,9 +430,46 @@ model PlanAssignment {
 
   training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
   diet     Diet?     @relation(fields: [diet_id], references: [id], onDelete: SetNull)
+  autoAssignmentRule AutoAssignmentRule? @relation(fields: [auto_assignment_rule_id], references: [id], onDelete: SetNull)
 
   @@unique([client_id, date])
+  @@index([auto_assignment_rule_id])
   @@map("plan_assignments")
+}
+
+model AutoAssignmentRule {
+  id                String   @id @default(uuid())
+  client_id         String
+  admin_id          String?
+  source_week_start DateTime @db.Date
+  starts_on         DateTime @db.Date
+  ends_on           DateTime? @db.Date
+  is_active         Boolean  @default(true)
+  deactivated_at    DateTime?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  days        AutoAssignmentRuleDay[]
+  assignments PlanAssignment[]
+
+  @@index([client_id, is_active, starts_on, ends_on])
+  @@map("auto_assignment_rules")
+}
+
+model AutoAssignmentRuleDay {
+  id          String  @id @default(uuid())
+  rule_id     String
+  weekday     Int
+  training_id String?
+  diet_id     String?
+  is_rest_day Boolean @default(false)
+
+  rule     AutoAssignmentRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  training Training?          @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  diet     Diet?              @relation(fields: [diet_id], references: [id], onDelete: SetNull)
+
+  @@unique([rule_id, weekday])
+  @@map("auto_assignment_rule_days")
 }
 
 model DayProgress {
