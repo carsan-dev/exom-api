@@ -1,0 +1,2 @@
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'bowl';
+ALTER TYPE "MeasureUnit" ADD VALUE IF NOT EXISTS 'finger';

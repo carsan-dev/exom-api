@@ -50,6 +50,8 @@ enum MeasureUnit {
   cold_cut_slice
   glass
   cup
+  bowl
+  finger
   pinch
   serving
   to_taste
