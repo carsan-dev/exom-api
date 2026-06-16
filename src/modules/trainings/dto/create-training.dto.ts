@@ -212,11 +212,16 @@ export class CreateTrainingDto {
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
-  @Type((options) =>
-    options?.object?.kind === 'CIRCUIT'
-      ? TrainingCircuitItemDto
-      : TrainingItemExerciseDto,
-  )
+  @Type(() => Object, {
+    discriminator: {
+      property: 'kind',
+      subTypes: [
+        { name: 'EXERCISE', value: TrainingItemExerciseDto },
+        { name: 'CIRCUIT', value: TrainingCircuitItemDto },
+      ],
+    },
+    keepDiscriminatorProperty: true,
+  })
   items?: Array<TrainingItemExerciseDto | TrainingCircuitItemDto>;
 }
 
