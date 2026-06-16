@@ -11,6 +11,7 @@ import {
   Min,
   IsNotEmpty,
   Matches,
+  IsIn,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Level } from '@prisma/client';
@@ -62,6 +63,66 @@ export class TrainingExerciseDto {
   @IsInt()
   @Min(0)
   rest_seconds?: number = 60;
+}
+
+export class TrainingItemExerciseDto extends TrainingExerciseDto {
+  @ApiProperty({ enum: ['EXERCISE'] })
+  @IsIn(['EXERCISE'])
+  kind: 'EXERCISE';
+}
+
+export class TrainingCircuitExerciseDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  exercise_id: string;
+
+  @ApiProperty()
+  @IsString()
+  reps_or_duration: string;
+
+  @ApiPropertyOptional({
+    default: 15,
+    description: 'Descanso tras el ejercicio dentro del circuito, en segundos.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  rest_seconds?: number = 15;
+}
+
+export class TrainingCircuitItemDto {
+  @ApiProperty({ enum: ['CIRCUIT'] })
+  @IsIn(['CIRCUIT'])
+  kind: 'CIRCUIT';
+
+  @ApiProperty()
+  @IsInt()
+  @Min(0)
+  order: number;
+
+  @ApiPropertyOptional({ default: 'Circuito' })
+  @IsOptional()
+  @IsString()
+  name?: string | null;
+
+  @ApiProperty({ default: 3 })
+  @IsInt()
+  @Min(1)
+  rounds: number;
+
+  @ApiPropertyOptional({ default: 60 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  rest_between_rounds_seconds?: number = 60;
+
+  @ApiProperty({ type: [TrainingCircuitExerciseDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => TrainingCircuitExerciseDto)
+  exercises: TrainingCircuitExerciseDto[];
 }
 
 export class CreateTrainingDto {
@@ -136,11 +197,27 @@ export class CreateTrainingDto {
   @IsString({ each: true })
   tags?: string[];
 
-  @ApiProperty({ type: [TrainingExerciseDto] })
+  @ApiPropertyOptional({ type: [TrainingExerciseDto] })
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => TrainingExerciseDto)
-  exercises: TrainingExerciseDto[];
+  exercises?: TrainingExerciseDto[];
+
+  @ApiPropertyOptional({
+    description: 'Lista mixta de ejercicios sueltos y circuitos.',
+    type: [Object],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type((options) =>
+    options?.object?.kind === 'CIRCUIT'
+      ? TrainingCircuitItemDto
+      : TrainingItemExerciseDto,
+  )
+  items?: Array<TrainingItemExerciseDto | TrainingCircuitItemDto>;
 }
 
 export class UpdateTrainingDto extends PartialType(CreateTrainingDto) {}

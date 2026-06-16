@@ -13,6 +13,7 @@ import {
 } from './dto/mark-completed.dto';
 
 interface ExerciseCompletedEntry {
+  training_exercise_id?: string;
   exercise_id: string;
   weight_used?: number;
   completed_at: string;
@@ -21,6 +22,8 @@ interface ExerciseCompletedEntry {
 interface AssignmentContext {
   date: Date;
   trainingExerciseIds: Set<string>;
+  exerciseIds: Set<string>;
+  exerciseIdByTrainingExerciseId: Map<string, string>;
   mealIds: Set<string>;
   mealGroupById: Map<string, string>;
 }
@@ -65,7 +68,7 @@ export class ProgressService {
         training: {
           select: {
             exercises: {
-              select: { exercise_id: true },
+              select: { id: true, exercise_id: true },
             },
           },
         },
@@ -84,9 +87,17 @@ export class ProgressService {
     return {
       date,
       trainingExerciseIds: new Set(
-        assignment?.training?.exercises.map(
-          (exercise) => exercise.exercise_id,
-        ) ?? [],
+        assignment?.training?.exercises.map((exercise) => exercise.id) ?? [],
+      ),
+      exerciseIds: new Set(
+        assignment?.training?.exercises.map((exercise) => exercise.exercise_id) ??
+          [],
+      ),
+      exerciseIdByTrainingExerciseId: new Map(
+        assignment?.training?.exercises.map((exercise) => [
+          exercise.id,
+          exercise.exercise_id,
+        ]) ?? [],
       ),
       mealIds: new Set(dietMeals.map((meal) => meal.id)),
       mealGroupById: new Map(
@@ -96,19 +107,32 @@ export class ProgressService {
   }
 
   private getTrainingCompletedStatus(
+    assignedTrainingExerciseIds: Set<string>,
     assignedExerciseIds: Set<string>,
     completedEntries: ExerciseCompletedEntry[],
   ): boolean {
-    if (assignedExerciseIds.size === 0) {
+    if (assignedTrainingExerciseIds.size === 0) {
       return false;
     }
 
-    const completedIds = new Set(
+    const completedTrainingExerciseIds = new Set(
+      completedEntries
+        .map((entry) => entry.training_exercise_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    if (completedTrainingExerciseIds.size > 0) {
+      return [...assignedTrainingExerciseIds].every((trainingExerciseId) =>
+        completedTrainingExerciseIds.has(trainingExerciseId),
+      );
+    }
+
+    const completedExerciseIds = new Set(
       completedEntries.map((entry) => entry.exercise_id),
     );
 
     return [...assignedExerciseIds].every((exerciseId) =>
-      completedIds.has(exerciseId),
+      completedExerciseIds.has(exerciseId),
     );
   }
 
@@ -167,7 +191,15 @@ export class ProgressService {
       );
     }
 
-    if (!assignment.trainingExerciseIds.has(dto.exercise_id)) {
+    const trainingExerciseId = dto.training_exercise_id;
+    const exerciseId = trainingExerciseId
+      ? assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)
+      : dto.exercise_id;
+
+    if (
+      (trainingExerciseId && !exerciseId) ||
+      (!trainingExerciseId && !assignment.exerciseIds.has(dto.exercise_id))
+    ) {
       throw new ForbiddenException(
         'Ese ejercicio no pertenece al entrenamiento asignado',
       );
@@ -182,11 +214,15 @@ export class ProgressService {
       : [];
 
     const filtered = currentExercises.filter(
-      (entry) => entry.exercise_id !== dto.exercise_id,
+      (entry) =>
+        trainingExerciseId
+          ? entry.training_exercise_id !== trainingExerciseId
+          : entry.exercise_id !== dto.exercise_id,
     );
 
     filtered.push({
-      exercise_id: dto.exercise_id,
+      ...(trainingExerciseId && { training_exercise_id: trainingExerciseId }),
+      exercise_id: exerciseId!,
       completed_at: new Date().toISOString(),
       ...(dto.weight_used !== undefined && { weight_used: dto.weight_used }),
     });
@@ -202,6 +238,7 @@ export class ProgressService {
           notes: existing?.notes ?? null,
           training_completed: this.getTrainingCompletedStatus(
             assignment.trainingExerciseIds,
+            assignment.exerciseIds,
             filtered,
           ),
         },
@@ -209,6 +246,7 @@ export class ProgressService {
           exercises_completed: this.serializeExercisesCompleted(filtered),
           training_completed: this.getTrainingCompletedStatus(
             assignment.trainingExerciseIds,
+            assignment.exerciseIds,
             filtered,
           ),
         },
@@ -241,16 +279,28 @@ export class ProgressService {
     const currentExercises = existing
       ? this.parseExercisesCompleted(existing.exercises_completed)
       : [];
+    const currentByTrainingExercise = new Map(
+      currentExercises
+        .filter((entry) => entry.training_exercise_id)
+        .map((entry) => [entry.training_exercise_id!, entry]),
+    );
     const currentByExercise = new Map(
       currentExercises.map((entry) => [entry.exercise_id, entry]),
     );
 
     const completedExercises = [...assignment.trainingExerciseIds].map(
-      (exerciseId) =>
-        currentByExercise.get(exerciseId) ?? {
-          exercise_id: exerciseId,
-          completed_at: new Date().toISOString(),
-        },
+      (trainingExerciseId) => {
+        const exerciseId =
+          assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
+        return (
+          currentByTrainingExercise.get(trainingExerciseId) ??
+          currentByExercise.get(exerciseId) ?? {
+            training_exercise_id: trainingExerciseId,
+            exercise_id: exerciseId,
+            completed_at: new Date().toISOString(),
+          }
+        );
+      },
     );
 
     const progress = await this.prisma.$transaction(async (tx) => {
@@ -360,7 +410,9 @@ export class ProgressService {
       existing.exercises_completed,
     );
     const filtered = currentExercises.filter(
-      (entry) => entry.exercise_id !== exerciseId,
+      (entry) =>
+        entry.training_exercise_id !== exerciseId &&
+        entry.exercise_id !== exerciseId,
     );
 
     const progress = await this.prisma.dayProgress.update({
@@ -369,6 +421,7 @@ export class ProgressService {
         exercises_completed: this.serializeExercisesCompleted(filtered),
         training_completed: this.getTrainingCompletedStatus(
           assignment.trainingExerciseIds,
+          assignment.exerciseIds,
           filtered,
         ),
       },

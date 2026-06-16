@@ -3,11 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, TrainingBlockType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
   CreateTrainingDto,
+  TrainingCircuitItemDto,
+  TrainingItemExerciseDto,
   UpdateTrainingDto,
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
@@ -25,9 +27,35 @@ type TrainingCatalogRecord = {
 
 type TrainingResponseLike = TrainingCatalogRecord & {
   accentColor?: string | null;
+  blocks?: Array<{
+    id: string;
+    order: number;
+    type: TrainingBlockType;
+    name: string | null;
+    rounds: number;
+    rest_between_rounds_seconds: number;
+    exercises: Array<Record<string, unknown>>;
+  }>;
+  exercises?: Array<
+    Record<string, unknown> & {
+      id?: string;
+      order?: number;
+      block_id?: string | null;
+      position_in_block?: number | null;
+    }
+  >;
 };
 
 const trainingExercisesInclude = {
+  blocks: {
+    orderBy: { order: 'asc' as const },
+    include: {
+      exercises: {
+        orderBy: { position_in_block: 'asc' as const },
+        include: { exercise: true },
+      },
+    },
+  },
   exercises: {
     orderBy: { order: 'asc' as const },
     include: {
@@ -227,13 +255,125 @@ export class TrainingsService {
 
   private serializeTraining<T extends TrainingResponseLike>(training: T) {
     const types = this.resolveTrainingTypes(training);
+    const blocks = training.blocks ?? [];
+    const flatExercises = (training.exercises ?? []).map((exercise) => {
+      const block = blocks.find((candidate) => candidate.id === exercise.block_id);
+
+      return {
+        ...exercise,
+        block: block
+          ? {
+              id: block.id,
+              order: block.order,
+              type: block.type,
+              name: block.name,
+              rounds: block.rounds,
+              rest_between_rounds_seconds:
+                block.rest_between_rounds_seconds,
+            }
+          : null,
+      };
+    });
+    const blockExerciseIds = new Set(
+      flatExercises
+        .filter((exercise) => exercise.block_id && exercise.id)
+        .map((exercise) => exercise.id),
+    );
+    const items = [
+      ...flatExercises
+        .filter((exercise) => !blockExerciseIds.has(exercise.id))
+        .map((exercise) => ({ kind: 'EXERCISE' as const, ...exercise })),
+      ...blocks.map((block) => ({
+        kind: 'CIRCUIT' as const,
+        id: block.id,
+        order: block.order,
+        type: block.type,
+        name: block.name,
+        rounds: block.rounds,
+        rest_between_rounds_seconds: block.rest_between_rounds_seconds,
+        exercises: block.exercises,
+      })),
+    ].sort((left, right) => (left.order as number) - (right.order as number));
 
     return {
       ...training,
       type: this.resolveLegacyTrainingType(training, types),
       types,
       accentColor: training.accentColor ?? null,
+      exercises: flatExercises,
+      items,
     };
+  }
+
+  private resolveTrainingItems(dto: CreateTrainingDto | UpdateTrainingDto) {
+    if (dto.items !== undefined) {
+      return dto.items;
+    }
+
+    return (dto.exercises ?? []).map(
+      (exercise): TrainingItemExerciseDto => ({
+        kind: 'EXERCISE',
+        ...exercise,
+      }),
+    );
+  }
+
+  private async replaceTrainingItems(
+    tx: Prisma.TransactionClient,
+    trainingId: string,
+    dto: CreateTrainingDto | UpdateTrainingDto,
+  ) {
+    const items = this.resolveTrainingItems(dto);
+    const hasCircuits = items.some((item) => item.kind === 'CIRCUIT');
+
+    await tx.trainingExercise.deleteMany({ where: { training_id: trainingId } });
+    await tx.trainingBlock.deleteMany({ where: { training_id: trainingId } });
+
+    for (const [index, item] of items.entries()) {
+      const order = item.order ?? index;
+
+      if (item.kind === 'CIRCUIT') {
+        const circuit = item as TrainingCircuitItemDto;
+        const block = await tx.trainingBlock.create({
+          data: {
+            training_id: trainingId,
+            order,
+            type: TrainingBlockType.CIRCUIT,
+            name: circuit.name?.trim() || 'Circuito',
+            rounds: circuit.rounds,
+            rest_between_rounds_seconds:
+              circuit.rest_between_rounds_seconds ?? 60,
+          },
+        });
+
+        await tx.trainingExercise.createMany({
+          data: circuit.exercises.map((exercise, position) => ({
+            training_id: trainingId,
+            block_id: block.id,
+            exercise_id: exercise.exercise_id,
+            order: order * 1000 + position,
+            position_in_block: position,
+            sets: 1,
+            reps_or_duration: exercise.reps_or_duration,
+            rest_seconds: exercise.rest_seconds ?? 15,
+          })),
+        });
+
+        continue;
+      }
+
+      const exercise = item as TrainingItemExerciseDto;
+      await tx.trainingExercise.create({
+        data: {
+          training_id: trainingId,
+          exercise_id: exercise.exercise_id,
+          order: hasCircuits ? order * 1000 : order,
+          sets: exercise.sets,
+          reps_or_duration: exercise.reps_or_duration,
+          rest_seconds: exercise.rest_seconds ?? 60,
+        },
+      });
+    }
   }
 
   private serializeTrainingCollection<T extends TrainingResponseLike>(
@@ -583,18 +723,7 @@ export class TrainingsService {
           },
         });
 
-        if (dto.exercises && dto.exercises.length > 0) {
-          await tx.trainingExercise.createMany({
-            data: dto.exercises.map((ex) => ({
-              training_id: training.id,
-              exercise_id: ex.exercise_id,
-              order: ex.order,
-              sets: ex.sets,
-              reps_or_duration: ex.reps_or_duration,
-              rest_seconds: ex.rest_seconds ?? 60,
-            })),
-          });
-        }
+        await this.replaceTrainingItems(tx, training.id, dto);
 
         return tx.training.findUnique({
           where: { id: training.id },
@@ -656,22 +785,8 @@ export class TrainingsService {
           },
         });
 
-        if (dto.exercises !== undefined) {
-          // Re-sync: delete all existing and recreate
-          await tx.trainingExercise.deleteMany({ where: { training_id: id } });
-
-          if (dto.exercises.length > 0) {
-            await tx.trainingExercise.createMany({
-              data: dto.exercises.map((ex) => ({
-                training_id: id,
-                exercise_id: ex.exercise_id,
-                order: ex.order,
-                sets: ex.sets,
-                reps_or_duration: ex.reps_or_duration,
-                rest_seconds: ex.rest_seconds ?? 60,
-              })),
-            });
-          }
+        if (dto.items !== undefined || dto.exercises !== undefined) {
+          await this.replaceTrainingItems(tx, id, dto);
         }
 
         return tx.training.findUnique({

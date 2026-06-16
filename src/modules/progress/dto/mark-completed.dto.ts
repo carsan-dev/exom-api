@@ -12,6 +12,11 @@ export class MarkExerciseDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsString()
+  training_exercise_id?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsNumber()
   weight_used?: number;
 }

@@ -100,6 +100,10 @@ enum ApprovalStatus {
   FAILED
 }
 
+enum TrainingBlockType {
+  CIRCUIT
+}
+
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
@@ -291,8 +295,28 @@ model Training {
   exercises   TrainingExercise[]
   assignments PlanAssignment[]
   autoAssignmentRuleDays AutoAssignmentRuleDay[]
+  blocks                 TrainingBlock[]
 
   @@map("trainings")
+}
+
+model TrainingBlock {
+  id                                String            @id @default(uuid())
+  training_id                       String
+  order                             Int
+  type                              TrainingBlockType @default(CIRCUIT)
+  name                              String?
+  rounds                            Int               @default(3)
+  rest_between_rounds_seconds       Int               @default(60)
+  created_at                        DateTime          @default(now())
+  updated_at                        DateTime          @updatedAt
+
+  training  Training           @relation(fields: [training_id], references: [id], onDelete: Cascade)
+  exercises TrainingExercise[]
+
+  @@unique([training_id, order])
+  @@index([training_id, order])
+  @@map("training_blocks")
 }
 
 model Exercise {
@@ -321,17 +345,21 @@ model Exercise {
 model TrainingExercise {
   id               String @id @default(uuid())
   training_id      String
+  block_id         String?
   exercise_id      String
   order            Int
+  position_in_block Int?
   sets             Int
   reps_or_duration String
   /// Descanso entre series, en segundos.
   rest_seconds     Int    @default(60)
 
   training Training @relation(fields: [training_id], references: [id], onDelete: Cascade)
+  block    TrainingBlock? @relation(fields: [block_id], references: [id], onDelete: Cascade)
   exercise Exercise @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
 
   @@unique([training_id, order])
+  @@index([block_id, position_in_block])
   @@map("training_exercises")
 }
 
