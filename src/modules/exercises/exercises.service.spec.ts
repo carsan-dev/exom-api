@@ -8,16 +8,20 @@ describe('ExercisesService', () => {
   let prisma: {
     exercise: {
       findMany: jest.Mock;
+      findFirst: jest.Mock;
       count: jest.Mock;
     };
+    trainingExercise: { findMany: jest.Mock };
   };
 
   beforeEach(() => {
     prisma = {
       exercise: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
         count: jest.fn(),
       },
+      trainingExercise: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
     service = new ExercisesService(prisma as unknown as PrismaService);
@@ -42,7 +46,7 @@ describe('ExercisesService', () => {
     prisma.exercise.count.mockResolvedValue(12);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'exercise-1' }],
+      data: [{ id: 'exercise-1', training_usage_count: 0, is_used_in_training: false }],
       total: 12,
       page: 2,
       limit: 10,
@@ -57,6 +61,14 @@ describe('ExercisesService', () => {
     });
     expect(prisma.exercise.count).toHaveBeenCalledWith({
       where: expectedWhere,
+    });
+    expect(prisma.trainingExercise.findMany).toHaveBeenCalledWith({
+      where: {
+        exercise_id: { in: ['exercise-1'] },
+        training: { is_active: true },
+      },
+      select: { exercise_id: true, training_id: true },
+      distinct: ['exercise_id', 'training_id'],
     });
   });
 
@@ -75,7 +87,7 @@ describe('ExercisesService', () => {
     ]);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'exercise-2', name: 'Sentadílla búlgara' }],
+      data: [{ id: 'exercise-2', name: 'Sentadílla búlgara', training_usage_count: 0, is_used_in_training: false }],
       total: 2,
       page: 2,
       limit: 1,
@@ -90,5 +102,43 @@ describe('ExercisesService', () => {
       orderBy: { created_at: 'desc' },
     });
     expect(prisma.exercise.count).not.toHaveBeenCalled();
+  });
+
+  it('counts distinct active trainings for current page only', async () => {
+    const query = Object.assign(new ExercisesQueryDto(), { page: 1, limit: 10 });
+    prisma.exercise.findMany.mockResolvedValue([{ id: 'exercise-1' }, { id: 'exercise-2' }]);
+    prisma.exercise.count.mockResolvedValue(2);
+    prisma.trainingExercise.findMany.mockResolvedValue([
+      { exercise_id: 'exercise-1', training_id: 'training-1' },
+      { exercise_id: 'exercise-1', training_id: 'training-2' },
+    ]);
+
+    const result = await service.findAll(query);
+    expect(result.data).toEqual([
+      { id: 'exercise-1', training_usage_count: 2, is_used_in_training: true },
+      { id: 'exercise-2', training_usage_count: 0, is_used_in_training: false },
+    ]);
+  });
+
+  it('returns sorted unique active training usage detail', async () => {
+    prisma.exercise.findFirst.mockResolvedValue({ id: 'exercise-1' });
+    prisma.trainingExercise.findMany.mockResolvedValue([
+      { training: { id: 'training-2', name: 'Zancadas' } },
+      { training: { id: 'training-1', name: 'Ángeles' } },
+    ]);
+
+    await expect(service.getTrainingUsage('exercise-1')).resolves.toEqual({
+      exercise_id: 'exercise-1',
+      training_count: 2,
+      trainings: [
+        { id: 'training-1', name: 'Ángeles' },
+        { id: 'training-2', name: 'Zancadas' },
+      ],
+    });
+    expect(prisma.trainingExercise.findMany).toHaveBeenCalledWith({
+      where: { exercise_id: 'exercise-1', training: { is_active: true } },
+      select: { training: { select: { id: true, name: true } } },
+      distinct: ['training_id'],
+    });
   });
 });
