@@ -291,13 +291,28 @@ model Training {
   created_by             String?
   created_at             DateTime     @default(now())
   updated_at             DateTime     @updatedAt
+  group_id               String?
 
+  group       TrainingGroup? @relation(fields: [group_id], references: [id], onDelete: SetNull)
   exercises   TrainingExercise[]
   assignments PlanAssignment[]
   autoAssignmentRuleDays AutoAssignmentRuleDay[]
   blocks                 TrainingBlock[]
 
+  @@index([group_id])
   @@map("trainings")
+}
+
+model TrainingGroup {
+  id              String     @id @default(uuid())
+  name            String
+  normalized_name String     @unique
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  trainings Training[]
+
+  @@map("training_groups")
 }
 
 model TrainingBlock {
@@ -377,12 +392,27 @@ model Diet {
   created_by      String?
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
+  group_id        String?
 
+  group       DietGroup? @relation(fields: [group_id], references: [id], onDelete: SetNull)
   meals       Meal[]
   assignments PlanAssignment[]
   autoAssignmentRuleDays AutoAssignmentRuleDay[]
 
+  @@index([group_id])
   @@map("diets")
+}
+
+model DietGroup {
+  id              String   @id @default(uuid())
+  name            String
+  normalized_name String   @unique
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  diets Diet[]
+
+  @@map("diet_groups")
 }
 
 model Meal {

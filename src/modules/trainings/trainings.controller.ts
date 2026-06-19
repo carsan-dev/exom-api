@@ -35,6 +35,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
+import { UpdateTrainingGroupMembershipDto } from '../../common/catalog-groups/dto/catalog-group.dto';
 
 @ApiTags('Trainings')
 @ApiBearerAuth()
@@ -69,6 +70,12 @@ export class TrainingsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   findAllTags() {
     return this.trainingsService.findAllTags();
+  }
+
+  @Patch('group-membership')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  updateGroupMembership(@Body() dto: UpdateTrainingGroupMembershipDto) {
+    return this.trainingsService.updateGroupMembership(dto.training_ids, dto.group_id);
   }
 
   @Get('types')

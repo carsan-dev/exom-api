@@ -39,6 +39,11 @@ function toArray(value: unknown): string[] | undefined {
 }
 
 export class TrainingsQueryDto extends PaginationDto {
+  @ApiPropertyOptional({ description: 'Filter by catalog group id' })
+  @IsOptional()
+  @IsString()
+  group_id?: string;
+
   @ApiPropertyOptional({ description: 'Search trainings by name' })
   @IsOptional()
   @IsString()

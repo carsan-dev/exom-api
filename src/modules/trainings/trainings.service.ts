@@ -47,6 +47,7 @@ type TrainingResponseLike = TrainingCatalogRecord & {
 };
 
 const trainingExercisesInclude = {
+  group: { select: { id: true, name: true } },
   blocks: {
     orderBy: { order: 'asc' as const },
     include: {
@@ -603,6 +604,7 @@ export class TrainingsService {
       duration_max,
       skip,
       limit,
+      group_id,
     } = query;
     const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
@@ -611,6 +613,7 @@ export class TrainingsService {
       : [];
     const where: Prisma.TrainingWhereInput = {
       is_active: true,
+      ...(group_id ? { group_id } : {}),
       ...(normalizedTypeFilters.length
         ? {
             OR: [
@@ -662,6 +665,30 @@ export class TrainingsService {
     ]);
 
     return paginate(this.serializeTrainingCollection(data), total, query);
+  }
+
+  async updateGroupMembership(trainingIds: string[], groupId: string | null) {
+    const ids = [...new Set(trainingIds)];
+
+    return this.prisma.$transaction(async (tx) => {
+      if (groupId) {
+        const group = await tx.trainingGroup.findUnique({ where: { id: groupId } });
+        if (!group) throw new NotFoundException('Grupo de entrenamientos no encontrado');
+      }
+
+      const activeCount = await tx.training.count({
+        where: { id: { in: ids }, is_active: true },
+      });
+      if (activeCount !== ids.length) {
+        throw new NotFoundException('Uno o más entrenamientos no existen o están inactivos');
+      }
+
+      const result = await tx.training.updateMany({
+        where: { id: { in: ids }, is_active: true },
+        data: { group_id: groupId },
+      });
+      return { affected_count: result.count };
+    });
   }
 
   async findToday(clientId: string, date?: Date) {

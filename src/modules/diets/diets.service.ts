@@ -33,6 +33,7 @@ const mealInclude = {
 };
 
 const dietInclude = {
+  group: { select: { id: true, name: true } },
   meals: {
     where: { parent_meal_id: null },
     orderBy: { order: 'asc' as const },
@@ -364,12 +365,14 @@ export class DietsService {
       updated_to,
       skip,
       limit,
+      group_id,
     } = query;
     const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
     const updatedAtRange = getDateRange(updated_from, updated_to);
     const where: Prisma.DietWhereInput = {
       is_active: true,
+      ...(group_id ? { group_id } : {}),
       ...(tags?.length ? { tags: { hasSome: tags } } : {}),
       ...(nutritional_badges?.length || meal_types?.length
         ? {
@@ -419,6 +422,28 @@ export class DietsService {
     ]);
 
     return paginate(data, total, query);
+  }
+
+  async updateGroupMembership(dietIds: string[], groupId: string | null) {
+    const ids = [...new Set(dietIds)];
+
+    return this.prisma.$transaction(async (tx) => {
+      if (groupId) {
+        const group = await tx.dietGroup.findUnique({ where: { id: groupId } });
+        if (!group) throw new NotFoundException('Grupo de dietas no encontrado');
+      }
+
+      const activeCount = await tx.diet.count({ where: { id: { in: ids }, is_active: true } });
+      if (activeCount !== ids.length) {
+        throw new NotFoundException('Una o más dietas no existen o están inactivas');
+      }
+
+      const result = await tx.diet.updateMany({
+        where: { id: { in: ids }, is_active: true },
+        data: { group_id: groupId },
+      });
+      return { affected_count: result.count };
+    });
   }
 
   async findToday(clientId: string, date?: Date) {

@@ -37,6 +37,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
+import { UpdateDietGroupMembershipDto } from '../../common/catalog-groups/dto/catalog-group.dto';
 
 @ApiTags('Diets')
 @ApiBearerAuth()
@@ -53,6 +54,12 @@ export class DietsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   findAll(@Query() query: DietsQueryDto) {
     return this.dietsService.findAll(query);
+  }
+
+  @Patch('group-membership')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  updateGroupMembership(@Body() dto: UpdateDietGroupMembershipDto) {
+    return this.dietsService.updateGroupMembership(dto.diet_ids, dto.group_id);
   }
 
   // NOTE: /today MUST be declared before /:id to avoid routing conflicts
