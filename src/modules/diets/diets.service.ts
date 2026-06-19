@@ -366,13 +366,20 @@ export class DietsService {
       skip,
       limit,
       group_id,
+      ungrouped,
     } = query;
     const pageSize = limit ?? 20;
+    if (group_id && ungrouped) {
+      throw new BadRequestException(
+        'No se puede combinar group_id con ungrouped',
+      );
+    }
     const normalizedSearch = search?.trim();
     const updatedAtRange = getDateRange(updated_from, updated_to);
     const where: Prisma.DietWhereInput = {
       is_active: true,
       ...(group_id ? { group_id } : {}),
+      ...(ungrouped ? { group_id: null } : {}),
       ...(tags?.length ? { tags: { hasSome: tags } } : {}),
       ...(nutritional_badges?.length || meal_types?.length
         ? {

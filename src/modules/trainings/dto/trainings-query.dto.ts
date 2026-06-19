@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import { Level } from '@prisma/client';
 import {
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -13,6 +14,12 @@ import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 function normalizeCatalogValue(value: string) {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function toBoolean(value: unknown): unknown {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  return value;
 }
 
 function toArray(value: unknown): string[] | undefined {
@@ -43,6 +50,12 @@ export class TrainingsQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   group_id?: string;
+
+  @ApiPropertyOptional({ description: 'Filter trainings without a catalog group' })
+  @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  ungrouped?: boolean;
 
   @ApiPropertyOptional({ description: 'Search trainings by name' })
   @IsOptional()

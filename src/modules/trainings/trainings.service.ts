@@ -605,8 +605,14 @@ export class TrainingsService {
       skip,
       limit,
       group_id,
+      ungrouped,
     } = query;
     const pageSize = limit ?? 20;
+    if (group_id && ungrouped) {
+      throw new BadRequestException(
+        'No se puede combinar group_id con ungrouped',
+      );
+    }
     const normalizedSearch = search?.trim();
     const normalizedTypeFilters = type?.length
       ? this.normalizeCatalogValues(type)
@@ -614,6 +620,7 @@ export class TrainingsService {
     const where: Prisma.TrainingWhereInput = {
       is_active: true,
       ...(group_id ? { group_id } : {}),
+      ...(ungrouped ? { group_id: null } : {}),
       ...(normalizedTypeFilters.length
         ? {
             OR: [

@@ -3,6 +3,7 @@ import { Transform } from 'class-transformer';
 import { MealType } from '@prisma/client';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -36,11 +37,23 @@ function toArray(value: unknown): string[] | undefined {
   return undefined;
 }
 
+function toBoolean(value: unknown): unknown {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  return value;
+}
+
 export class DietsQueryDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Filter by catalog group id' })
   @IsOptional()
   @IsString()
   group_id?: string;
+
+  @ApiPropertyOptional({ description: 'Filter diets without a catalog group' })
+  @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  ungrouped?: boolean;
 
   @ApiPropertyOptional({ description: 'Search diets by name' })
   @IsOptional()
