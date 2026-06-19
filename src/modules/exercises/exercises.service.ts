@@ -294,7 +294,11 @@ export class ExercisesService {
 
       const pageData = filteredExercises.slice(skip, skip + pageSize);
 
-      return paginate(pageData, filteredExercises.length, query);
+      return paginate(
+        await this.withTrainingUsage(pageData),
+        filteredExercises.length,
+        query,
+      );
     }
 
     const [data, total] = await Promise.all([
@@ -307,7 +311,47 @@ export class ExercisesService {
       this.prisma.exercise.count({ where }),
     ]);
 
-    return paginate(data, total, query);
+    return paginate(await this.withTrainingUsage(data), total, query);
+  }
+
+  private async withTrainingUsage<T extends { id: string }>(exercises: T[]) {
+    if (exercises.length === 0) return exercises;
+
+    const usages = await this.prisma.trainingExercise.findMany({
+      where: {
+        exercise_id: { in: exercises.map((exercise) => exercise.id) },
+        training: { is_active: true },
+      },
+      select: { exercise_id: true, training_id: true },
+      distinct: ['exercise_id', 'training_id'],
+    });
+    const counts = new Map<string, number>();
+    for (const usage of usages) {
+      counts.set(usage.exercise_id, (counts.get(usage.exercise_id) ?? 0) + 1);
+    }
+
+    return exercises.map((exercise) => {
+      const trainingUsageCount = counts.get(exercise.id) ?? 0;
+      return {
+        ...exercise,
+        training_usage_count: trainingUsageCount,
+        is_used_in_training: trainingUsageCount > 0,
+      };
+    });
+  }
+
+  async getTrainingUsage(id: string) {
+    await this.findOne(id);
+    const usages = await this.prisma.trainingExercise.findMany({
+      where: { exercise_id: id, training: { is_active: true } },
+      select: { training: { select: { id: true, name: true } } },
+      distinct: ['training_id'],
+    });
+    const trainings = usages
+      .map((usage) => usage.training)
+      .sort((left, right) => left.name.localeCompare(right.name, 'es', { sensitivity: 'base' }));
+
+    return { exercise_id: id, training_count: trainings.length, trainings };
   }
 
   async findOne(id: string) {

@@ -109,6 +109,13 @@ export class ExercisesController {
     return this.exercisesService.deleteEquipment(value);
   }
 
+  @Get(':id/training-usage')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'List distinct active trainings using an exercise' })
+  getTrainingUsage(@Param('id') id: string) {
+    return this.exercisesService.getTrainingUsage(id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single exercise by ID' })
   findOne(@Param('id') id: string) {
