@@ -169,6 +169,32 @@ describe('TrainingsService', () => {
     expect(prisma.training.count).not.toHaveBeenCalled();
   });
 
+  it('filters ungrouped trainings and rejects conflicting group filters', async () => {
+    const query = Object.assign(new TrainingsQueryDto(), {
+      page: 1,
+      limit: 20,
+      ungrouped: true,
+    });
+    prisma.training.findMany.mockResolvedValue([]);
+    prisma.training.count.mockResolvedValue(0);
+
+    await service.findAll(query);
+    expect(prisma.training.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { is_active: true, group_id: null } }),
+    );
+
+    await expect(
+      service.findAll(
+        Object.assign(new TrainingsQueryDto(), {
+          page: 1,
+          limit: 20,
+          group_id: 'group-1',
+          ungrouped: true,
+        }),
+      ),
+    ).rejects.toThrow('No se puede combinar group_id con ungrouped');
+  });
+
   it('lists unique training types from active trainings', async () => {
     prisma.training.findMany.mockResolvedValue([
       { type: 'FUERZA', types: ['FUERZA'] },

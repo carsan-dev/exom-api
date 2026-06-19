@@ -116,4 +116,30 @@ describe('DietsService', () => {
     });
     expect(prisma.diet.count).not.toHaveBeenCalled();
   });
+
+  it('filters ungrouped diets and rejects conflicting group filters', async () => {
+    const query = Object.assign(new DietsQueryDto(), {
+      page: 1,
+      limit: 10,
+      ungrouped: true,
+    });
+    prisma.diet.findMany.mockResolvedValue([]);
+    prisma.diet.count.mockResolvedValue(0);
+
+    await service.findAll(query);
+    expect(prisma.diet.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { is_active: true, group_id: null } }),
+    );
+
+    await expect(
+      service.findAll(
+        Object.assign(new DietsQueryDto(), {
+          page: 1,
+          limit: 10,
+          group_id: 'group-1',
+          ungrouped: true,
+        }),
+      ),
+    ).rejects.toThrow('No se puede combinar group_id con ungrouped');
+  });
 });
