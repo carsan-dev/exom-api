@@ -46,17 +46,21 @@ export class StreaksService {
       update: {
         current_days: 0,
         last_active_date: null,
+        tracking_started_at: new Date(),
       },
       create: {
         client_id: clientId,
         current_days: 0,
         longest_days: 0,
         last_active_date: null,
+        tracking_started_at: new Date(),
       },
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+    );
 
     return streak;
   }

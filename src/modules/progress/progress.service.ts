@@ -2,10 +2,14 @@ import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-type TransactionClient = Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
+type TransactionClient = Omit<
+  PrismaClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { StreakCalculatorService } from '../streaks/streak-calculator.service';
 import {
   CompleteTrainingDto,
   MarkExerciseDto,
@@ -37,6 +41,7 @@ export class ProgressService {
     private readonly challengesService: ChallengesService,
     private readonly achievementsService: AchievementsService,
     private readonly notifications: NotificationsService,
+    private readonly streakCalculator: StreakCalculatorService,
   ) {}
 
   private parseExercisesCompleted(
@@ -55,7 +60,9 @@ export class ProgressService {
 
   private parseDate(dateStr: string): Date {
     const d = new Date(dateStr);
-    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    return new Date(
+      Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+    );
   }
 
   private async getAssignmentContext(
@@ -90,8 +97,9 @@ export class ProgressService {
         assignment?.training?.exercises.map((exercise) => exercise.id) ?? [],
       ),
       exerciseIds: new Set(
-        assignment?.training?.exercises.map((exercise) => exercise.exercise_id) ??
-          [],
+        assignment?.training?.exercises.map(
+          (exercise) => exercise.exercise_id,
+        ) ?? [],
       ),
       exerciseIdByTrainingExerciseId: new Map(
         assignment?.training?.exercises.map((exercise) => [
@@ -213,11 +221,10 @@ export class ProgressService {
       ? this.parseExercisesCompleted(existing.exercises_completed)
       : [];
 
-    const filtered = currentExercises.filter(
-      (entry) =>
-        trainingExerciseId
-          ? entry.training_exercise_id !== trainingExerciseId
-          : entry.exercise_id !== dto.exercise_id,
+    const filtered = currentExercises.filter((entry) =>
+      trainingExerciseId
+        ? entry.training_exercise_id !== trainingExerciseId
+        : entry.exercise_id !== dto.exercise_id,
     );
 
     filtered.push({
@@ -257,7 +264,9 @@ export class ProgressService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+    );
 
     return progress;
   }
@@ -328,7 +337,9 @@ export class ProgressService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+    );
 
     return progress;
   }
@@ -383,7 +394,9 @@ export class ProgressService {
     });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+    );
 
     return progress;
   }
@@ -427,8 +440,12 @@ export class ProgressService {
       },
     });
 
+    await this.updateStreak(clientId, date);
+
     await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+    );
 
     return progress;
   }
@@ -462,73 +479,33 @@ export class ProgressService {
       data: { meals_completed: filtered },
     });
 
+    await this.updateStreak(clientId, date);
+
     await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+    );
 
     return progress;
   }
 
-  private async updateStreak(clientId: string, date: Date, tx?: TransactionClient) {
-    const db = tx ?? this.prisma;
-    const dateOnly = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-
-    const yesterday = new Date(dateOnly);
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-
-    const streak = await db.streak.findUnique({
-      where: { client_id: clientId },
-    });
-
-    if (!streak) {
-      await db.streak.create({
-        data: {
-          client_id: clientId,
-          current_days: 1,
-          longest_days: 1,
-          last_active_date: dateOnly,
-        },
-      });
-      return;
-    }
-
-    const lastActive = streak.last_active_date
-      ? new Date(streak.last_active_date)
-      : null;
-
-    if (lastActive) {
-      lastActive.setUTCHours(0, 0, 0, 0);
-    }
-
-    const todayStr = dateOnly.toISOString().split('T')[0];
-    const lastActiveStr = lastActive?.toISOString().split('T')[0];
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-    let newCurrentDays = streak.current_days;
-
-    if (lastActiveStr === todayStr) {
-      return;
-    } else if (lastActiveStr === yesterdayStr) {
-      newCurrentDays = streak.current_days + 1;
-    } else {
-      newCurrentDays = 1;
-    }
-
-    const newLongest = Math.max(newCurrentDays, streak.longest_days);
-
-    await db.streak.update({
-      where: { client_id: clientId },
-      data: {
-        current_days: newCurrentDays,
-        longest_days: newLongest,
-        last_active_date: dateOnly,
-      },
+  private async updateStreak(
+    clientId: string,
+    date: Date,
+    tx?: TransactionClient,
+  ) {
+    const today = new Date();
+    const asOf = date.getTime() > today.getTime() ? date : today;
+    const result = await this.streakCalculator.recalculateClient(clientId, {
+      asOf,
+      db: tx,
     });
 
     if (
-      newCurrentDays !== streak.current_days &&
-      [7, 30, 100, 365].includes(newCurrentDays)
+      result.currentDays !== result.previousCurrentDays &&
+      [7, 30, 100, 365].includes(result.currentDays)
     ) {
-      await this.notifyStreakMilestone(clientId, newCurrentDays);
+      await this.notifyStreakMilestone(clientId, result.currentDays);
     }
   }
 }

@@ -587,6 +587,7 @@ model Streak {
   current_days     Int       @default(0)
   longest_days     Int       @default(0)
   last_active_date DateTime? @db.Date
+  tracking_started_at DateTime?
   updated_at       DateTime  @updatedAt
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
