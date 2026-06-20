@@ -54,7 +54,9 @@ describe('NotificationsSchedulerService', () => {
 
   it('sends training reminders with date-aware routes', async () => {
     prisma.user.findMany.mockResolvedValue([{ id: 'client-1' }]);
-    prisma.planAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.planAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.dayProgress.findMany.mockResolvedValue([]);
 
     await (service as any).remindDailyTraining();
@@ -78,7 +80,9 @@ describe('NotificationsSchedulerService', () => {
     prisma.planAssignment.findMany.mockResolvedValue([
       { client_id: 'client-1', diet_id: 'diet-1' },
     ]);
-    prisma.meal.findMany.mockResolvedValue([{ id: 'meal-1', diet_id: 'diet-1' }]);
+    prisma.meal.findMany.mockResolvedValue([
+      { id: 'meal-1', diet_id: 'diet-1' },
+    ]);
     prisma.dayProgress.findMany.mockResolvedValue([]);
 
     await (service as any).remindMeal(MealType.LUNCH, 'comida');
@@ -94,6 +98,38 @@ describe('NotificationsSchedulerService', () => {
         route: '/diets?date=2026-04-23',
       },
       { type: 'diet_reminder' },
+    );
+  });
+
+  it('does not warn about a streak on a rest or unassigned day', async () => {
+    prisma.streak.findMany.mockResolvedValue([
+      { client_id: 'client-1', current_days: 4 },
+    ]);
+    prisma.planAssignment.findMany.mockResolvedValue([]);
+
+    await (service as any).warnStreakAtRisk();
+
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
+  });
+
+  it('warns when an assigned active day has no activity', async () => {
+    prisma.streak.findMany.mockResolvedValue([
+      { client_id: 'client-1', current_days: 4 },
+    ]);
+    prisma.planAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
+    prisma.dayProgress.findMany.mockResolvedValue([]);
+
+    await (service as any).warnStreakAtRisk();
+
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+      'system-admin',
+      ['client-1'],
+      'streak_at_risk',
+      { days: 4 },
+      expect.any(Object),
+      { type: 'streak_at_risk' },
     );
   });
 });

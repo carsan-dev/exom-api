@@ -91,10 +91,7 @@ export class NotificationsSchedulerService {
       last_name?: string | null;
     } | null;
   }) {
-    const fullName = [
-      client.profile?.first_name,
-      client.profile?.last_name,
-    ]
+    const fullName = [client.profile?.first_name, client.profile?.last_name]
       .filter(Boolean)
       .join(' ')
       .trim();
@@ -391,14 +388,29 @@ export class NotificationsSchedulerService {
 
     if (streaks.length === 0) return;
 
-    const progress = await this.prisma.dayProgress.findMany({
+    const activeAssignments = await this.prisma.planAssignment.findMany({
       where: {
         date: today,
         client_id: { in: streaks.map((streak) => streak.client_id) },
+        is_rest_day: false,
+        OR: [{ training_id: { not: null } }, { diet_id: { not: null } }],
+      },
+      select: { client_id: true },
+    });
+    const activeToday = new Set(
+      activeAssignments.map((assignment) => assignment.client_id),
+    );
+    if (activeToday.size === 0) return;
+
+    const progress = await this.prisma.dayProgress.findMany({
+      where: {
+        date: today,
+        client_id: { in: [...activeToday] },
       },
       select: {
         client_id: true,
         training_completed: true,
+        exercises_completed: true,
         meals_completed: true,
       },
     });
@@ -406,12 +418,17 @@ export class NotificationsSchedulerService {
       progress
         .filter(
           (entry) =>
-            entry.training_completed || entry.meals_completed.length > 0,
+            entry.training_completed ||
+            (Array.isArray(entry.exercises_completed) &&
+              entry.exercises_completed.length > 0) ||
+            entry.meals_completed.length > 0,
         )
         .map((entry) => entry.client_id),
     );
     const pending = streaks.filter(
-      (streak) => !completedToday.has(streak.client_id),
+      (streak) =>
+        activeToday.has(streak.client_id) &&
+        !completedToday.has(streak.client_id),
     );
 
     if (pending.length === 0) return;
