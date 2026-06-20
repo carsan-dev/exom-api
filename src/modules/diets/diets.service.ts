@@ -476,6 +476,53 @@ export class DietsService {
     return clientDiet;
   }
 
+  async findWeek(clientId: string, date: Date) {
+    const target = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
+    const dayFromMonday = (target.getUTCDay() + 6) % 7;
+    const start = new Date(target);
+    start.setUTCDate(start.getUTCDate() - dayFromMonday);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 6);
+
+    const assignments = await this.prisma.planAssignment.findMany({
+      where: {
+        client_id: clientId,
+        date: { gte: start, lte: end },
+        diet_id: { not: null },
+      },
+      include: {
+        diet: { include: dietInclude },
+      },
+      orderBy: { date: 'asc' },
+    });
+
+    const assignmentsByDate = new Map(
+      assignments.map((assignment) => [
+        assignment.date.toISOString().split('T')[0],
+        assignment.diet,
+      ]),
+    );
+
+    const days = Array.from({ length: 7 }, (_, offset) => {
+      const current = new Date(start);
+      current.setUTCDate(current.getUTCDate() + offset);
+      const dateKey = current.toISOString().split('T')[0];
+      const diet = assignmentsByDate.get(dateKey);
+
+      if (!diet) return { date: dateKey, diet: null };
+      const { tags: _tags, ...clientDiet } = diet;
+      return { date: dateKey, diet: clientDiet };
+    });
+
+    return {
+      week_start: start.toISOString().split('T')[0],
+      week_end: end.toISOString().split('T')[0],
+      days,
+    };
+  }
+
   async findOne(id: string) {
     const diet = await this.prisma.diet.findFirst({
       where: { id, is_active: true },

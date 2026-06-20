@@ -28,6 +28,7 @@ import { DietNutritionalBadgesResponseDto } from './dto/diet-nutritional-badges-
 import { DietTagsResponseDto } from './dto/diet-tags-response.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
+import { FindWeekDietQueryDto } from './dto/find-week-diet-query.dto';
 import {
   CatalogMutationResponseDto,
   RenameCatalogValueDto,
@@ -76,6 +77,20 @@ export class DietsController {
   ) {
     const date = query.date ? new Date(query.date) : undefined;
     return this.dietsService.findToday(user.id, date);
+  }
+
+  @Get('week')
+  @ApiOperation({
+    summary: 'Get the diets assigned to the current client for one week',
+  })
+  @ApiOkResponse({ description: 'Weekly diets fetched successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid week_start parameter' })
+  @Roles(Role.CLIENT)
+  findWeek(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: FindWeekDietQueryDto,
+  ) {
+    return this.dietsService.findWeek(user.id, new Date(query.week_start));
   }
 
   @Get('nutritional-badges')
