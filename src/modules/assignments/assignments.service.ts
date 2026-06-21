@@ -150,6 +150,83 @@ export class AssignmentsService {
     private readonly notifications: NotificationsService,
   ) {}
 
+  async getClientOptions(user: AuthenticatedUser) {
+    const clients = await this.prisma.user.findMany({
+      where: {
+        role: Role.CLIENT,
+        ...(user.role === Role.ADMIN
+          ? {
+              clientOf: {
+                some: {
+                  admin_id: user.id,
+                  is_active: true,
+                },
+              },
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        email: true,
+        profile: {
+          select: {
+            first_name: true,
+            last_name: true,
+            avatar_url: true,
+          },
+        },
+      },
+      orderBy: [{ profile: { first_name: 'asc' } }, { email: 'asc' }],
+    });
+
+    return clients;
+  }
+
+  async getCatalogOptions() {
+    const [trainings, diets] = await Promise.all([
+      this.prisma.training.findMany({
+        where: { is_active: true },
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          types: true,
+          accentColor: true,
+          level: true,
+          estimated_duration_min: true,
+          estimated_calories: true,
+          _count: { select: { exercises: true } },
+        },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.diet.findMany({
+        where: { is_active: true },
+        select: {
+          id: true,
+          name: true,
+          tags: true,
+          total_calories: true,
+          total_protein_g: true,
+          total_carbs_g: true,
+          total_fat_g: true,
+          _count: { select: { meals: true } },
+        },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+
+    return {
+      trainings: trainings.map(({ _count, ...training }) => ({
+        ...this.serializeAssignmentTraining(training),
+        exercises_count: _count.exercises,
+      })),
+      diets: diets.map(({ _count, ...diet }) => ({
+        ...diet,
+        meals_count: _count.meals,
+      })),
+    };
+  }
+
   private normalizeCatalogValue(value: string) {
     return value.trim().replace(/\s+/g, ' ');
   }
@@ -577,9 +654,15 @@ export class AssignmentsService {
     const occupiedDates = new Set(
       existingAssignments.map((assignment) => this.formatDate(assignment.date)),
     );
-    const createOperations: Array<
-      ReturnType<typeof this.prisma.planAssignment.create>
-    > = [];
+    const assignmentsToCreate: Array<{
+      client_id: string;
+      admin_id: string | null;
+      date: Date;
+      training_id: string | null;
+      diet_id: string | null;
+      is_rest_day: boolean;
+      auto_assignment_rule_id: string;
+    }> = [];
 
     for (const rule of activeRules) {
       const ruleDays = new Map(rule.days.map((day) => [day.weekday, day]));
@@ -601,25 +684,24 @@ export class AssignmentsService {
           continue;
         }
 
-        createOperations.push(
-          this.prisma.planAssignment.create({
-            data: {
-              client_id: clientId,
-              admin_id: rule.admin_id,
-              date,
-              training_id: day.is_rest_day ? null : day.training_id,
-              diet_id: day.is_rest_day ? null : day.diet_id,
-              is_rest_day: day.is_rest_day,
-              auto_assignment_rule_id: rule.id,
-            },
-          }),
-        );
+        assignmentsToCreate.push({
+          client_id: clientId,
+          admin_id: rule.admin_id,
+          date,
+          training_id: day.is_rest_day ? null : day.training_id,
+          diet_id: day.is_rest_day ? null : day.diet_id,
+          is_rest_day: day.is_rest_day,
+          auto_assignment_rule_id: rule.id,
+        });
         occupiedDates.add(dateKey);
       }
     }
 
-    if (createOperations.length > 0) {
-      await this.prisma.$transaction(createOperations);
+    if (assignmentsToCreate.length > 0) {
+      await this.prisma.planAssignment.createMany({
+        data: assignmentsToCreate,
+        skipDuplicates: true,
+      });
     }
   }
 

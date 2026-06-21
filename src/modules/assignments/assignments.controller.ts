@@ -39,6 +39,29 @@ import { Role } from '@prisma/client';
 export class AssignmentsController {
   constructor(private readonly assignmentsService: AssignmentsService) {}
 
+  @Get('client-options')
+  @ApiOperation({
+    summary: 'Get lightweight client options for assignment planning',
+  })
+  @ApiOkResponse({ description: 'Visible client options fetched successfully' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  getClientOptions(@CurrentUser() user: AuthenticatedUser) {
+    return this.assignmentsService.getClientOptions(user);
+  }
+
+  @Get('catalog-options')
+  @ApiOperation({
+    summary:
+      'Get lightweight training and diet options for assignment planning',
+  })
+  @ApiOkResponse({
+    description: 'Assignment catalog options fetched successfully',
+  })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  getCatalogOptions() {
+    return this.assignmentsService.getCatalogOptions();
+  }
+
   @Post('auto-rules')
   @ApiOperation({ summary: 'Create or replace the active weekly auto-assignment rule' })
   @ApiOkResponse({ description: 'Auto-assignment rule saved successfully' })

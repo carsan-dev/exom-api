@@ -35,12 +35,13 @@ function createAssignment(overrides: Record<string, unknown> = {}) {
 describe('AssignmentsService', () => {
   let service: AssignmentsService;
   let prisma: {
-    user: { findUnique: jest.Mock };
+    user: { findUnique: jest.Mock; findMany: jest.Mock };
     adminClientAssignment: { findFirst: jest.Mock };
-    training: { findFirst: jest.Mock };
-    diet: { findFirst: jest.Mock };
+    training: { findFirst: jest.Mock; findMany: jest.Mock };
+    diet: { findFirst: jest.Mock; findMany: jest.Mock };
     planAssignment: {
       create: jest.Mock;
+      createMany: jest.Mock;
       upsert: jest.Mock;
       findMany: jest.Mock;
       findUnique: jest.Mock;
@@ -86,18 +87,22 @@ describe('AssignmentsService', () => {
     prisma = {
       user: {
         findUnique: jest.fn(),
+        findMany: jest.fn(),
       },
       adminClientAssignment: {
         findFirst: jest.fn(),
       },
       training: {
         findFirst: jest.fn(),
+        findMany: jest.fn(),
       },
       diet: {
         findFirst: jest.fn(),
+        findMany: jest.fn(),
       },
       planAssignment: {
         create: jest.fn(),
+        createMany: jest.fn().mockResolvedValue({ count: 0 }),
         upsert: jest.fn(),
         findMany: jest.fn(),
         findUnique: jest.fn(),
@@ -130,6 +135,77 @@ describe('AssignmentsService', () => {
     service = new AssignmentsService(
       prisma as unknown as PrismaService,
       notifications as unknown as NotificationsService,
+    );
+  });
+
+  it('returns all lightweight client options for a super admin', async () => {
+    prisma.user.findMany.mockResolvedValue([
+      {
+        id: 'client-1',
+        email: 'client@exom.dev',
+        profile: { first_name: 'Ana', last_name: 'Díaz', avatar_url: null },
+      },
+    ]);
+
+    await expect(
+      service.getClientOptions(superAdminUser),
+    ).resolves.toHaveLength(1);
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { role: Role.CLIENT } }),
+    );
+  });
+
+  it('limits client options to the active admin portfolio', async () => {
+    prisma.user.findMany.mockResolvedValue([]);
+
+    await service.getClientOptions(adminUser);
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          role: Role.CLIENT,
+          clientOf: { some: { admin_id: 'admin-1', is_active: true } },
+        },
+      }),
+    );
+  });
+
+  it('returns only active lightweight assignment catalog options', async () => {
+    prisma.training.findMany.mockResolvedValue([
+      {
+        id: 'training-1',
+        name: 'Full Body',
+        type: 'FUERZA',
+        types: ['FUERZA'],
+        accentColor: null,
+        level: 'INTERMEDIO',
+        estimated_duration_min: 45,
+        estimated_calories: 300,
+        _count: { exercises: 8 },
+      },
+    ]);
+    prisma.diet.findMany.mockResolvedValue([
+      {
+        id: 'diet-1',
+        name: 'Equilibrada',
+        tags: ['saludable'],
+        total_calories: 2100,
+        total_protein_g: 140,
+        total_carbs_g: 220,
+        total_fat_g: 70,
+        _count: { meals: 5 },
+      },
+    ]);
+
+    await expect(service.getCatalogOptions()).resolves.toEqual({
+      trainings: [expect.objectContaining({ id: 'training-1', exercises_count: 8 })],
+      diets: [expect.objectContaining({ id: 'diet-1', meals_count: 5 })],
+    });
+    expect(prisma.training.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { is_active: true } }),
+    );
+    expect(prisma.diet.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { is_active: true } }),
     );
   });
 
@@ -509,7 +585,7 @@ describe('AssignmentsService', () => {
           auto_assignment_rule_id: 'rule-1',
         }),
       ]);
-    prisma.planAssignment.create.mockResolvedValue({});
+    prisma.planAssignment.createMany.mockResolvedValue({ count: 2 });
 
     const response = await service.getWeek(adminUser, {
       client_id: 'client-1',
@@ -517,22 +593,23 @@ describe('AssignmentsService', () => {
     });
 
     expect(response.week_start).toBe('2026-04-06');
-    expect(prisma.planAssignment.create).toHaveBeenCalledTimes(2);
-    expect(prisma.planAssignment.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        client_id: 'client-1',
-        date: new Date('2026-04-06T00:00:00.000Z'),
-        training_id: 'training-1',
-        auto_assignment_rule_id: 'rule-1',
-      }),
-    });
-    expect(prisma.planAssignment.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        date: new Date('2026-04-08T00:00:00.000Z'),
-        training_id: null,
-        diet_id: null,
-        is_rest_day: true,
-      }),
+    expect(prisma.planAssignment.createMany).toHaveBeenCalledTimes(1);
+    expect(prisma.planAssignment.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          client_id: 'client-1',
+          date: new Date('2026-04-06T00:00:00.000Z'),
+          training_id: 'training-1',
+          auto_assignment_rule_id: 'rule-1',
+        }),
+        expect.objectContaining({
+          date: new Date('2026-04-08T00:00:00.000Z'),
+          training_id: null,
+          diet_id: null,
+          is_rest_day: true,
+        }),
+      ]),
+      skipDuplicates: true,
     });
   });
 
