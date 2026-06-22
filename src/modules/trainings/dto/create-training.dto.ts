@@ -12,6 +12,7 @@ import {
   IsNotEmpty,
   Matches,
   IsIn,
+  IsBoolean,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Level } from '@prisma/client';
@@ -51,6 +52,11 @@ export class TrainingExerciseDto {
   @Min(1)
   sets: number;
 
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  request_set_tracking?: boolean = false;
+
   @ApiProperty()
   @IsString()
   reps_or_duration: string;
@@ -80,6 +86,11 @@ export class TrainingCircuitExerciseDto {
   @ApiProperty()
   @IsString()
   reps_or_duration: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  request_set_tracking?: boolean = false;
 
   @ApiPropertyOptional({
     default: 15,

@@ -4,6 +4,12 @@ import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { MediaType } from '@prisma/client';
 
 export class CreateFeedbackDto {
+  @ApiPropertyOptional({ description: 'Stable client-side upload ID for idempotency' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  client_upload_id?: string;
+
   @ApiPropertyOptional({ description: 'Exercise ID (optional)' })
   @IsOptional()
   @IsString()

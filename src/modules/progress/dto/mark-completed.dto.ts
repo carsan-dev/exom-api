@@ -1,5 +1,32 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsNumber, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsNumber,
+  IsString,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+
+export class CompletedSetDto {
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  set_number: number;
+
+  @ApiProperty()
+  @IsInt()
+  @Min(1)
+  reps: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  weight_kg?: number;
+}
 
 export class MarkExerciseDto {
   @ApiProperty()
@@ -19,6 +46,13 @@ export class MarkExerciseDto {
   @IsOptional()
   @IsNumber()
   weight_used?: number;
+
+  @ApiPropertyOptional({ type: [CompletedSetDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CompletedSetDto)
+  sets?: CompletedSetDto[];
 }
 
 export class MarkMealDto {

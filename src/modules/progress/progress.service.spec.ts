@@ -118,6 +118,55 @@ describe('ProgressService', () => {
     ).toHaveBeenCalledWith('client-1');
   });
 
+  it('stores per-set reps and weight when completing an exercise', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-06-22',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-1',
+      sets: [
+        { set_number: 1, reps: 12, weight_kg: 20 },
+        { set_number: 2, reps: 10, weight_kg: 20 },
+      ],
+    });
+
+    expect(prisma.dayProgress.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          exercises_completed: expect.arrayContaining([
+            expect.objectContaining({
+              sets: [
+                { set_number: 1, reps: 12, weight_kg: 20 },
+                { set_number: 2, reps: 10, weight_kg: 20 },
+              ],
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it('rejects duplicate set numbers', async () => {
+    await expect(
+      service.markExerciseCompleted('client-1', {
+        date: '2026-06-22',
+        exercise_id: 'exercise-1',
+        sets: [
+          { set_number: 1, reps: 12 },
+          { set_number: 1, reps: 10 },
+        ],
+      }),
+    ).rejects.toThrow('No se puede repetir el número de serie');
+  });
+
   it('notifies when completing training reaches a streak milestone', async () => {
     updateStreakSpy.mockRestore();
     prisma.planAssignment.findUnique.mockResolvedValue({

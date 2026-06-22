@@ -356,6 +356,7 @@ export class TrainingsService {
             position_in_block: position,
             sets: 1,
             reps_or_duration: exercise.reps_or_duration,
+            request_set_tracking: exercise.request_set_tracking ?? false,
             rest_seconds: exercise.rest_seconds ?? 15,
           })),
         });
@@ -371,6 +372,7 @@ export class TrainingsService {
           order: hasCircuits ? order * 1000 : order,
           sets: exercise.sets,
           reps_or_duration: exercise.reps_or_duration,
+          request_set_tracking: exercise.request_set_tracking ?? false,
           rest_seconds: exercise.rest_seconds ?? 60,
         },
       });

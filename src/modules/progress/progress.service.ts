@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -20,6 +20,7 @@ interface ExerciseCompletedEntry {
   training_exercise_id?: string;
   exercise_id: string;
   weight_used?: number;
+  sets?: Array<{ set_number: number; reps: number; weight_kg?: number }>;
   completed_at: string;
 }
 
@@ -190,6 +191,12 @@ export class ProgressService {
   }
 
   async markExerciseCompleted(clientId: string, dto: MarkExerciseDto) {
+    if (dto.sets) {
+      const setNumbers = dto.sets.map((set) => set.set_number);
+      if (new Set(setNumbers).size !== setNumbers.length) {
+        throw new BadRequestException('No se puede repetir el número de serie');
+      }
+    }
     const date = this.parseDate(dto.date);
     const assignment = await this.getAssignmentContext(clientId, date);
 
@@ -232,6 +239,7 @@ export class ProgressService {
       exercise_id: exerciseId!,
       completed_at: new Date().toISOString(),
       ...(dto.weight_used !== undefined && { weight_used: dto.weight_used }),
+      ...(dto.sets !== undefined && { sets: dto.sets }),
     });
 
     const progress = await this.prisma.$transaction(async (tx) => {

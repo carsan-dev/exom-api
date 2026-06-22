@@ -38,9 +38,21 @@ export class FeedbackService {
   }
 
   async create(clientId: string, dto: CreateFeedbackDto) {
+    if (dto.client_upload_id) {
+      const existing = await this.prisma.feedbackMedia.findUnique({
+        where: {
+          client_id_client_upload_id: {
+            client_id: clientId,
+            client_upload_id: dto.client_upload_id,
+          },
+        },
+      });
+      if (existing) return existing;
+    }
     const feedback = await this.prisma.feedbackMedia.create({
       data: {
         client_id: clientId,
+        client_upload_id: dto.client_upload_id,
         exercise_id: dto.exercise_id,
         media_type: dto.media_type,
         media_url: dto.media_url,

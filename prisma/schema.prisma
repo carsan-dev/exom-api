@@ -366,6 +366,7 @@ model TrainingExercise {
   position_in_block Int?
   sets             Int
   reps_or_duration String
+  request_set_tracking Boolean @default(false)
   /// Descanso entre series, en segundos.
   rest_seconds     Int    @default(60)
 
@@ -735,6 +736,7 @@ model UserAchievement {
 model FeedbackMedia {
   id             String         @id @default(uuid())
   client_id      String
+  client_upload_id String?
   exercise_id    String?
   media_type     MediaType
   media_url      String?
@@ -751,5 +753,6 @@ model FeedbackMedia {
   exercise Exercise? @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
 
   @@index([status, reviewed_at, media_deleted_at])
+  @@unique([client_id, client_upload_id])
   @@map("feedback_media")
 }

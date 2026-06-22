@@ -8,6 +8,7 @@ describe('FeedbackService', () => {
   let prisma: {
     feedbackMedia: {
       create: jest.Mock;
+      findUnique: jest.Mock;
     };
     adminClientAssignment: {
       findMany: jest.Mock;
@@ -21,6 +22,7 @@ describe('FeedbackService', () => {
     prisma = {
       feedbackMedia: {
         create: jest.fn(),
+        findUnique: jest.fn(),
       },
       adminClientAssignment: {
         findMany: jest.fn(),
@@ -136,5 +138,24 @@ describe('FeedbackService', () => {
         client_id: 'client-1',
       },
     );
+  });
+
+  it('returns existing feedback for a repeated client upload id', async () => {
+    prisma.feedbackMedia.findUnique.mockResolvedValue({
+      id: 'feedback-existing',
+      client_id: 'client-1',
+      client_upload_id: 'upload-1',
+    });
+
+    await expect(
+      service.create('client-1', {
+        client_upload_id: 'upload-1',
+        media_type: MediaType.VIDEO,
+        media_url: 'https://cdn.exom.dev/video.mp4',
+      }),
+    ).resolves.toMatchObject({ id: 'feedback-existing' });
+
+    expect(prisma.feedbackMedia.create).not.toHaveBeenCalled();
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 });
