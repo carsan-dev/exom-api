@@ -97,8 +97,8 @@ describe('ProgressService', () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
       training: {
         exercises: [
-          { exercise_id: 'exercise-1' },
-          { exercise_id: 'exercise-2' },
+          { id: 'training-exercise-1', exercise_id: 'exercise-1' },
+          { id: 'training-exercise-2', exercise_id: 'exercise-2' },
         ],
       },
       diet: null,
@@ -154,6 +154,75 @@ describe('ProgressService', () => {
     );
   });
 
+  it('replaces a legacy exercise entry when recording its training instance', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          exercise_id: 'exercise-1',
+          completed_at: '2026-06-22T10:00:00.000Z',
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+    });
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-06-22',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-1',
+      sets: [{ set_number: 1, reps: 12 }],
+    });
+
+    const entries = prisma.dayProgress.upsert.mock.calls[0][0].update
+      .exercises_completed as Array<Record<string, unknown>>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(
+      expect.objectContaining({
+        training_exercise_id: 'training-exercise-1',
+        exercise_id: 'exercise-1',
+      }),
+    );
+  });
+
+  it('canonicalizes legacy entries when completing a training', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          exercise_id: 'exercise-1',
+          completed_at: '2026-06-22T10:00:00.000Z',
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+    });
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.completeTraining('client-1', { date: '2026-06-22' });
+
+    expect(
+      prisma.dayProgress.upsert.mock.calls[0][0].update.exercises_completed,
+    ).toEqual([
+      expect.objectContaining({
+        training_exercise_id: 'training-exercise-1',
+        exercise_id: 'exercise-1',
+        completed_at: '2026-06-22T10:00:00.000Z',
+      }),
+    ]);
+  });
+
   it('rejects duplicate set numbers', async () => {
     await expect(
       service.markExerciseCompleted('client-1', {
@@ -181,7 +250,9 @@ describe('ProgressService', () => {
     updateStreakSpy.mockRestore();
     prisma.planAssignment.findUnique.mockResolvedValue({
       training: {
-        exercises: [{ exercise_id: 'exercise-1' }],
+        exercises: [
+          { id: 'training-exercise-1', exercise_id: 'exercise-1' },
+        ],
       },
       diet: null,
     });

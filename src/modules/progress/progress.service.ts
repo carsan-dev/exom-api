@@ -239,7 +239,8 @@ export class ProgressService {
 
     const filtered = currentExercises.filter((entry) =>
       trainingExerciseId
-        ? entry.training_exercise_id !== trainingExerciseId
+        ? entry.training_exercise_id !== trainingExerciseId &&
+          !(!entry.training_exercise_id && entry.exercise_id === exerciseId)
         : entry.exercise_id !== dto.exercise_id,
     );
 
@@ -318,14 +319,17 @@ export class ProgressService {
       (trainingExerciseId) => {
         const exerciseId =
           assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
-        return (
+        const existingEntry =
           currentByTrainingExercise.get(trainingExerciseId) ??
-          currentByExercise.get(exerciseId) ?? {
-            training_exercise_id: trainingExerciseId,
-            exercise_id: exerciseId,
-            completed_at: new Date().toISOString(),
-          }
-        );
+          currentByExercise.get(exerciseId);
+
+        return {
+          ...existingEntry,
+          training_exercise_id: trainingExerciseId,
+          exercise_id: exerciseId,
+          completed_at:
+            existingEntry?.completed_at ?? new Date().toISOString(),
+        };
       },
     );
 
