@@ -20,7 +20,7 @@ interface ExerciseCompletedEntry {
   training_exercise_id?: string;
   exercise_id: string;
   weight_used?: number;
-  sets?: Array<{ set_number: number; reps: number; weight_kg?: number }>;
+  sets?: Array<{ set_number: number; reps?: number; weight_kg?: number }>;
   completed_at: string;
 }
 
@@ -192,6 +192,15 @@ export class ProgressService {
 
   async markExerciseCompleted(clientId: string, dto: MarkExerciseDto) {
     if (dto.sets) {
+      if (
+        dto.sets.some(
+          (set) => set.reps == null && set.weight_kg == null,
+        )
+      ) {
+        throw new BadRequestException(
+          'Cada serie debe incluir repeticiones o peso',
+        );
+      }
       const setNumbers = dto.sets.map((set) => set.set_number);
       if (new Set(setNumbers).size !== setNumbers.length) {
         throw new BadRequestException('No se puede repetir el número de serie');

@@ -167,6 +167,16 @@ describe('ProgressService', () => {
     ).rejects.toThrow('No se puede repetir el número de serie');
   });
 
+  it('rejects sets without reps or weight', async () => {
+    await expect(
+      service.markExerciseCompleted('client-1', {
+        date: '2026-06-22',
+        exercise_id: 'exercise-1',
+        sets: [{ set_number: 1 }],
+      }),
+    ).rejects.toThrow('Cada serie debe incluir repeticiones o peso');
+  });
+
   it('notifies when completing training reaches a streak milestone', async () => {
     updateStreakSpy.mockRestore();
     prisma.planAssignment.findUnique.mockResolvedValue({

@@ -16,10 +16,11 @@ export class CompletedSetDto {
   @Min(1)
   set_number: number;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsInt()
   @Min(1)
-  reps: number;
+  reps?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
