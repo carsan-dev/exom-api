@@ -69,7 +69,6 @@ describe('UsersController', () => {
       .expect(200);
 
     expect(usersService.findAll).toHaveBeenCalledWith(
-      Role.ADMIN,
       expect.objectContaining({
         role: Role.ADMIN,
         page: 2,

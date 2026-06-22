@@ -68,7 +68,9 @@ describe('RecapsService', () => {
     });
 
     await expect(service.create('client-1', createRecapDto)).rejects.toThrow(
-      new ForbiddenException('Only draft recaps can be overwritten'),
+      new ForbiddenException(
+        'You already have a submitted recap for this week',
+      ),
     );
 
     expect(prisma.weeklyRecap.create).not.toHaveBeenCalled();

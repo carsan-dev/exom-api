@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   HttpException,
   HttpStatus,
   UnauthorizedException,
@@ -224,7 +223,7 @@ describe('AuthService', () => {
     });
   });
 
-  it('rejects social login when the email already belongs to another firebase uid', async () => {
+  it('links social login when the verified email belongs to an existing user', async () => {
     verifyIdTokenMock.mockResolvedValue({
       uid: 'firebase-google-2',
       email: 'client@exom.dev',
@@ -244,15 +243,38 @@ describe('AuthService', () => {
           last_name: 'User',
           avatar_url: null,
         },
-      });
+      })
+      .mockResolvedValueOnce(null);
+    prisma.user.update.mockResolvedValue({
+      id: 'user-1',
+      email: 'client@exom.dev',
+      is_active: true,
+      is_locked: false,
+      firebase_uid: 'firebase-google-2',
+      role: 'CLIENT',
+      profile: {
+        first_name: 'Client',
+        last_name: 'User',
+        avatar_url: null,
+      },
+    });
+    createCustomTokenMock.mockResolvedValue('custom-social-token');
 
     await expect(
       service.socialLogin({ token: 'token-2', provider: 'google' }),
-    ).rejects.toThrow(
-      new ConflictException(
-        'Tu cuenta EXOM ya existe con otro método de acceso. Inicia sesión con tu método actual para vincular también google.',
-      ),
+    ).resolves.toEqual(
+      expect.objectContaining({ access_token: 'custom-social-token' }),
     );
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-1' },
+      data: {
+        firebase_uid: 'firebase-google-2',
+        auth_provider: 'google',
+        login_attempts: 0,
+        locked_at: null,
+      },
+      include: { profile: true },
+    });
   });
 
   it('throws when getMe cannot find the user', async () => {
