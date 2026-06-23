@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class PaginationDto {
   @ApiPropertyOptional({ default: 1, minimum: 1 })
@@ -16,6 +16,16 @@ export class PaginationDto {
   @IsInt()
   @Min(1)
   limit?: number = 20;
+
+  @ApiPropertyOptional({ description: 'Field used for server-side sorting' })
+  @IsOptional()
+  @IsString()
+  sort_by?: string;
+
+  @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'asc' })
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sort_dir?: 'asc' | 'desc' = 'asc';
 
   get skip(): number {
     return ((this.page ?? 1) - 1) * (this.limit ?? 20);
