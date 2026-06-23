@@ -24,6 +24,12 @@ export class CompletedSetDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  seconds?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsNumber()
   @Min(0)
   weight_kg?: number;

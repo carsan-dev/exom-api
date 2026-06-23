@@ -20,7 +20,12 @@ interface ExerciseCompletedEntry {
   training_exercise_id?: string;
   exercise_id: string;
   weight_used?: number;
-  sets?: Array<{ set_number: number; reps?: number; weight_kg?: number }>;
+  sets?: Array<{
+    set_number: number;
+    reps?: number;
+    seconds?: number;
+    weight_kg?: number;
+  }>;
   completed_at: string;
 }
 
@@ -190,15 +195,62 @@ export class ProgressService {
     return progress;
   }
 
+  async getPreviousExercisePerformances(
+    clientId: string,
+    exerciseIdsCsv: string,
+    beforeStr: string,
+  ) {
+    const exerciseIds = [
+      ...new Set(
+        exerciseIdsCsv
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (!exerciseIds.length) {
+      return {};
+    }
+
+    const before = this.parseDate(beforeStr);
+    const pending = new Set(exerciseIds);
+    const result: Record<string, ExerciseCompletedEntry & { date: Date }> = {};
+
+    const progressDays = await this.prisma.dayProgress.findMany({
+      where: {
+        client_id: clientId,
+        date: { lt: before },
+      },
+      orderBy: { date: 'desc' },
+      take: 180,
+    });
+
+    for (const day of progressDays) {
+      if (!pending.size) break;
+
+      const entries = this.parseExercisesCompleted(day.exercises_completed);
+      for (const entry of entries) {
+        if (!pending.has(entry.exercise_id)) continue;
+        if (!entry.sets?.length && entry.weight_used == null) continue;
+
+        result[entry.exercise_id] = { ...entry, date: day.date };
+        pending.delete(entry.exercise_id);
+      }
+    }
+
+    return result;
+  }
+
   async markExerciseCompleted(clientId: string, dto: MarkExerciseDto) {
     if (dto.sets) {
       if (
         dto.sets.some(
-          (set) => set.reps == null && set.weight_kg == null,
+          (set) =>
+            set.reps == null && set.seconds == null && set.weight_kg == null,
         )
       ) {
         throw new BadRequestException(
-          'Cada serie debe incluir repeticiones o peso',
+          'Cada serie debe incluir repeticiones, segundos o peso',
         );
       }
       const setNumbers = dto.sets.map((set) => set.set_number);

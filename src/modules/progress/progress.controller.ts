@@ -46,6 +46,32 @@ export class ProgressController {
     return this.progressService.getDayProgress(user.id, date);
   }
 
+  @Get('exercises/previous')
+  @ApiOperation({ summary: 'Get previous recorded exercise performances' })
+  @ApiQuery({
+    name: 'exercise_ids',
+    required: true,
+    type: String,
+    description: 'Comma-separated exercise ids',
+  })
+  @ApiQuery({
+    name: 'before',
+    required: true,
+    type: String,
+    description: 'YYYY-MM-DD',
+  })
+  getPreviousExercisePerformances(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('exercise_ids') exerciseIds: string,
+    @Query('before') before: string,
+  ): Promise<Record<string, unknown>> {
+    return this.progressService.getPreviousExercisePerformances(
+      user.id,
+      exerciseIds,
+      before,
+    );
+  }
+
   @Post('exercises/complete')
   @ApiOperation({ summary: 'Mark an exercise as completed' })
   markExerciseCompleted(

@@ -14,6 +14,7 @@ describe('ProgressService', () => {
     };
     dayProgress: {
       findUnique: jest.Mock;
+      findMany: jest.Mock;
       upsert: jest.Mock;
     };
     streak: {
@@ -45,6 +46,7 @@ describe('ProgressService', () => {
       },
       dayProgress: {
         findUnique: jest.fn(),
+        findMany: jest.fn(),
         upsert: jest.fn(),
       },
       streak: {
@@ -154,6 +156,85 @@ describe('ProgressService', () => {
     );
   });
 
+  it('stores per-set seconds when completing a timed exercise', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-06-22',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-1',
+      sets: [{ set_number: 1, seconds: 40 }],
+    });
+
+    expect(prisma.dayProgress.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          exercises_completed: expect.arrayContaining([
+            expect.objectContaining({
+              sets: [{ set_number: 1, seconds: 40 }],
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it('returns previous performances before the requested date', async () => {
+    prisma.dayProgress.findMany.mockResolvedValue([
+      {
+        date: new Date('2026-06-21T00:00:00.000Z'),
+        exercises_completed: [
+          {
+            exercise_id: 'exercise-1',
+            sets: [{ set_number: 1, seconds: 45 }],
+            completed_at: '2026-06-21T10:00:00.000Z',
+          },
+        ],
+      },
+      {
+        date: new Date('2026-06-20T00:00:00.000Z'),
+        exercises_completed: [
+          {
+            exercise_id: 'exercise-2',
+            sets: [{ set_number: 1, reps: 12, weight_kg: 20 }],
+            completed_at: '2026-06-20T10:00:00.000Z',
+          },
+        ],
+      },
+    ]);
+
+    await expect(
+      service.getPreviousExercisePerformances(
+        'client-1',
+        'exercise-1,exercise-2',
+        '2026-06-22',
+      ),
+    ).resolves.toEqual({
+      'exercise-1': expect.objectContaining({
+        sets: [{ set_number: 1, seconds: 45 }],
+      }),
+      'exercise-2': expect.objectContaining({
+        sets: [{ set_number: 1, reps: 12, weight_kg: 20 }],
+      }),
+    });
+
+    expect(prisma.dayProgress.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          client_id: 'client-1',
+          date: { lt: new Date('2026-06-22T00:00:00.000Z') },
+        }),
+      }),
+    );
+  });
+
   it('replaces a legacy exercise entry when recording its training instance', async () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
       training: {
@@ -236,14 +317,14 @@ describe('ProgressService', () => {
     ).rejects.toThrow('No se puede repetir el número de serie');
   });
 
-  it('rejects sets without reps or weight', async () => {
+  it('rejects sets without reps, seconds or weight', async () => {
     await expect(
       service.markExerciseCompleted('client-1', {
         date: '2026-06-22',
         exercise_id: 'exercise-1',
         sets: [{ set_number: 1 }],
       }),
-    ).rejects.toThrow('Cada serie debe incluir repeticiones o peso');
+    ).rejects.toThrow('Cada serie debe incluir repeticiones, segundos o peso');
   });
 
   it('notifies when completing training reaches a streak milestone', async () => {
