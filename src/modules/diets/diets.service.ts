@@ -3,7 +3,7 @@
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { CatalogColorType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
@@ -15,6 +15,8 @@ import {
 import { DietsQueryDto } from './dto/diets-query.dto';
 
 type DietSortField = 'name' | 'updated_at' | 'created_at';
+const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
+const DEFAULT_CATALOG_COLOR = '#6B7280';
 
 const mealInclude = {
   ingredients: {
@@ -130,6 +132,44 @@ export class DietsService {
     return Array.from(unique.values()).sort((left, right) =>
       left.localeCompare(right, 'es', { sensitivity: 'base' }),
     );
+  }
+
+  private normalizeCatalogColor(value: string) {
+    const normalizedValue = value.trim().toUpperCase();
+
+    if (!CATALOG_COLOR_REGEX.test(normalizedValue)) {
+      throw new BadRequestException(
+        'El color del catálogo debe ser un valor hex #RRGGBB válido',
+      );
+    }
+
+    return normalizedValue;
+  }
+
+  private async enrichCatalogValuesWithColors(
+    catalogType: CatalogColorType,
+    values: string[],
+  ) {
+    if (values.length === 0) {
+      return [];
+    }
+
+    const keys = values.map((value) => this.getCatalogKey(value));
+    const colorRows = await this.prisma.catalogColor.findMany({
+      where: {
+        catalog_type: catalogType,
+        normalized_key: { in: keys },
+      },
+      select: { normalized_key: true, color: true },
+    });
+    const colorsByKey = new Map(
+      colorRows.map((row) => [row.normalized_key, row.color]),
+    );
+
+    return values.map((value) => ({
+      value,
+      color: colorsByKey.get(this.getCatalogKey(value)) ?? DEFAULT_CATALOG_COLOR,
+    }));
   }
 
   private normalizeCatalogValue(value: string): string {
@@ -334,9 +374,14 @@ export class DietsService {
       select: { nutritional_badges: true },
     });
 
+    const values = this.collectUnique(
+      meals.map((meal) => meal.nutritional_badges),
+    );
+
     return {
-      nutritional_badges: this.collectUnique(
-        meals.map((meal) => meal.nutritional_badges),
+      nutritional_badges: await this.enrichCatalogValuesWithColors(
+        CatalogColorType.diet_nutritional_badge,
+        values,
       ),
     };
   }
@@ -379,7 +424,7 @@ export class DietsService {
     );
   }
 
-  renameNutritionalBadge(from: string, to: string) {
+  async renameNutritionalBadge(from: string, to: string) {
     const normalizedFrom = this.normalizeCatalogValue(from);
     const normalizedTo = this.normalizeCatalogValue(to);
 
@@ -395,15 +440,63 @@ export class DietsService {
       throw new BadRequestException('El valor nuevo debe ser diferente');
     }
 
-    return this.mutateNutritionalBadges(normalizedTo, (badges) =>
+    const result = await this.mutateNutritionalBadges(normalizedTo, (badges) =>
       this.replaceCatalogValue(badges, normalizedFrom, normalizedTo),
     );
+
+    await this.prisma.catalogColor.upsert({
+      where: {
+        catalog_type_normalized_key: {
+          catalog_type: CatalogColorType.diet_nutritional_badge,
+          normalized_key: this.getCatalogKey(normalizedFrom),
+        },
+      },
+      update: {
+        normalized_key: this.getCatalogKey(normalizedTo),
+        value: normalizedTo,
+      },
+      create: {
+        catalog_type: CatalogColorType.diet_nutritional_badge,
+        normalized_key: this.getCatalogKey(normalizedTo),
+        value: normalizedTo,
+        color: DEFAULT_CATALOG_COLOR,
+      },
+    });
+
+    return result;
   }
 
   deleteNutritionalBadge(value: string) {
     return this.mutateNutritionalBadges(value, (badges) =>
       this.removeCatalogValue(badges, value),
     );
+  }
+
+  async updateNutritionalBadgeColor(value: string, color: string) {
+    const normalizedValue = this.normalizeCatalogValue(value);
+
+    if (!normalizedValue) {
+      throw new BadRequestException('El badge nutricional no puede estar vacío');
+    }
+
+    const normalizedColor = this.normalizeCatalogColor(color);
+    const colorRow = await this.prisma.catalogColor.upsert({
+      where: {
+        catalog_type_normalized_key: {
+          catalog_type: CatalogColorType.diet_nutritional_badge,
+          normalized_key: this.getCatalogKey(normalizedValue),
+        },
+      },
+      update: { value: normalizedValue, color: normalizedColor },
+      create: {
+        catalog_type: CatalogColorType.diet_nutritional_badge,
+        normalized_key: this.getCatalogKey(normalizedValue),
+        value: normalizedValue,
+        color: normalizedColor,
+      },
+    });
+
+    return { value: colorRow.value, color: colorRow.color };
   }
 
   async findAll(query: DietsQueryDto) {

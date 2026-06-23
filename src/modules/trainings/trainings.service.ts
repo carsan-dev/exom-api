@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TrainingBlockType } from '@prisma/client';
+import { CatalogColorType, Prisma, TrainingBlockType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
@@ -97,6 +97,8 @@ const trainingListSelect = {
 };
 
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
+const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
+const DEFAULT_CATALOG_COLOR = '#6B7280';
 
 function normalizeSearchText(value: string) {
   return value
@@ -130,6 +132,44 @@ export class TrainingsService {
     return Array.from(unique.values()).sort((left, right) =>
       left.localeCompare(right, 'es', { sensitivity: 'base' }),
     );
+  }
+
+  private normalizeCatalogColor(value: string) {
+    const normalizedValue = value.trim().toUpperCase();
+
+    if (!CATALOG_COLOR_REGEX.test(normalizedValue)) {
+      throw new BadRequestException(
+        'El color del catálogo debe ser un valor hex #RRGGBB válido',
+      );
+    }
+
+    return normalizedValue;
+  }
+
+  private async enrichCatalogValuesWithColors(
+    catalogType: CatalogColorType,
+    values: string[],
+  ) {
+    if (values.length === 0) {
+      return [];
+    }
+
+    const keys = values.map((value) => this.getCatalogKey(value));
+    const colorRows = await this.prisma.catalogColor.findMany({
+      where: {
+        catalog_type: catalogType,
+        normalized_key: { in: keys },
+      },
+      select: { normalized_key: true, color: true },
+    });
+    const colorsByKey = new Map(
+      colorRows.map((row) => [row.normalized_key, row.color]),
+    );
+
+    return values.map((value) => ({
+      value,
+      color: colorsByKey.get(this.getCatalogKey(value)) ?? DEFAULT_CATALOG_COLOR,
+    }));
   }
 
   private normalizeCatalogValue(value: string): string {
@@ -616,7 +656,25 @@ export class TrainingsService {
       ];
     });
 
-    const updates = [...trainingUpdates, ...achievementUpdates];
+    const colorUpdate = this.prisma.catalogColor.upsert({
+      where: {
+        catalog_type_normalized_key: {
+          catalog_type: CatalogColorType.training_type,
+          normalized_key: this.getCatalogKey(normalizedFrom),
+        },
+      },
+      update: {
+        normalized_key: this.getCatalogKey(normalizedTo),
+        value: normalizedTo,
+      },
+      create: {
+        catalog_type: CatalogColorType.training_type,
+        normalized_key: this.getCatalogKey(normalizedTo),
+        value: normalizedTo,
+        color: DEFAULT_CATALOG_COLOR,
+      },
+    });
+    const updates = [...trainingUpdates, ...achievementUpdates, colorUpdate];
 
     if (updates.length > 0) {
       await this.prisma.$transaction(updates);
@@ -624,7 +682,7 @@ export class TrainingsService {
 
     return {
       value: normalizedTo,
-      affected_count: updates.length,
+      affected_count: trainingUpdates.length + achievementUpdates.length,
     };
   }
 
@@ -647,11 +705,38 @@ export class TrainingsService {
       select: { type: true, types: true },
     });
 
+    const values = this.collectUniqueCatalogValues(
+      trainings.flatMap((training) => this.resolveTrainingTypes(training)),
+    );
+
     return {
-      types: this.collectUniqueCatalogValues(
-        trainings.flatMap((training) => this.resolveTrainingTypes(training)),
+      types: await this.enrichCatalogValuesWithColors(
+        CatalogColorType.training_type,
+        values,
       ),
     };
+  }
+
+  async updateTypeColor(value: string, color: string) {
+    const normalizedValue = this.normalizeTrainingTypeValue(value);
+    const normalizedColor = this.normalizeCatalogColor(color);
+    const colorRow = await this.prisma.catalogColor.upsert({
+      where: {
+        catalog_type_normalized_key: {
+          catalog_type: CatalogColorType.training_type,
+          normalized_key: this.getCatalogKey(normalizedValue),
+        },
+      },
+      update: { value: normalizedValue, color: normalizedColor },
+      create: {
+        catalog_type: CatalogColorType.training_type,
+        normalized_key: this.getCatalogKey(normalizedValue),
+        value: normalizedValue,
+        color: normalizedColor,
+      },
+    });
+
+    return { value: colorRow.value, color: colorRow.color };
   }
 
   async findAll(query: TrainingsQueryDto) {

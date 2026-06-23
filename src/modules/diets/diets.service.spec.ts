@@ -10,6 +10,15 @@ describe('DietsService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
     };
+    meal: {
+      findMany: jest.Mock;
+      update: jest.Mock;
+    };
+    catalogColor: {
+      findMany: jest.Mock;
+      upsert: jest.Mock;
+    };
+    $transaction: jest.Mock;
   };
 
   beforeEach(() => {
@@ -18,6 +27,15 @@ describe('DietsService', () => {
         findMany: jest.fn(),
         count: jest.fn(),
       },
+      meal: {
+        findMany: jest.fn(),
+        update: jest.fn(),
+      },
+      catalogColor: {
+        findMany: jest.fn(),
+        upsert: jest.fn(),
+      },
+      $transaction: jest.fn().mockResolvedValue([]),
     };
 
     service = new DietsService(prisma as unknown as PrismaService);
@@ -141,5 +159,71 @@ describe('DietsService', () => {
         }),
       ),
     ).rejects.toThrow('No se puede combinar group_id con ungrouped');
+  });
+
+  it('lists nutritional badges with configured color and neutral fallback', async () => {
+    prisma.meal.findMany.mockResolvedValue([
+      { nutritional_badges: ['Alto en proteína', 'Bajo en grasa'] },
+      { nutritional_badges: ['alto en proteína'] },
+    ]);
+    prisma.catalogColor.findMany.mockResolvedValue([
+      { normalized_key: 'alto en proteina', color: '#22C55E' },
+    ]);
+
+    await expect(service.findAllNutritionalBadges()).resolves.toEqual({
+      nutritional_badges: [
+        { value: 'Alto en proteína', color: '#22C55E' },
+        { value: 'Bajo en grasa', color: '#6B7280' },
+      ],
+    });
+  });
+
+  it('renames nutritional badges and preserves configured color row', async () => {
+    prisma.meal.findMany.mockResolvedValue([
+      { id: 'meal-1', nutritional_badges: ['Proteína'] },
+      { id: 'meal-2', nutritional_badges: ['Fibra'] },
+    ]);
+    prisma.meal.update.mockResolvedValue({});
+    prisma.catalogColor.upsert.mockResolvedValue({});
+
+    await expect(service.renameNutritionalBadge('Proteína', 'Proteica')).resolves.toEqual({
+      value: 'Proteica',
+      affected_count: 1,
+    });
+
+    expect(prisma.catalogColor.upsert).toHaveBeenCalledWith({
+      where: {
+        catalog_type_normalized_key: {
+          catalog_type: 'diet_nutritional_badge',
+          normalized_key: 'proteina',
+        },
+      },
+      update: {
+        normalized_key: 'proteica',
+        value: 'Proteica',
+      },
+      create: {
+        catalog_type: 'diet_nutritional_badge',
+        normalized_key: 'proteica',
+        value: 'Proteica',
+        color: '#6B7280',
+      },
+    });
+  });
+
+  it('updates nutritional badge color with hex validation', async () => {
+    prisma.catalogColor.upsert.mockResolvedValue({
+      value: 'Proteína',
+      color: '#22C55E',
+    });
+
+    await expect(service.updateNutritionalBadgeColor('Proteína', '#22c55e')).resolves.toEqual({
+      value: 'Proteína',
+      color: '#22C55E',
+    });
+
+    await expect(service.updateNutritionalBadgeColor('Proteína', 'green')).rejects.toThrow(
+      'El color del catálogo debe ser un valor hex #RRGGBB válido',
+    );
   });
 });

@@ -104,6 +104,11 @@ enum TrainingBlockType {
   CIRCUIT
 }
 
+enum CatalogColorType {
+  training_type
+  diet_nutritional_badge
+}
+
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
@@ -377,6 +382,19 @@ model TrainingExercise {
   @@unique([training_id, order])
   @@index([block_id, position_in_block])
   @@map("training_exercises")
+}
+
+model CatalogColor {
+  id             String           @id @default(uuid())
+  catalog_type   CatalogColorType
+  normalized_key String
+  value          String
+  color          String
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
+
+  @@unique([catalog_type, normalized_key])
+  @@map("catalog_colors")
 }
 
 // ─── Diet & Meal & Ingredient ─────────────────────────────────────────────────

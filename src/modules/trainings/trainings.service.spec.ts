@@ -16,6 +16,10 @@ describe('TrainingsService', () => {
       findMany: jest.Mock;
       update: jest.Mock;
     };
+    catalogColor: {
+      findMany: jest.Mock;
+      upsert: jest.Mock;
+    };
   };
 
   beforeEach(() => {
@@ -29,6 +33,10 @@ describe('TrainingsService', () => {
       achievement: {
         findMany: jest.fn(),
         update: jest.fn(),
+      },
+      catalogColor: {
+        findMany: jest.fn(),
+        upsert: jest.fn(),
       },
     };
 
@@ -198,9 +206,18 @@ describe('TrainingsService', () => {
       { type: 'pilates', types: [] },
       { type: 'HIIT', types: ['HIIT', 'cardio'] },
     ]);
+    prisma.catalogColor.findMany.mockResolvedValue([
+      { normalized_key: 'fuerza', color: '#3B82F6' },
+      { normalized_key: 'hiit', color: '#F97316' },
+    ]);
 
     await expect(service.findAllTypes()).resolves.toEqual({
-      types: ['Cardio', 'FUERZA', 'HIIT', 'Pilates'],
+      types: [
+        { value: 'Cardio', color: '#6B7280' },
+        { value: 'FUERZA', color: '#3B82F6' },
+        { value: 'HIIT', color: '#F97316' },
+        { value: 'Pilates', color: '#6B7280' },
+      ],
     });
   });
 
@@ -226,6 +243,7 @@ describe('TrainingsService', () => {
     ]);
     prisma.training.update.mockResolvedValue({});
     prisma.achievement.update.mockResolvedValue({});
+    prisma.catalogColor.upsert.mockResolvedValue({});
 
     await expect(service.renameType('Pilates', 'Movilidad')).resolves.toEqual({
       value: 'Movilidad',
@@ -252,6 +270,40 @@ describe('TrainingsService', () => {
       },
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(4);
+    expect(prisma.catalogColor.upsert).toHaveBeenCalledWith({
+      where: {
+        catalog_type_normalized_key: {
+          catalog_type: 'training_type',
+          normalized_key: 'pilates',
+        },
+      },
+      update: {
+        normalized_key: 'movilidad',
+        value: 'Movilidad',
+      },
+      create: {
+        catalog_type: 'training_type',
+        normalized_key: 'movilidad',
+        value: 'Movilidad',
+        color: '#6B7280',
+      },
+    });
+    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(5);
+  });
+
+  it('updates training type color with hex validation', async () => {
+    prisma.catalogColor.upsert.mockResolvedValue({
+      value: 'Pilates',
+      color: '#22C55E',
+    });
+
+    await expect(service.updateTypeColor('Pilates', '#22c55e')).resolves.toEqual({
+      value: 'Pilates',
+      color: '#22C55E',
+    });
+
+    await expect(service.updateTypeColor('Pilates', 'green')).rejects.toThrow(
+      'El color del catálogo debe ser un valor hex #RRGGBB válido',
+    );
   });
 });

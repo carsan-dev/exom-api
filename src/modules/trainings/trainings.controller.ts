@@ -30,6 +30,10 @@ import {
   CatalogMutationResponseDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
+import {
+  CatalogColorMutationResponseDto,
+  UpdateCatalogColorDto,
+} from '../../common/dto/catalog-color.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -92,6 +96,17 @@ export class TrainingsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   renameType(@Body() dto: RenameCatalogValueDto) {
     return this.trainingsService.renameType(dto.from, dto.to);
+  }
+
+  @Patch('types/:value/color')
+  @ApiOperation({ summary: 'Update the display color for a training type' })
+  @ApiOkResponse({ type: CatalogColorMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  updateTypeColor(
+    @Param('value') value: string,
+    @Body() dto: UpdateCatalogColorDto,
+  ) {
+    return this.trainingsService.updateTypeColor(value, dto.color);
   }
 
   @Patch('tags/rename')

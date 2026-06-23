@@ -33,6 +33,10 @@ import {
   CatalogMutationResponseDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
+import {
+  CatalogColorMutationResponseDto,
+  UpdateCatalogColorDto,
+} from '../../common/dto/catalog-color.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -121,6 +125,19 @@ export class DietsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   renameNutritionalBadge(@Body() dto: RenameCatalogValueDto) {
     return this.dietsService.renameNutritionalBadge(dto.from, dto.to);
+  }
+
+  @Patch('nutritional-badges/:value/color')
+  @ApiOperation({
+    summary: 'Update the display color for a nutritional badge',
+  })
+  @ApiOkResponse({ type: CatalogColorMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  updateNutritionalBadgeColor(
+    @Param('value') value: string,
+    @Body() dto: UpdateCatalogColorDto,
+  ) {
+    return this.dietsService.updateNutritionalBadgeColor(value, dto.color);
   }
 
   @Delete('nutritional-badges/:value')
