@@ -62,7 +62,7 @@ describe('TrainingsService', () => {
         type: 'HIIT',
         types: ['HIIT'],
         accentColor: null,
-        exercises: [],
+        _count: { exercises: 3 },
       },
     ]);
     prisma.training.count.mockResolvedValue(1);
@@ -74,8 +74,7 @@ describe('TrainingsService', () => {
           type: 'HIIT',
           types: ['HIIT'],
           accentColor: null,
-          exercises: [],
-          items: [],
+          exercises_count: 3,
         },
       ],
       total: 1,
@@ -89,10 +88,8 @@ describe('TrainingsService', () => {
       skip: 0,
       take: 20,
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      include: expect.objectContaining({
-        exercises: expect.objectContaining({
-          orderBy: { order: 'asc' },
-        }),
+      select: expect.objectContaining({
+        _count: { select: { exercises: true } },
       }),
     });
     expect(prisma.training.count).toHaveBeenCalledWith({
@@ -115,7 +112,7 @@ describe('TrainingsService', () => {
         type: 'FLEXIBILIDAD',
         types: ['FLEXIBILIDAD'],
         accentColor: null,
-        exercises: [],
+        _count: { exercises: 2 },
       },
       {
         id: 'training-2',
@@ -123,7 +120,7 @@ describe('TrainingsService', () => {
         type: 'FLEXIBILIDAD',
         types: ['FLEXIBILIDAD'],
         accentColor: null,
-        exercises: [],
+        _count: { exercises: 4 },
       },
       {
         id: 'training-3',
@@ -131,7 +128,7 @@ describe('TrainingsService', () => {
         type: 'CARDIO',
         types: ['CARDIO'],
         accentColor: null,
-        exercises: [],
+        _count: { exercises: 1 },
       },
     ]);
 
@@ -143,8 +140,7 @@ describe('TrainingsService', () => {
           type: 'FLEXIBILIDAD',
           types: ['FLEXIBILIDAD'],
           accentColor: null,
-          exercises: [],
-          items: [],
+          exercises_count: 4,
         },
       ],
       total: 2,
@@ -162,8 +158,8 @@ describe('TrainingsService', () => {
         ],
       },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      include: expect.objectContaining({
-        exercises: expect.any(Object),
+      select: expect.objectContaining({
+        _count: { select: { exercises: true } },
       }),
     });
     expect(prisma.training.count).not.toHaveBeenCalled();

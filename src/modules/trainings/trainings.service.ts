@@ -73,6 +73,29 @@ const trainingExercisesInclude = {
   },
 };
 
+const trainingListSelect = {
+  id: true,
+  name: true,
+  type: true,
+  types: true,
+  accentColor: true,
+  level: true,
+  estimated_duration_min: true,
+  estimated_calories: true,
+  total_volume: true,
+  warmup_description: true,
+  warmup_duration_min: true,
+  cooldown_description: true,
+  tags: true,
+  is_active: true,
+  created_by: true,
+  created_at: true,
+  updated_at: true,
+  group_id: true,
+  group: { select: { id: true, name: true } },
+  _count: { select: { exercises: true } },
+};
+
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 function normalizeSearchText(value: string) {
@@ -393,6 +416,33 @@ export class TrainingsService {
     return trainings.map((training) => this.serializeTraining(training));
   }
 
+  private serializeTrainingListItem<
+    T extends TrainingCatalogRecord & {
+      accentColor?: string | null;
+      _count?: { exercises: number };
+    },
+  >(training: T) {
+    const { _count, ...data } = training;
+    const types = this.resolveTrainingTypes(training);
+
+    return {
+      ...data,
+      type: this.resolveLegacyTrainingType(training, types),
+      types,
+      accentColor: training.accentColor ?? null,
+      exercises_count: _count?.exercises ?? 0,
+    };
+  }
+
+  private serializeTrainingList<
+    T extends TrainingCatalogRecord & {
+      accentColor?: string | null;
+      _count?: { exercises: number };
+    },
+  >(trainings: T[]) {
+    return trainings.map((training) => this.serializeTrainingListItem(training));
+  }
+
   private normalizeTrainingTypeValue(value: string) {
     const normalizedValue = this.normalizeCatalogValue(value);
 
@@ -658,14 +708,14 @@ export class TrainingsService {
       const trainings = await this.prisma.training.findMany({
         where,
         orderBy: this.getTrainingOrderBy(sortBy, sortDir),
-        include: trainingExercisesInclude,
+        select: trainingListSelect,
       });
 
       const filteredTrainings = trainings.filter((training) =>
         normalizeSearchText(training.name).includes(normalizedSearchTerm),
       );
 
-      const pageData = this.serializeTrainingCollection(
+      const pageData = this.serializeTrainingList(
         filteredTrainings.slice(skip, skip + pageSize),
       );
 
@@ -678,12 +728,12 @@ export class TrainingsService {
         skip,
         take: pageSize,
         orderBy: this.getTrainingOrderBy(sortBy, sortDir),
-        include: trainingExercisesInclude,
+        select: trainingListSelect,
       }),
       this.prisma.training.count({ where }),
     ]);
 
-    return paginate(this.serializeTrainingCollection(data), total, query);
+    return paginate(this.serializeTrainingList(data), total, query);
   }
 
   private getTrainingSortField(value?: string): TrainingSortField {
