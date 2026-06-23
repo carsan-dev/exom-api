@@ -63,7 +63,7 @@ describe('DietsService', () => {
       where: expectedWhere,
       skip: 0,
       take: 10,
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       include: expect.objectContaining({
         meals: expect.objectContaining({
           orderBy: { order: 'asc' },
@@ -109,7 +109,7 @@ describe('DietsService', () => {
           },
         },
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       include: expect.objectContaining({
         meals: expect.any(Object),
       }),

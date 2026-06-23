@@ -14,6 +14,14 @@ import {
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 
+type TrainingSortField =
+  | 'name'
+  | 'level'
+  | 'estimated_duration_min'
+  | 'estimated_calories'
+  | 'updated_at'
+  | 'created_at';
+
 type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
 type AchievementRuleConfigLike = {
@@ -610,6 +618,8 @@ export class TrainingsService {
       ungrouped,
     } = query;
     const pageSize = limit ?? 20;
+    const sortBy = this.getTrainingSortField(query.sort_by);
+    const sortDir = query.sort_by ? (query.sort_dir ?? 'asc') : 'desc';
     if (group_id && ungrouped) {
       throw new BadRequestException(
         'No se puede combinar group_id con ungrouped',
@@ -647,7 +657,7 @@ export class TrainingsService {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const trainings = await this.prisma.training.findMany({
         where,
-        orderBy: { created_at: 'desc' },
+        orderBy: this.getTrainingOrderBy(sortBy, sortDir),
         include: trainingExercisesInclude,
       });
 
@@ -667,13 +677,35 @@ export class TrainingsService {
         where,
         skip,
         take: pageSize,
-        orderBy: { created_at: 'desc' },
+        orderBy: this.getTrainingOrderBy(sortBy, sortDir),
         include: trainingExercisesInclude,
       }),
       this.prisma.training.count({ where }),
     ]);
 
     return paginate(this.serializeTrainingCollection(data), total, query);
+  }
+
+  private getTrainingSortField(value?: string): TrainingSortField {
+    const allowed = new Set<TrainingSortField>([
+      'name',
+      'level',
+      'estimated_duration_min',
+      'estimated_calories',
+      'updated_at',
+      'created_at',
+    ]);
+
+    return value && allowed.has(value as TrainingSortField)
+      ? (value as TrainingSortField)
+      : 'created_at';
+  }
+
+  private getTrainingOrderBy(
+    sortBy: TrainingSortField,
+    sortDir: 'asc' | 'desc',
+  ): Prisma.TrainingOrderByWithRelationInput[] {
+    return [{ [sortBy]: sortDir }, { id: sortDir }];
   }
 
   async updateGroupMembership(trainingIds: string[], groupId: string | null) {

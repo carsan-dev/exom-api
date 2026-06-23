@@ -88,7 +88,7 @@ describe('TrainingsService', () => {
       where: expectedWhere,
       skip: 0,
       take: 20,
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       include: expect.objectContaining({
         exercises: expect.objectContaining({
           orderBy: { order: 'asc' },
@@ -161,7 +161,7 @@ describe('TrainingsService', () => {
           { type: { in: ['FLEXIBILIDAD'] } },
         ],
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       include: expect.objectContaining({
         exercises: expect.any(Object),
       }),

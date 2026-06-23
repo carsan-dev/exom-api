@@ -8,6 +8,16 @@ import {
 } from './dto/create-ingredient.dto';
 import { IngredientsQueryDto } from './dto/ingredients-query.dto';
 
+type IngredientSortField =
+  | 'name'
+  | 'icon'
+  | 'calories_per_100g'
+  | 'protein_per_100g'
+  | 'carbs_per_100g'
+  | 'fat_per_100g'
+  | 'updated_at'
+  | 'created_at';
+
 function normalizeSearchText(value: string) {
   return value
     .toLocaleLowerCase('es-ES')
@@ -59,6 +69,8 @@ export class IngredientsService {
       limit,
     } = query;
     const pageSize = limit ?? 20;
+    const sortBy = this.getIngredientSortField(query.sort_by);
+    const sortDir = query.sort_by ? (query.sort_dir ?? 'asc') : 'asc';
     const normalizedSearch = search?.trim();
     const updatedAtRange = getDateRange(updated_from, updated_to);
     const iconStates = has_icon ?? [];
@@ -131,7 +143,7 @@ export class IngredientsService {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const ingredients = await this.prisma.ingredient.findMany({
         where,
-        orderBy: { name: 'asc' },
+        orderBy: this.getIngredientOrderBy(sortBy, sortDir),
       });
 
       const filteredIngredients = ingredients.filter((ingredient) =>
@@ -151,12 +163,36 @@ export class IngredientsService {
         where,
         skip,
         take: pageSize,
-        orderBy: { name: 'asc' },
+        orderBy: this.getIngredientOrderBy(sortBy, sortDir),
       }),
       this.prisma.ingredient.count({ where }),
     ]);
 
     return paginate(data, total, query);
+  }
+
+  private getIngredientSortField(value?: string): IngredientSortField {
+    const allowed = new Set<IngredientSortField>([
+      'name',
+      'icon',
+      'calories_per_100g',
+      'protein_per_100g',
+      'carbs_per_100g',
+      'fat_per_100g',
+      'updated_at',
+      'created_at',
+    ]);
+
+    return value && allowed.has(value as IngredientSortField)
+      ? (value as IngredientSortField)
+      : 'name';
+  }
+
+  private getIngredientOrderBy(
+    sortBy: IngredientSortField,
+    sortDir: 'asc' | 'desc',
+  ): Prisma.IngredientOrderByWithRelationInput[] {
+    return [{ [sortBy]: sortDir }, { id: sortDir }];
   }
 
   async findOne(id: string) {

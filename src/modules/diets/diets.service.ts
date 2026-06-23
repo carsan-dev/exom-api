@@ -14,6 +14,8 @@ import {
 } from './dto/create-diet.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
 
+type DietSortField = 'name' | 'updated_at' | 'created_at';
+
 const mealInclude = {
   ingredients: {
     include: {
@@ -369,6 +371,8 @@ export class DietsService {
       ungrouped,
     } = query;
     const pageSize = limit ?? 20;
+    const sortBy = this.getDietSortField(query.sort_by);
+    const sortDir = query.sort_by ? (query.sort_dir ?? 'asc') : 'desc';
     if (group_id && ungrouped) {
       throw new BadRequestException(
         'No se puede combinar group_id con ungrouped',
@@ -404,7 +408,7 @@ export class DietsService {
       const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
       const diets = await this.prisma.diet.findMany({
         where,
-        orderBy: { created_at: 'desc' },
+        orderBy: this.getDietOrderBy(sortBy, sortDir),
         include: dietInclude,
       });
 
@@ -422,13 +426,28 @@ export class DietsService {
         where,
         skip,
         take: pageSize,
-        orderBy: { created_at: 'desc' },
+        orderBy: this.getDietOrderBy(sortBy, sortDir),
         include: dietInclude,
       }),
       this.prisma.diet.count({ where }),
     ]);
 
     return paginate(data, total, query);
+  }
+
+  private getDietSortField(value?: string): DietSortField {
+    const allowed = new Set<DietSortField>(['name', 'updated_at', 'created_at']);
+
+    return value && allowed.has(value as DietSortField)
+      ? (value as DietSortField)
+      : 'created_at';
+  }
+
+  private getDietOrderBy(
+    sortBy: DietSortField,
+    sortDir: 'asc' | 'desc',
+  ): Prisma.DietOrderByWithRelationInput[] {
+    return [{ [sortBy]: sortDir }, { id: sortDir }];
   }
 
   async updateGroupMembership(dietIds: string[], groupId: string | null) {

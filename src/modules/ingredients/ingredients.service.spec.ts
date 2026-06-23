@@ -66,7 +66,7 @@ describe('IngredientsService', () => {
       where: expectedWhere,
       skip: 0,
       take: 10,
-      orderBy: { name: 'asc' },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
     expect(prisma.ingredient.count).toHaveBeenCalledWith({
       where: expectedWhere,
@@ -100,7 +100,7 @@ describe('IngredientsService', () => {
         is_active: true,
         OR: [{ icon: null }, { icon: '' }],
       },
-      orderBy: { name: 'asc' },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
     expect(prisma.ingredient.count).not.toHaveBeenCalled();
   });
