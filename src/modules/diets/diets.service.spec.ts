@@ -52,7 +52,7 @@ describe('DietsService', () => {
     prisma.diet.count.mockResolvedValue(1);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'diet-1', meals: [] }],
+      data: [{ id: 'diet-1', meals: [], meals_count: 0 }],
       total: 1,
       page: 1,
       limit: 10,
@@ -64,7 +64,7 @@ describe('DietsService', () => {
       skip: 0,
       take: 10,
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      include: expect.objectContaining({
+      select: expect.objectContaining({
         meals: expect.objectContaining({
           orderBy: { order: 'asc' },
         }),
@@ -91,8 +91,8 @@ describe('DietsService', () => {
 
     await expect(service.findAll(query)).resolves.toEqual({
       data: [
-        { id: 'diet-1', name: 'Dieta protéica', meals: [] },
-        { id: 'diet-2', name: 'Plan proteíca avanzado', meals: [] },
+        { id: 'diet-1', name: 'Dieta protéica', meals: [], meals_count: 0 },
+        { id: 'diet-2', name: 'Plan proteíca avanzado', meals: [], meals_count: 0 },
       ],
       total: 2,
       page: 1,
@@ -110,7 +110,7 @@ describe('DietsService', () => {
         },
       },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      include: expect.objectContaining({
+      select: expect.objectContaining({
         meals: expect.any(Object),
       }),
     });

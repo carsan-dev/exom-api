@@ -43,6 +43,38 @@ const dietInclude = {
   },
 };
 
+const dietListSelect = {
+  id: true,
+  name: true,
+  tags: true,
+  total_calories: true,
+  total_protein_g: true,
+  total_carbs_g: true,
+  total_fat_g: true,
+  is_active: true,
+  created_by: true,
+  created_at: true,
+  updated_at: true,
+  group_id: true,
+  group: { select: { id: true, name: true } },
+  meals: {
+    where: { parent_meal_id: null },
+    orderBy: { order: 'asc' as const },
+    select: {
+      id: true,
+      type: true,
+      name: true,
+      image_url: true,
+      calories: true,
+      protein_g: true,
+      carbs_g: true,
+      fat_g: true,
+      nutritional_badges: true,
+      order: true,
+    },
+  },
+};
+
 function normalizeSearchText(value: string) {
   return value
     .toLocaleLowerCase('es-ES')
@@ -279,6 +311,23 @@ export class DietsService {
     };
   }
 
+  private serializeDietListItem<
+    T extends {
+      meals?: Array<Record<string, unknown>>;
+    },
+  >(diet: T) {
+    return {
+      ...diet,
+      meals_count: diet.meals?.length ?? 0,
+    };
+  }
+
+  private serializeDietList<T extends { meals?: Array<Record<string, unknown>> }>(
+    diets: T[],
+  ) {
+    return diets.map((diet) => this.serializeDietListItem(diet));
+  }
+
   async findAllNutritionalBadges() {
     const meals = await this.prisma.meal.findMany({
       where: { diet: { is_active: true } },
@@ -409,14 +458,16 @@ export class DietsService {
       const diets = await this.prisma.diet.findMany({
         where,
         orderBy: this.getDietOrderBy(sortBy, sortDir),
-        include: dietInclude,
+        select: dietListSelect,
       });
 
       const filteredDiets = diets.filter((diet) =>
         normalizeSearchText(diet.name).includes(normalizedSearchTerm),
       );
 
-      const pageData = filteredDiets.slice(skip, skip + pageSize);
+      const pageData = this.serializeDietList(
+        filteredDiets.slice(skip, skip + pageSize),
+      );
 
       return paginate(pageData, filteredDiets.length, query);
     }
@@ -427,12 +478,12 @@ export class DietsService {
         skip,
         take: pageSize,
         orderBy: this.getDietOrderBy(sortBy, sortDir),
-        include: dietInclude,
+        select: dietListSelect,
       }),
       this.prisma.diet.count({ where }),
     ]);
 
-    return paginate(data, total, query);
+    return paginate(this.serializeDietList(data), total, query);
   }
 
   private getDietSortField(value?: string): DietSortField {
