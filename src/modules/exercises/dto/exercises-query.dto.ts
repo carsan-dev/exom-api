@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { Level } from '@prisma/client';
-import { IsArray, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 function toArray(value: unknown): string[] | undefined {
@@ -62,4 +62,12 @@ export class ExercisesQueryDto extends PaginationDto {
   @IsArray()
   @IsEnum(Level, { each: true })
   level?: Level[];
+
+  @ApiPropertyOptional({
+    description: 'Filter by active training usage',
+    enum: ['all', 'used', 'unused'],
+  })
+  @IsOptional()
+  @IsIn(['all', 'used', 'unused'])
+  training_usage?: 'all' | 'used' | 'unused';
 }

@@ -13,6 +13,13 @@ import {
 import { ExercisesQueryDto } from './dto/exercises-query.dto';
 
 type ExerciseCatalogField = 'muscle_groups' | 'equipment';
+type ExerciseSortField =
+  | 'name'
+  | 'level'
+  | 'video'
+  | 'training_usage_count'
+  | 'created_at'
+  | 'updated_at';
 
 function normalizeSearchText(value: string) {
   return value
@@ -269,9 +276,19 @@ export class ExercisesService {
   }
 
   async findAll(query: ExercisesQueryDto) {
-    const { search, muscle_groups, equipment, level, skip, limit } = query;
+    const {
+      search,
+      muscle_groups,
+      equipment,
+      level,
+      training_usage,
+      skip,
+      limit,
+    } = query;
     const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
+    const sortBy = this.getExerciseSortField(query.sort_by);
+    const sortDir = query.sort_by ? (query.sort_dir ?? 'asc') : 'desc';
     const where: Prisma.ExerciseWhereInput = {
       is_active: true,
       ...(muscle_groups?.length
@@ -280,25 +297,53 @@ export class ExercisesService {
       ...(equipment?.length ? { equipment: { hasSome: equipment } } : {}),
       ...(level?.length ? { level: { in: level } } : {}),
     };
+    const requiresMemoryPagination =
+      Boolean(normalizedSearch) ||
+      training_usage === 'used' ||
+      training_usage === 'unused' ||
+      sortBy === 'training_usage_count' ||
+      sortBy === 'video';
 
-    if (normalizedSearch) {
-      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
+    if (requiresMemoryPagination) {
+      const normalizedSearchTerm = normalizedSearch
+        ? normalizeSearchText(normalizedSearch)
+        : '';
       const exercises = await this.prisma.exercise.findMany({
         where,
-        orderBy: { created_at: 'desc' },
+        orderBy: this.getExerciseOrderBy(sortBy, sortDir),
       });
 
-      const filteredExercises = exercises.filter((exercise) =>
-        normalizeSearchText(exercise.name).includes(normalizedSearchTerm),
-      );
+      const filteredExercises = normalizedSearch
+        ? exercises.filter((exercise) =>
+            normalizeSearchText(exercise.name).includes(normalizedSearchTerm),
+          )
+        : exercises;
 
-      const pageData = filteredExercises.slice(skip, skip + pageSize);
+      let exercisesWithUsage = await this.withTrainingUsage(filteredExercises);
 
-      return paginate(
-        await this.withTrainingUsage(pageData),
-        filteredExercises.length,
-        query,
-      );
+      if (training_usage === 'used') {
+        exercisesWithUsage = exercisesWithUsage.filter(
+          (exercise) => exercise.training_usage_count > 0,
+        );
+      }
+
+      if (training_usage === 'unused') {
+        exercisesWithUsage = exercisesWithUsage.filter(
+          (exercise) => exercise.training_usage_count === 0,
+        );
+      }
+
+      if (sortBy === 'training_usage_count' || sortBy === 'video') {
+        exercisesWithUsage = this.sortExercisesInMemory(
+          exercisesWithUsage,
+          sortBy,
+          sortDir,
+        );
+      }
+
+      const pageData = exercisesWithUsage.slice(skip, skip + pageSize);
+
+      return paginate(pageData, exercisesWithUsage.length, query);
     }
 
     const [data, total] = await Promise.all([
@@ -306,7 +351,7 @@ export class ExercisesService {
         where,
         skip,
         take: pageSize,
-        orderBy: { created_at: 'desc' },
+        orderBy: this.getExerciseOrderBy(sortBy, sortDir),
       }),
       this.prisma.exercise.count({ where }),
     ]);
@@ -314,8 +359,63 @@ export class ExercisesService {
     return paginate(await this.withTrainingUsage(data), total, query);
   }
 
-  private async withTrainingUsage<T extends { id: string }>(exercises: T[]) {
-    if (exercises.length === 0) return exercises;
+  private getExerciseSortField(value?: string): ExerciseSortField {
+    const allowed = new Set<ExerciseSortField>([
+      'name',
+      'level',
+      'video',
+      'training_usage_count',
+      'created_at',
+      'updated_at',
+    ]);
+
+    return value && allowed.has(value as ExerciseSortField)
+      ? (value as ExerciseSortField)
+      : 'created_at';
+  }
+
+  private getExerciseOrderBy(
+    sortBy: ExerciseSortField,
+    sortDir: 'asc' | 'desc',
+  ): Prisma.ExerciseOrderByWithRelationInput[] {
+    if (sortBy === 'training_usage_count' || sortBy === 'video') {
+      return [{ created_at: 'desc' }, { id: 'desc' }];
+    }
+
+    return [{ [sortBy]: sortDir }, { id: sortDir }];
+  }
+
+  private sortExercisesInMemory<T extends { id: string; video_url?: string | null; training_usage_count: number }>(
+    exercises: T[],
+    sortBy: Extract<ExerciseSortField, 'training_usage_count' | 'video'>,
+    sortDir: 'asc' | 'desc',
+  ) {
+    const direction = sortDir === 'asc' ? 1 : -1;
+
+    return [...exercises].sort((left, right) => {
+      const leftValue =
+        sortBy === 'video'
+          ? Number(Boolean(left.video_url))
+          : left.training_usage_count;
+      const rightValue =
+        sortBy === 'video'
+          ? Number(Boolean(right.video_url))
+          : right.training_usage_count;
+
+      if (leftValue !== rightValue) {
+        return (leftValue - rightValue) * direction;
+      }
+
+      return left.id.localeCompare(right.id) * direction;
+    });
+  }
+
+  private async withTrainingUsage<T extends { id: string }>(
+    exercises: T[],
+  ): Promise<Array<T & { training_usage_count: number; is_used_in_training: boolean }>> {
+    if (exercises.length === 0) {
+      return [];
+    }
 
     const usages = await this.prisma.trainingExercise.findMany({
       where: {

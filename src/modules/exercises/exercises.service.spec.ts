@@ -57,7 +57,7 @@ describe('ExercisesService', () => {
       where: expectedWhere,
       skip: 10,
       take: 10,
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     });
     expect(prisma.exercise.count).toHaveBeenCalledWith({
       where: expectedWhere,
@@ -99,7 +99,7 @@ describe('ExercisesService', () => {
         is_active: true,
         muscle_groups: { hasSome: ['Pierna'] },
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     });
     expect(prisma.exercise.count).not.toHaveBeenCalled();
   });
@@ -118,6 +118,87 @@ describe('ExercisesService', () => {
       { id: 'exercise-1', training_usage_count: 2, is_used_in_training: true },
       { id: 'exercise-2', training_usage_count: 0, is_used_in_training: false },
     ]);
+  });
+
+  it('filters used exercises before paginating', async () => {
+    const query = Object.assign(new ExercisesQueryDto(), {
+      page: 1,
+      limit: 10,
+      training_usage: 'used',
+    });
+    prisma.exercise.findMany.mockResolvedValue([
+      { id: 'exercise-1' },
+      { id: 'exercise-2' },
+    ]);
+    prisma.trainingExercise.findMany.mockResolvedValue([
+      { exercise_id: 'exercise-1', training_id: 'training-1' },
+    ]);
+
+    await expect(service.findAll(query)).resolves.toEqual({
+      data: [
+        {
+          id: 'exercise-1',
+          training_usage_count: 1,
+          is_used_in_training: true,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+    });
+    expect(prisma.exercise.count).not.toHaveBeenCalled();
+  });
+
+  it('filters unused exercises before paginating', async () => {
+    const query = Object.assign(new ExercisesQueryDto(), {
+      page: 1,
+      limit: 10,
+      training_usage: 'unused',
+    });
+    prisma.exercise.findMany.mockResolvedValue([
+      { id: 'exercise-1' },
+      { id: 'exercise-2' },
+    ]);
+    prisma.trainingExercise.findMany.mockResolvedValue([
+      { exercise_id: 'exercise-1', training_id: 'training-1' },
+    ]);
+
+    const result = await service.findAll(query);
+    expect(result.data).toEqual([
+      {
+        id: 'exercise-2',
+        training_usage_count: 0,
+        is_used_in_training: false,
+      },
+    ]);
+    expect(result.total).toBe(1);
+  });
+
+  it('sorts by training usage count before paginating', async () => {
+    const query = Object.assign(new ExercisesQueryDto(), {
+      page: 1,
+      limit: 2,
+      sort_by: 'training_usage_count',
+      sort_dir: 'desc',
+    });
+    prisma.exercise.findMany.mockResolvedValue([
+      { id: 'exercise-1' },
+      { id: 'exercise-2' },
+      { id: 'exercise-3' },
+    ]);
+    prisma.trainingExercise.findMany.mockResolvedValue([
+      { exercise_id: 'exercise-1', training_id: 'training-1' },
+      { exercise_id: 'exercise-3', training_id: 'training-1' },
+      { exercise_id: 'exercise-3', training_id: 'training-2' },
+    ]);
+
+    const result = await service.findAll(query);
+    expect(result.data.map((exercise) => exercise.id)).toEqual([
+      'exercise-3',
+      'exercise-1',
+    ]);
+    expect(result.total).toBe(3);
   });
 
   it('returns sorted unique active training usage detail', async () => {
