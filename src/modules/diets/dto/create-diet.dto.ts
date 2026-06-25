@@ -40,6 +40,12 @@ export class MealIngredientDto {
 }
 
 class MealBaseDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  id?: string;
+
   @ApiProperty({ enum: MealType })
   @IsEnum(MealType)
   type: MealType;

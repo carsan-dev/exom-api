@@ -397,17 +397,82 @@ export class TrainingsService {
   ) {
     const items = this.resolveTrainingItems(dto);
     const hasCircuits = items.some((item) => item.kind === 'CIRCUIT');
+    const existingBlocks = await tx.trainingBlock.findMany({
+      where: { training_id: trainingId },
+      select: { id: true },
+    });
+    const existingExercises = await tx.trainingExercise.findMany({
+      where: { training_id: trainingId },
+      select: { id: true },
+    });
+    const existingBlockIds = new Set(existingBlocks.map((block) => block.id));
+    const existingExerciseIds = new Set(
+      existingExercises.map((exercise) => exercise.id),
+    );
+    const nextBlockIds = new Set(
+      items
+        .filter((item) => item.kind === 'CIRCUIT' && item.id)
+        .map((item) => item.id!),
+    );
+    const nextExerciseIds = new Set(
+      items.flatMap((item) =>
+        item.kind === 'CIRCUIT'
+          ? item.exercises
+              .filter((exercise) => exercise.id)
+              .map((exercise) => exercise.id!)
+          : item.id
+            ? [item.id]
+            : [],
+      ),
+    );
 
-    await tx.trainingExercise.deleteMany({ where: { training_id: trainingId } });
-    await tx.trainingBlock.deleteMany({ where: { training_id: trainingId } });
+    for (const blockId of nextBlockIds) {
+      if (!existingBlockIds.has(blockId)) {
+        throw new BadRequestException('El circuito indicado no pertenece al entrenamiento');
+      }
+    }
+    for (const exerciseId of nextExerciseIds) {
+      if (!existingExerciseIds.has(exerciseId)) {
+        throw new BadRequestException('El ejercicio indicado no pertenece al entrenamiento');
+      }
+    }
+
+    await tx.trainingExercise.deleteMany({
+      where: {
+        training_id: trainingId,
+        id: { in: [...existingExerciseIds].filter((id) => !nextExerciseIds.has(id)) },
+      },
+    });
+    await tx.trainingBlock.deleteMany({
+      where: {
+        training_id: trainingId,
+        id: { in: [...existingBlockIds].filter((id) => !nextBlockIds.has(id)) },
+      },
+    });
+
+    await Promise.all(
+      [...nextBlockIds].map((blockId, index) =>
+        tx.trainingBlock.update({
+          where: { id: blockId },
+          data: { order: -100000 - index },
+        }),
+      ),
+    );
+    await Promise.all(
+      [...nextExerciseIds].map((exerciseId, index) =>
+        tx.trainingExercise.update({
+          where: { id: exerciseId },
+          data: { order: -100000 - index, position_in_block: null },
+        }),
+      ),
+    );
 
     for (const [index, item] of items.entries()) {
       const order = item.order ?? index;
 
       if (item.kind === 'CIRCUIT') {
         const circuit = item as TrainingCircuitItemDto;
-        const block = await tx.trainingBlock.create({
-          data: {
+        const blockData = {
             training_id: trainingId,
             order,
             type: TrainingBlockType.CIRCUIT,
@@ -415,11 +480,20 @@ export class TrainingsService {
             rounds: circuit.rounds,
             rest_between_rounds_seconds:
               circuit.rest_between_rounds_seconds ?? 60,
-          },
-        });
+        };
+        const block = circuit.id
+          ? await tx.trainingBlock.update({
+              where: { id: circuit.id },
+              data: blockData,
+              select: { id: true },
+            })
+          : await tx.trainingBlock.create({
+              data: blockData,
+              select: { id: true },
+            });
 
-        await tx.trainingExercise.createMany({
-          data: circuit.exercises.map((exercise, position) => ({
+        for (const [position, exercise] of circuit.exercises.entries()) {
+          const exerciseData = {
             training_id: trainingId,
             block_id: block.id,
             exercise_id: exercise.exercise_id,
@@ -429,24 +503,42 @@ export class TrainingsService {
             reps_or_duration: exercise.reps_or_duration,
             request_set_tracking: exercise.request_set_tracking ?? false,
             rest_seconds: exercise.rest_seconds ?? 15,
-          })),
-        });
+          };
+
+          if (exercise.id) {
+            await tx.trainingExercise.update({
+              where: { id: exercise.id },
+              data: exerciseData,
+            });
+          } else {
+            await tx.trainingExercise.create({ data: exerciseData });
+          }
+        }
 
         continue;
       }
 
       const exercise = item as TrainingItemExerciseDto;
-      await tx.trainingExercise.create({
-        data: {
+      const exerciseData = {
           training_id: trainingId,
+          block_id: null,
           exercise_id: exercise.exercise_id,
           order: hasCircuits ? order * 1000 : order,
+          position_in_block: null,
           sets: exercise.sets,
           reps_or_duration: exercise.reps_or_duration,
           request_set_tracking: exercise.request_set_tracking ?? false,
           rest_seconds: exercise.rest_seconds ?? 60,
-        },
-      });
+      };
+
+      if (exercise.id) {
+        await tx.trainingExercise.update({
+          where: { id: exercise.id },
+          data: exerciseData,
+        });
+      } else {
+        await tx.trainingExercise.create({ data: exerciseData });
+      }
     }
   }
 

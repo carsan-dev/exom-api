@@ -726,13 +726,6 @@ export class DietsService {
     await this.findOne(id);
 
     return this.prisma.$transaction(async (tx) => {
-      if (dto.meals !== undefined) {
-        await tx.mealIngredient.deleteMany({
-          where: { meal: { diet_id: id } },
-        });
-        await tx.meal.deleteMany({ where: { diet_id: id } });
-      }
-
       await tx.diet.update({
         where: { id },
         data: {
@@ -756,7 +749,7 @@ export class DietsService {
       });
 
       if (dto.meals !== undefined) {
-        await this.createMeals(tx, id, dto.meals);
+        await this.replaceMeals(tx, id, dto.meals);
       }
 
       return tx.diet.findUniqueOrThrow({
@@ -842,5 +835,98 @@ export class DietsService {
         });
       }
     }
+  }
+
+  private async replaceMeals(
+    tx: Prisma.TransactionClient,
+    dietId: string,
+    meals: CreateMealDto[],
+  ) {
+    const existingMeals = await tx.meal.findMany({
+      where: { diet_id: dietId },
+      select: { id: true },
+    });
+    const existingMealIds = new Set(existingMeals.map((meal) => meal.id));
+    const nextMealIds = new Set(
+      meals.flatMap((meal) => [
+        ...(meal.id ? [meal.id] : []),
+        ...(meal.variants ?? [])
+          .filter((variant) => variant.id)
+          .map((variant) => variant.id!),
+      ]),
+    );
+
+    for (const mealId of nextMealIds) {
+      if (!existingMealIds.has(mealId)) {
+        throw new BadRequestException('La comida indicada no pertenece a la dieta');
+      }
+    }
+
+    await tx.meal.deleteMany({
+      where: {
+        diet_id: dietId,
+        id: { in: [...existingMealIds].filter((mealId) => !nextMealIds.has(mealId)) },
+      },
+    });
+
+    for (const meal of meals) {
+      const parentId = await this.upsertMeal(tx, dietId, meal);
+
+      for (const variant of meal.variants ?? []) {
+        await this.upsertMeal(tx, dietId, variant, parentId);
+      }
+    }
+  }
+
+  private async upsertMeal(
+    tx: Prisma.TransactionClient,
+    dietId: string,
+    meal: CreateMealDto | CreateMealVariantDto,
+    parentMealId?: string,
+  ) {
+    this.validateMealIngredientEquivalents(meal.ingredients);
+
+    const mealData = {
+      diet_id: dietId,
+      parent_meal_id: parentMealId ?? null,
+      type: meal.type,
+      name: meal.name,
+      image_url: meal.image_url ?? null,
+      calories: meal.calories ?? null,
+      protein_g: meal.protein_g ?? null,
+      carbs_g: meal.carbs_g ?? null,
+      fat_g: meal.fat_g ?? null,
+      nutritional_badges: this.normalizeCatalogValues(
+        meal.nutritional_badges ?? [],
+      ),
+      order: meal.order ?? 0,
+    };
+
+    const targetMeal = meal.id
+      ? await tx.meal.update({
+          where: { id: meal.id },
+          data: mealData,
+          select: { id: true },
+        })
+      : await tx.meal.create({
+          data: mealData,
+          select: { id: true },
+        });
+
+    await tx.mealIngredient.deleteMany({
+      where: { meal_id: targetMeal.id },
+    });
+    await tx.mealIngredient.createMany({
+      data: meal.ingredients.map((ing) => ({
+        meal_id: targetMeal.id,
+        ingredient_id: ing.ingredient_id,
+        quantity: ing.quantity,
+        unit: ing.unit,
+        grams_equivalent:
+          ing.unit === 'g' ? ing.quantity : (ing.grams_equivalent ?? null),
+      })),
+    });
+
+    return targetMeal.id;
   }
 }

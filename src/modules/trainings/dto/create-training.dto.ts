@@ -37,6 +37,12 @@ const trimOptionalString = ({ value }: { value: unknown }) =>
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 export class TrainingExerciseDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  id?: string;
+
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
@@ -78,6 +84,12 @@ export class TrainingItemExerciseDto extends TrainingExerciseDto {
 }
 
 export class TrainingCircuitExerciseDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  id?: string;
+
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
@@ -106,6 +118,12 @@ export class TrainingCircuitItemDto {
   @ApiProperty({ enum: ['CIRCUIT'] })
   @IsIn(['CIRCUIT'])
   kind: 'CIRCUIT';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  id?: string;
 
   @ApiProperty()
   @IsInt()
