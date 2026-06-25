@@ -102,6 +102,16 @@ export async function verifyFirebaseIdTokenWithFallback({
   logContext: string;
   expectedProvider?: string;
 }): Promise<VerifiedFirebaseIdToken> {
+  if (cleanEnvValue(webApiKey)) {
+    return lookupFirebaseIdToken(
+      token,
+      webApiKey,
+      logger,
+      logContext,
+      expectedProvider,
+    );
+  }
+
   try {
     return await admin.auth().verifyIdToken(token);
   } catch (error) {
