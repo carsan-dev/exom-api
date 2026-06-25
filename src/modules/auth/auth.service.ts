@@ -305,7 +305,9 @@ export class AuthService {
       decoded = await admin.auth().verifyIdToken(dto.token);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Firebase social token verification failed: ${message}`);
+      this.logger.error(
+        `Firebase social token verification failed: ${message}`,
+      );
       throw new UnauthorizedException('Token social inválido');
     }
 
