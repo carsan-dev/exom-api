@@ -4,18 +4,23 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
-import * as admin from 'firebase-admin';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { verifyFirebaseIdTokenWithFallback } from '../firebase/firebase-id-token';
 
 @Injectable()
 export class FirebaseAuthGuard implements CanActivate {
+  private readonly logger = new Logger(FirebaseAuthGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -36,7 +41,12 @@ export class FirebaseAuthGuard implements CanActivate {
     const token = authHeader.split(' ')[1];
 
     try {
-      const decoded = await admin.auth().verifyIdToken(token);
+      const decoded = await verifyFirebaseIdTokenWithFallback({
+        token,
+        webApiKey: this.config.get<string>('FIREBASE_WEB_API_KEY'),
+        logger: this.logger,
+        logContext: 'FirebaseAuthGuard',
+      });
 
       const user = await this.prisma.user.findUnique({
         where: { firebase_uid: decoded.uid },

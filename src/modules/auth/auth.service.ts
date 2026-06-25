@@ -13,6 +13,10 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { LoginDto, SocialLoginDto } from './dto/login.dto';
+import {
+  VerifiedFirebaseIdToken,
+  verifyFirebaseIdTokenWithFallback,
+} from '../../common/firebase/firebase-id-token';
 
 class FirebasePasswordAuthError extends Error {
   constructor(
@@ -158,8 +162,12 @@ export class AuthService {
     }
   }
 
+  private expectedSocialProvider(provider: SocialLoginDto['provider']) {
+    return provider === 'google' ? 'google.com' : 'apple.com';
+  }
+
   private async findAuthorizedUserForSocialLogin(
-    decoded: admin.auth.DecodedIdToken,
+    decoded: VerifiedFirebaseIdToken,
     provider: SocialLoginDto['provider'],
   ) {
     let user = await this.prisma.user.findUnique({
@@ -300,9 +308,15 @@ export class AuthService {
   }
 
   async socialLogin(dto: SocialLoginDto) {
-    let decoded: admin.auth.DecodedIdToken;
+    let decoded: VerifiedFirebaseIdToken;
     try {
-      decoded = await admin.auth().verifyIdToken(dto.token);
+      decoded = await verifyFirebaseIdTokenWithFallback({
+        token: dto.token,
+        webApiKey: this.firebaseWebApiKey,
+        logger: this.logger,
+        logContext: 'AuthService.socialLogin',
+        expectedProvider: this.expectedSocialProvider(dto.provider),
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
@@ -311,7 +325,7 @@ export class AuthService {
       throw new UnauthorizedException('Token social inválido');
     }
 
-    const expectedProvider = dto.provider === 'google' ? 'google.com' : 'apple.com';
+    const expectedProvider = this.expectedSocialProvider(dto.provider);
     const signInProvider = decoded.firebase?.sign_in_provider;
     if (signInProvider !== expectedProvider) {
       throw new UnauthorizedException(
