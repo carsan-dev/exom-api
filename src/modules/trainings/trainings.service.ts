@@ -13,6 +13,7 @@ import {
   UpdateTrainingDto,
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
+import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
 
 type TrainingSortField =
   | 'name'
@@ -394,7 +395,7 @@ export class TrainingsService {
     tx: Prisma.TransactionClient,
     trainingId: string,
     dto: CreateTrainingDto | UpdateTrainingDto,
-  ) {
+  ): Promise<Set<string>> {
     const items = this.resolveTrainingItems(dto);
     const hasCircuits = items.some((item) => item.kind === 'CIRCUIT');
     const existingBlocks = await tx.trainingBlock.findMany({
@@ -437,10 +438,13 @@ export class TrainingsService {
       }
     }
 
+    const deletedExerciseIds = new Set(
+      [...existingExerciseIds].filter((id) => !nextExerciseIds.has(id)),
+    );
     await tx.trainingExercise.deleteMany({
       where: {
         training_id: trainingId,
-        id: { in: [...existingExerciseIds].filter((id) => !nextExerciseIds.has(id)) },
+        id: { in: [...deletedExerciseIds] },
       },
     });
     await tx.trainingBlock.deleteMany({
@@ -539,6 +543,52 @@ export class TrainingsService {
       } else {
         await tx.trainingExercise.create({ data: exerciseData });
       }
+    }
+
+    return deletedExerciseIds;
+  }
+
+  private async reconcileAssignedProgress(
+    tx: Prisma.TransactionClient,
+    trainingId: string,
+    explicitlyDeletedIds: ReadonlySet<string>,
+  ) {
+    const [currentExercises, assignments] = await Promise.all([
+      tx.trainingExercise.findMany({
+        where: { training_id: trainingId },
+        select: { id: true, exercise_id: true },
+      }),
+      tx.planAssignment.findMany({
+        where: { training_id: trainingId },
+        select: { client_id: true, date: true },
+      }),
+    ]);
+    if (!assignments.length) return;
+
+    const progresses = await tx.dayProgress.findMany({
+      where: {
+        OR: assignments.map(({ client_id, date }) => ({ client_id, date })),
+      },
+    });
+    const assignedKeys = new Set(
+      assignments.map(({ client_id, date }) => `${client_id}:${date.toISOString()}`),
+    );
+
+    for (const progress of progresses) {
+      const key = `${progress.client_id}:${progress.date.toISOString()}`;
+      if (!assignedKeys.has(key)) continue;
+      const reconciled = reconcileTrainingProgress(
+        progress.exercises_completed,
+        currentExercises,
+        explicitlyDeletedIds,
+      );
+      await tx.dayProgress.update({
+        where: { id: progress.id },
+        data: {
+          exercises_completed: reconciled.entries as unknown as Prisma.InputJsonValue,
+          training_completed: reconciled.trainingCompleted,
+        },
+      });
     }
   }
 
@@ -1081,7 +1131,8 @@ export class TrainingsService {
         });
 
         if (dto.items !== undefined || dto.exercises !== undefined) {
-          await this.replaceTrainingItems(tx, id, dto);
+          const deletedIds = await this.replaceTrainingItems(tx, id, dto);
+          await this.reconcileAssignedProgress(tx, id, deletedIds);
         }
 
         return tx.training.findUnique({

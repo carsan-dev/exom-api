@@ -22,6 +22,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
     "streaks:recalculate": "ts-node prisma/recalculate-streaks.ts",
+    "progress:repair-plan-edits": "ts-node src/scripts/repair-plan-edit-progress.ts",
     "prisma:studio": "prisma studio"
   },
   "prisma": {
