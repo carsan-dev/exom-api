@@ -6,17 +6,25 @@ import { reconcileTrainingProgress } from '../common/progress/plan-progress-reco
 const apply = process.argv.includes('--apply');
 const prisma = new PrismaService();
 
-function key(clientId: string, date: Date) {
-  return `${clientId}:${date.toISOString()}`;
-}
-
 async function main() {
   await prisma.$connect();
   const assignments = await prisma.planAssignment.findMany({
     where: { OR: [{ training_id: { not: null } }, { diet_id: { not: null } }] },
     include: {
-      training: { select: { exercises: { select: { id: true, exercise_id: true } } } },
-      diet: { select: { meals: { select: { id: true } } } },
+      training: {
+        select: {
+          id: true,
+          name: true,
+          exercises: { select: { id: true, exercise_id: true } },
+        },
+      },
+      diet: {
+        select: {
+          id: true,
+          name: true,
+          meals: { select: { id: true } },
+        },
+      },
     },
   });
 
@@ -55,7 +63,7 @@ async function main() {
         if (remainingStale) {
           ambiguousTrainings++;
           console.warn(
-            `AMBIGUOUS training progress ${key(assignment.client_id, assignment.date)}: ${remainingStale} stale entries`,
+            `AMBIGUOUS training="${assignment.training.name}" training_id=${assignment.training.id} client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_entries=${remainingStale}`,
           );
         } else {
           repairedTrainings++;
@@ -79,7 +87,7 @@ async function main() {
       if (staleIds.length) {
         dietsWithStaleIds++;
         console.warn(
-          `STALE diet progress ${key(assignment.client_id, assignment.date)}: ${staleIds.length} ids; manual recovery required`,
+          `STALE diet="${assignment.diet.name}" diet_id=${assignment.diet.id} client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_ids=${staleIds.length}; manual recovery required`,
         );
       }
     }
