@@ -13,6 +13,7 @@ import {
   UpdateDietDto,
 } from './dto/create-diet.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
+import { reconcileMealProgress } from '../../common/progress/plan-progress-reconciliation';
 
 type DietSortField = 'name' | 'updated_at' | 'created_at';
 const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
@@ -844,7 +845,7 @@ export class DietsService {
   ) {
     const existingMeals = await tx.meal.findMany({
       where: { diet_id: dietId },
-      select: { id: true },
+      select: { id: true, parent_meal_id: true },
     });
     const existingMealIds = new Set(existingMeals.map((meal) => meal.id));
     const nextMealIds = new Set(
@@ -862,10 +863,13 @@ export class DietsService {
       }
     }
 
+    const deletedMealIds = new Set(
+      [...existingMealIds].filter((mealId) => !nextMealIds.has(mealId)),
+    );
     await tx.meal.deleteMany({
       where: {
         diet_id: dietId,
-        id: { in: [...existingMealIds].filter((mealId) => !nextMealIds.has(mealId)) },
+        id: { in: [...deletedMealIds] },
       },
     });
 
@@ -875,6 +879,39 @@ export class DietsService {
       for (const variant of meal.variants ?? []) {
         await this.upsertMeal(tx, dietId, variant, parentId);
       }
+    }
+
+    const [currentMeals, assignments] = await Promise.all([
+      tx.meal.findMany({
+        where: { diet_id: dietId },
+        select: { id: true, parent_meal_id: true },
+      }),
+      tx.planAssignment.findMany({
+        where: { diet_id: dietId },
+        select: { client_id: true, date: true },
+      }),
+    ]);
+    if (!assignments.length) return;
+
+    const progresses = await tx.dayProgress.findMany({
+      where: { OR: assignments.map(({ client_id, date }) => ({ client_id, date })) },
+    });
+    const assignedKeys = new Set(
+      assignments.map(({ client_id, date }) => `${client_id}:${date.toISOString()}`),
+    );
+    for (const progress of progresses) {
+      if (!assignedKeys.has(`${progress.client_id}:${progress.date.toISOString()}`)) continue;
+      await tx.dayProgress.update({
+        where: { id: progress.id },
+        data: {
+          meals_completed: reconcileMealProgress(
+            progress.meals_completed,
+            existingMeals,
+            currentMeals,
+            deletedMealIds,
+          ),
+        },
+      });
     }
   }
 

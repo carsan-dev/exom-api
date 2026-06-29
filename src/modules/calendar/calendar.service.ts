@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { countCompletedMealGroups } from '../../common/progress/plan-progress-reconciliation';
 
 export interface CalendarDay {
   date: string;
@@ -31,7 +32,7 @@ export class CalendarService {
         include: {
           diet: {
             select: {
-              meals: { select: { id: true } },
+              meals: { select: { id: true, parent_meal_id: true } },
             },
           },
         },
@@ -60,8 +61,14 @@ export class CalendarService {
       const assignment = assignmentMap.get(dateStr);
       const progress = progressMap.get(dateStr);
 
-      const mealsCompletedCount = progress?.meals_completed?.length ?? 0;
-      const assignedMealsCount = assignment?.diet?.meals?.length ?? 0;
+      const assignedMeals = assignment?.diet?.meals ?? [];
+      const mealsCompletedCount = countCompletedMealGroups(
+        progress?.meals_completed ?? [],
+        assignedMeals,
+      );
+      const assignedMealsCount = assignedMeals.filter(
+        (meal) => meal.parent_meal_id === null,
+      ).length;
 
       days.push({
         date: dateStr,
@@ -90,7 +97,11 @@ export class CalendarService {
           date: { gte: start, lte: end },
         },
         include: {
-          diet: { include: { meals: true } },
+          diet: {
+            select: {
+              meals: { select: { id: true, parent_meal_id: true } },
+            },
+          },
         },
       }),
       this.prisma.dayProgress.findMany({
@@ -105,16 +116,40 @@ export class CalendarService {
       (a) => !!a.training_id && !a.is_rest_day,
     ).length;
 
-    const trainingsCompleted = progresses.filter(
-      (p) => p.training_completed,
-    ).length;
+    const progressMap = new Map(
+      progresses.map((progress) => [
+        `${progress.client_id}:${progress.date.toISOString()}`,
+        progress,
+      ]),
+    );
+
+    const trainingsCompleted = assignments.filter((assignment) => {
+      if (!assignment.training_id || assignment.is_rest_day) return false;
+      return (
+        progressMap.get(
+          `${assignment.client_id}:${assignment.date.toISOString()}`,
+        )?.training_completed ?? false
+      );
+    }).length;
 
     const totalMeals = assignments.reduce((sum, a) => {
-      return sum + (a.diet?.meals?.length ?? 0);
+      return (
+        sum +
+        (a.diet?.meals.filter((meal) => meal.parent_meal_id === null).length ?? 0)
+      );
     }, 0);
 
-    const mealsCompleted = progresses.reduce((sum, p) => {
-      return sum + (p.meals_completed?.length ?? 0);
+    const mealsCompleted = assignments.reduce((sum, assignment) => {
+      const progress = progressMap.get(
+        `${assignment.client_id}:${assignment.date.toISOString()}`,
+      );
+      return (
+        sum +
+        countCompletedMealGroups(
+          progress?.meals_completed ?? [],
+          assignment.diet?.meals ?? [],
+        )
+      );
     }, 0);
 
     return {
