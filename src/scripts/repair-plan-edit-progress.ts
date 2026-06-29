@@ -27,6 +27,23 @@ async function main() {
       },
     },
   });
+  const clients = await prisma.user.findMany({
+    where: { id: { in: [...new Set(assignments.map((item) => item.client_id))] } },
+    select: {
+      id: true,
+      email: true,
+      profile: { select: { first_name: true, last_name: true } },
+    },
+  });
+  const clientById = new Map(clients.map((client) => [client.id, client]));
+
+  const clientLabel = (clientId: string) => {
+    const client = clientById.get(clientId);
+    const name = [client?.profile?.first_name, client?.profile?.last_name]
+      .filter(Boolean)
+      .join(' ');
+    return `${name || 'Sin nombre'} <${client?.email ?? 'sin-email'}>`;
+  };
 
   let repairedTrainings = 0;
   let ambiguousTrainings = 0;
@@ -63,7 +80,7 @@ async function main() {
         if (remainingStale) {
           ambiguousTrainings++;
           console.warn(
-            `AMBIGUOUS training="${assignment.training.name}" training_id=${assignment.training.id} client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_entries=${remainingStale}`,
+            `AMBIGUOUS training="${assignment.training.name}" training_id=${assignment.training.id} client="${clientLabel(assignment.client_id)}" client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_entries=${remainingStale}`,
           );
         } else {
           repairedTrainings++;
@@ -87,7 +104,7 @@ async function main() {
       if (staleIds.length) {
         dietsWithStaleIds++;
         console.warn(
-          `STALE diet="${assignment.diet.name}" diet_id=${assignment.diet.id} client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_ids=${staleIds.length}; manual recovery required`,
+          `STALE diet="${assignment.diet.name}" diet_id=${assignment.diet.id} client="${clientLabel(assignment.client_id)}" client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_ids=${staleIds.length}; manual recovery required`,
         );
       }
     }
