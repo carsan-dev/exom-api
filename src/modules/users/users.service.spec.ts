@@ -35,6 +35,15 @@ describe('UsersService', () => {
       updateMany: jest.Mock;
       createMany: jest.Mock;
     };
+    dayProgress: {
+      findFirst: jest.Mock;
+    };
+    exercise: {
+      findMany: jest.Mock;
+    };
+    meal: {
+      findMany: jest.Mock;
+    };
   };
   let challengesService: {
     syncGlobalChallengesForCreatorClient: jest.Mock;
@@ -62,6 +71,15 @@ describe('UsersService', () => {
         create: jest.fn(),
         updateMany: jest.fn(),
         createMany: jest.fn(),
+      },
+      dayProgress: {
+        findFirst: jest.fn(),
+      },
+      exercise: {
+        findMany: jest.fn(),
+      },
+      meal: {
+        findMany: jest.fn(),
       },
     };
 
@@ -172,6 +190,62 @@ describe('UsersService', () => {
         client_id: 'client-1',
       },
     );
+  });
+
+  it('enriches daily progress with exercise and meal names while preserving identifiers', async () => {
+    const progress = {
+      id: 'progress-1',
+      client_id: 'client-1',
+      date: new Date('2026-06-29T00:00:00.000Z'),
+      training_completed: true,
+      exercises_completed: [
+        { exercise_id: 'ex-plank', completed_at: '2026-06-29T10:00:00.000Z' },
+        { exercise_id: 'missing-exercise', completed_at: '2026-06-29T10:05:00.000Z' },
+      ],
+      meals_completed: ['meal-1', 'missing-meal'],
+      notes: null,
+    };
+    prisma.dayProgress.findFirst.mockResolvedValue(progress);
+    prisma.exercise.findMany.mockResolvedValue([
+      { id: 'ex-plank', name: 'Plancha isométrica' },
+    ]);
+    prisma.meal.findMany.mockResolvedValue([{ id: 'meal-1', name: 'Desayuno' }]);
+
+    await expect(
+      service.getClientDayProgress(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        '2026-06-29',
+      ),
+    ).resolves.toEqual({
+      ...progress,
+      exercises_completed: [
+        {
+          exercise_id: 'ex-plank',
+          completed_at: '2026-06-29T10:00:00.000Z',
+          exercise_name: 'Plancha isométrica',
+        },
+        {
+          exercise_id: 'missing-exercise',
+          completed_at: '2026-06-29T10:05:00.000Z',
+          exercise_name: null,
+        },
+      ],
+      meals_completed_details: [
+        { meal_id: 'meal-1', meal_name: 'Desayuno' },
+        { meal_id: 'missing-meal', meal_name: null },
+      ],
+    });
+
+    expect(prisma.exercise.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['ex-plank', 'missing-exercise'] } },
+      select: { id: true, name: true },
+    });
+    expect(prisma.meal.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['meal-1', 'missing-meal'] } },
+      select: { id: true, name: true },
+    });
   });
 
   it('allows a super admin to view a client profile without assignment', async () => {

@@ -1104,7 +1104,51 @@ export class UsersService {
       where: { client_id: clientId, date: new Date(date) },
     });
 
-    return progress;
+    if (!progress) {
+      return null;
+    }
+
+    const completedExercises = Array.isArray(progress.exercises_completed)
+      ? (progress.exercises_completed as Array<{ exercise_id: string; [key: string]: unknown }>)
+      : [];
+    const exerciseIds = [
+      ...new Set(completedExercises.map((entry) => entry.exercise_id).filter(Boolean)),
+    ];
+    const mealIds = [...new Set(progress.meals_completed)];
+
+    const [exercises, meals] = await Promise.all([
+      exerciseIds.length
+        ? this.prisma.exercise.findMany({
+            where: { id: { in: exerciseIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      mealIds.length
+        ? this.prisma.meal.findMany({
+            where: { id: { in: mealIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const exerciseNames = new Map<string, string>(
+      exercises.map((exercise) => [exercise.id, exercise.name] as [string, string]),
+    );
+    const mealNames = new Map<string, string>(
+      meals.map((meal) => [meal.id, meal.name] as [string, string]),
+    );
+
+    return {
+      ...progress,
+      exercises_completed: completedExercises.map((entry) => ({
+        ...entry,
+        exercise_name: exerciseNames.get(entry.exercise_id) ?? null,
+      })),
+      meals_completed_details: progress.meals_completed.map((mealId) => ({
+        meal_id: mealId,
+        meal_name: mealNames.get(mealId) ?? null,
+      })),
+    };
   }
 
   async getClientCalendarMonth(
