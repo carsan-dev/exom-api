@@ -186,6 +186,39 @@ describe('ProgressService', () => {
     );
   });
 
+  it('maps a recreated training exercise id to its current assigned row', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [
+          { id: 'training-exercise-current', exercise_id: 'exercise-1' },
+        ],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-07-01',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-started',
+      sets: [{ set_number: 1, reps: 12 }],
+    });
+
+    expect(prisma.dayProgress.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          exercises_completed: [
+            expect.objectContaining({
+              training_exercise_id: 'training-exercise-current',
+              exercise_id: 'exercise-1',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it('returns previous performances before the requested date', async () => {
     prisma.dayProgress.findMany.mockResolvedValue([
       {
@@ -331,9 +364,7 @@ describe('ProgressService', () => {
     updateStreakSpy.mockRestore();
     prisma.planAssignment.findUnique.mockResolvedValue({
       training: {
-        exercises: [
-          { id: 'training-exercise-1', exercise_id: 'exercise-1' },
-        ],
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
       },
       diet: null,
     });

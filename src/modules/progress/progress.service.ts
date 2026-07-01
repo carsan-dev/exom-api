@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -267,14 +272,32 @@ export class ProgressService {
       );
     }
 
-    const trainingExerciseId = dto.training_exercise_id;
-    const exerciseId = trainingExerciseId
-      ? assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)
+    const requestedTrainingExerciseId = dto.training_exercise_id;
+    const currentIdsForExercise = [
+      ...assignment.exerciseIdByTrainingExerciseId.entries(),
+    ]
+      .filter(([, exerciseId]) => exerciseId === dto.exercise_id)
+      .map(([trainingExerciseId]) => trainingExerciseId);
+    const trainingExerciseId = requestedTrainingExerciseId
+      ? assignment.trainingExerciseIds.has(requestedTrainingExerciseId)
+        ? requestedTrainingExerciseId
+        : currentIdsForExercise.length === 1
+          ? currentIdsForExercise[0]
+          : undefined
+      : undefined;
+    // Training edits may recreate TrainingExercise rows while a client is
+    // already executing the workout. Keep the started result valid when the
+    // underlying exercise is still part of today's assigned training.
+    const exerciseId = requestedTrainingExerciseId
+      ? trainingExerciseId
+        ? assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)
+        : undefined
       : dto.exercise_id;
 
     if (
-      (trainingExerciseId && !exerciseId) ||
-      (!trainingExerciseId && !assignment.exerciseIds.has(dto.exercise_id))
+      (requestedTrainingExerciseId && !exerciseId) ||
+      (!requestedTrainingExerciseId &&
+        !assignment.exerciseIds.has(dto.exercise_id))
     ) {
       throw new ForbiddenException(
         'Ese ejercicio no pertenece al entrenamiento asignado',
@@ -379,8 +402,7 @@ export class ProgressService {
           ...existingEntry,
           training_exercise_id: trainingExerciseId,
           exercise_id: exerciseId,
-          completed_at:
-            existingEntry?.completed_at ?? new Date().toISOString(),
+          completed_at: existingEntry?.completed_at ?? new Date().toISOString(),
         };
       },
     );
