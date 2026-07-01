@@ -19,6 +19,7 @@ import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
 
 type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
@@ -148,6 +149,7 @@ export class AssignmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
   ) {}
 
   async getClientOptions(user: AuthenticatedUser) {
@@ -626,83 +628,7 @@ export class AssignmentsService {
     clientId: string,
     range: AssignmentRange,
   ) {
-    const activeRules = await this.prisma.autoAssignmentRule.findMany({
-      where: {
-        client_id: clientId,
-        is_active: true,
-        starts_on: { lte: range.end },
-        OR: [{ ends_on: null }, { ends_on: { gte: range.start } }],
-      },
-      include: { days: true },
-      orderBy: { created_at: 'asc' },
-    });
-
-    if (activeRules.length === 0) {
-      return;
-    }
-
-    const existingAssignments = await this.prisma.planAssignment.findMany({
-      where: {
-        client_id: clientId,
-        date: {
-          gte: range.start,
-          lte: range.end,
-        },
-      },
-      select: { date: true },
-    });
-    const occupiedDates = new Set(
-      existingAssignments.map((assignment) => this.formatDate(assignment.date)),
-    );
-    const assignmentsToCreate: Array<{
-      client_id: string;
-      admin_id: string | null;
-      date: Date;
-      training_id: string | null;
-      diet_id: string | null;
-      is_rest_day: boolean;
-      auto_assignment_rule_id: string;
-    }> = [];
-
-    for (const rule of activeRules) {
-      const ruleDays = new Map(rule.days.map((day) => [day.weekday, day]));
-
-      for (const date of range.dates) {
-        const dateKey = this.formatDate(date);
-
-        if (occupiedDates.has(dateKey)) {
-          continue;
-        }
-
-        if (date < rule.starts_on || (rule.ends_on && date > rule.ends_on)) {
-          continue;
-        }
-
-        const day = ruleDays.get(this.isoWeekday(date));
-
-        if (!day) {
-          continue;
-        }
-
-        assignmentsToCreate.push({
-          client_id: clientId,
-          admin_id: rule.admin_id,
-          date,
-          training_id: day.is_rest_day ? null : day.training_id,
-          diet_id: day.is_rest_day ? null : day.diet_id,
-          is_rest_day: day.is_rest_day,
-          auto_assignment_rule_id: rule.id,
-        });
-        occupiedDates.add(dateKey);
-      }
-    }
-
-    if (assignmentsToCreate.length > 0) {
-      await this.prisma.planAssignment.createMany({
-        data: assignmentsToCreate,
-        skipDuplicates: true,
-      });
-    }
+    return this.autoAssignmentMaterializer.materialize(clientId, range);
   }
 
   async createAutoRule(
@@ -794,6 +720,64 @@ export class AssignmentsService {
       orderBy: { created_at: 'desc' },
     });
 
+    return this.serializeAutoRule(rule);
+  }
+
+  async updateAutoRule(
+    user: AuthenticatedUser,
+    ruleId: string,
+    dto: CreateAutoAssignmentRuleDto,
+  ) {
+    const existing = await this.prisma.autoAssignmentRule.findUnique({
+      where: { id: ruleId },
+      select: { id: true, client_id: true, is_active: true },
+    });
+    if (!existing || !existing.is_active) {
+      throw new NotFoundException('Autoasignación activa no encontrada');
+    }
+    if (existing.client_id !== dto.client_id) {
+      throw new BadRequestException('La regla no pertenece al cliente indicado');
+    }
+    await this.assertClientAccess(user, existing.client_id);
+
+    const sourceWeek = this.buildWeekRange(dto.source_week_start);
+    const startsOn = this.parseDate(dto.starts_on);
+    const endsOn = dto.ends_on ? this.parseDate(dto.ends_on) : null;
+    if (endsOn && endsOn < startsOn) {
+      throw new BadRequestException('La fecha fin debe ser posterior o igual a la fecha de inicio');
+    }
+    const weekdays = new Set<number>();
+    const days = dto.days.map((day) => ({
+      weekday: day.weekday,
+      ...this.normalizeAssignmentInput(day),
+    }));
+    for (const day of days) {
+      if (weekdays.has(day.weekday)) {
+        throw new BadRequestException('No puedes configurar dos autoasignaciones para el mismo día de la semana');
+      }
+      weekdays.add(day.weekday);
+    }
+    await Promise.all(days.map((day) => this.validatePlanReferences(day.training_id, day.diet_id)));
+
+    const rule = await this.prisma.autoAssignmentRule.update({
+      where: { id: ruleId },
+      data: {
+        admin_id: user.id,
+        source_week_start: sourceWeek.start,
+        starts_on: startsOn,
+        ends_on: endsOn,
+        days: {
+          deleteMany: {},
+          create: days.map((day) => ({
+            weekday: day.weekday,
+            training_id: day.training_id,
+            diet_id: day.diet_id,
+            is_rest_day: day.is_rest_day,
+          })),
+        },
+      },
+      include: autoAssignmentRuleInclude,
+    });
     return this.serializeAutoRule(rule);
   }
 

@@ -76,6 +76,17 @@ export class AssignmentsController {
     return this.assignmentsService.createAutoRule(user, dto);
   }
 
+  @Put('auto-rules/:id')
+  @ApiOperation({ summary: 'Update the active weekly auto-assignment rule in place' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  updateAutoRule(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateAutoAssignmentRuleDto,
+  ) {
+    return this.assignmentsService.updateAutoRule(user, id, dto);
+  }
+
   @Get('auto-rules/active')
   @ApiOperation({ summary: 'Get the active weekly auto-assignment rule for a client' })
   @ApiOkResponse({ description: 'Active auto-assignment rule fetched successfully' })

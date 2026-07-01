@@ -7,6 +7,7 @@ import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AssignmentsService } from './assignments.service';
 import type { NotificationsService } from '../notifications/notifications.service';
+import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
 
 function createAssignment(overrides: Record<string, unknown> = {}) {
   return {
@@ -135,6 +136,7 @@ describe('AssignmentsService', () => {
     service = new AssignmentsService(
       prisma as unknown as PrismaService,
       notifications as unknown as NotificationsService,
+      new AutoAssignmentMaterializerService(prisma as unknown as PrismaService),
     );
   });
 

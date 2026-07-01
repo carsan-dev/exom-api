@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { countCompletedMealGroups } from '../../common/progress/plan-progress-reconciliation';
+import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 export interface CalendarDay {
   date: string;
@@ -13,7 +14,18 @@ export interface CalendarDay {
 
 @Injectable()
 export class CalendarService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
+  ) {}
+
+  private buildRange(start: Date, end: Date) {
+    const dates: Date[] = [];
+    for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
+      dates.push(new Date(date));
+    }
+    return { start, end, dates };
+  }
 
   async getMonthCalendar(
     clientId: string,
@@ -22,6 +34,11 @@ export class CalendarService {
   ): Promise<CalendarDay[]> {
     const firstDay = new Date(Date.UTC(year, month - 1, 1));
     const lastDay = new Date(Date.UTC(year, month, 0));
+
+    await this.autoAssignmentMaterializer.materialize(
+      clientId,
+      this.buildRange(firstDay, lastDay),
+    );
 
     const [assignments, progresses] = await Promise.all([
       this.prisma.planAssignment.findMany({
@@ -89,6 +106,11 @@ export class CalendarService {
     const start = new Date(Date.UTC(y, m - 1, d));
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 6);
+
+    await this.autoAssignmentMaterializer.materialize(
+      clientId,
+      this.buildRange(start, end),
+    );
 
     const [assignments, progresses] = await Promise.all([
       this.prisma.planAssignment.findMany({
