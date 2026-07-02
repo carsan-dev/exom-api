@@ -199,7 +199,7 @@ export class AssignmentsService {
           estimated_calories: true,
           _count: { select: { exercises: true } },
         },
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.diet.findMany({
         where: { is_active: true },
@@ -213,7 +213,7 @@ export class AssignmentsService {
           total_fat_g: true,
           _count: { select: { meals: true } },
         },
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
     ]);
 
@@ -1162,5 +1162,25 @@ export class AssignmentsService {
     return {
       message: 'Asignación eliminada exitosamente',
     };
+  }
+
+  async deleteAssignments(user: AuthenticatedUser, assignmentIds: string[]) {
+    const assignments = await this.prisma.planAssignment.findMany({
+      where: { id: { in: assignmentIds } },
+      select: { id: true, client_id: true },
+    });
+
+    if (assignments.length !== assignmentIds.length) {
+      throw new NotFoundException('Una o varias asignaciones no existen');
+    }
+
+    const clientIds = [...new Set(assignments.map((assignment) => assignment.client_id))];
+    await Promise.all(clientIds.map((clientId) => this.assertClientAccess(user, clientId)));
+
+    const result = await this.prisma.planAssignment.deleteMany({
+      where: { id: { in: assignmentIds } },
+    });
+
+    return { deleted_count: result.count };
   }
 }

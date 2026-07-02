@@ -204,10 +204,16 @@ describe('AssignmentsService', () => {
       diets: [expect.objectContaining({ id: 'diet-1', meals_count: 5 })],
     });
     expect(prisma.training.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { is_active: true } }),
+      expect.objectContaining({
+        where: { is_active: true },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      }),
     );
     expect(prisma.diet.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { is_active: true } }),
+      expect.objectContaining({
+        where: { is_active: true },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      }),
     );
   });
 
@@ -796,5 +802,35 @@ describe('AssignmentsService', () => {
     expect(prisma.planAssignment.delete).toHaveBeenCalledWith({
       where: { id: 'assignment-1' },
     });
+  });
+
+  it('deletes multiple assignment days after validating every client', async () => {
+    prisma.planAssignment.findMany.mockResolvedValue([
+      { id: 'assignment-1', client_id: 'client-1' },
+      { id: 'assignment-2', client_id: 'client-1' },
+    ]);
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.planAssignment.deleteMany.mockResolvedValue({ count: 2 });
+
+    await expect(
+      service.deleteAssignments(adminUser, ['assignment-1', 'assignment-2']),
+    ).resolves.toEqual({ deleted_count: 2 });
+
+    expect(prisma.planAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['assignment-1', 'assignment-2'] } },
+    });
+  });
+
+  it('does not delete when one selected assignment does not exist', async () => {
+    prisma.planAssignment.findMany.mockResolvedValue([
+      { id: 'assignment-1', client_id: 'client-1' },
+    ]);
+
+    await expect(
+      service.deleteAssignments(adminUser, ['assignment-1', 'missing-assignment']),
+    ).rejects.toThrow('Una o varias asignaciones no existen');
+
+    expect(prisma.planAssignment.deleteMany).not.toHaveBeenCalled();
   });
 });
