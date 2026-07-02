@@ -27,7 +27,9 @@ import { TrainingTagsResponseDto } from './dto/training-tags-response.dto';
 import { TrainingTypesResponseDto } from './dto/training-types-response.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import {
+  CatalogBatchMutationResponseDto,
   CatalogMutationResponseDto,
+  DeleteCatalogValuesDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
 import {
@@ -115,6 +117,14 @@ export class TrainingsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   renameTag(@Body() dto: RenameCatalogValueDto) {
     return this.trainingsService.renameTag(dto.from, dto.to);
+  }
+
+  @Post('tags/delete-batch')
+  @ApiOperation({ summary: 'Remove multiple tags from all active trainings' })
+  @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteTags(@Body() dto: DeleteCatalogValuesDto) {
+    return this.trainingsService.deleteTags(dto.values);
   }
 
   @Delete('tags/:value')

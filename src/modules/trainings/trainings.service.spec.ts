@@ -221,6 +221,28 @@ describe('TrainingsService', () => {
     });
   });
 
+  it('deletes multiple tags from each affected training in one transaction', async () => {
+    prisma.training.findMany.mockResolvedValue([
+      { id: 'training-1', tags: ['Fuerza', 'Casa', 'Corto'] },
+      { id: 'training-2', tags: ['Casa'] },
+    ]);
+    prisma.training.update.mockImplementation(({ data }) => Promise.resolve(data));
+
+    await expect(service.deleteTags(['fuerza', 'CASA'])).resolves.toEqual({
+      values: ['fuerza', 'CASA'],
+      affected_count: 2,
+    });
+    expect(prisma.training.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'training-1' },
+      data: { tags: ['Corto'] },
+    });
+    expect(prisma.training.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'training-2' },
+      data: { tags: [] },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it('renames training types across trainings and achievement rules', async () => {
     prisma.training.findMany.mockResolvedValue([
       { id: 'training-1', type: 'Pilates', types: ['Pilates'] },

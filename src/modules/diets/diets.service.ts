@@ -473,6 +473,13 @@ export class DietsService {
     );
   }
 
+  deleteNutritionalBadges(values: string[]) {
+    const keys = new Set(values.map((value) => this.getCatalogKey(value)));
+    return this.mutateNutritionalBadges(values[0], (current) =>
+      current.filter((value) => !keys.has(this.getCatalogKey(value))),
+    ).then((result) => ({ values, affected_count: result.affected_count }));
+  }
+
   async updateNutritionalBadgeColor(value: string, color: string) {
     const normalizedValue = this.normalizeCatalogValue(value);
 

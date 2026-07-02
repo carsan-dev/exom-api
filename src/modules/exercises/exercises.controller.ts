@@ -27,7 +27,9 @@ import { ExerciseMuscleGroupsResponseDto } from './dto/exercise-muscle-groups-re
 import { ExerciseEquipmentResponseDto } from './dto/exercise-equipment-response.dto';
 import { ExercisesQueryDto } from './dto/exercises-query.dto';
 import {
+  CatalogBatchMutationResponseDto,
   CatalogMutationResponseDto,
+  DeleteCatalogValuesDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -69,6 +71,14 @@ export class ExercisesController {
     return this.exercisesService.renameMuscleGroup(dto.from, dto.to);
   }
 
+  @Post('muscle-groups/delete-batch')
+  @ApiOperation({ summary: 'Remove multiple muscle groups from active exercises' })
+  @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteMuscleGroups(@Body() dto: DeleteCatalogValuesDto) {
+    return this.exercisesService.deleteMuscleGroups(dto.values);
+  }
+
   @Delete('muscle-groups/:value')
   @ApiOperation({
     summary: 'Remove a muscle group from all active exercises',
@@ -97,6 +107,14 @@ export class ExercisesController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   renameEquipment(@Body() dto: RenameCatalogValueDto) {
     return this.exercisesService.renameEquipment(dto.from, dto.to);
+  }
+
+  @Post('equipment/delete-batch')
+  @ApiOperation({ summary: 'Remove multiple equipment values from active exercises' })
+  @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteEquipmentValues(@Body() dto: DeleteCatalogValuesDto) {
+    return this.exercisesService.deleteEquipmentValues(dto.values);
   }
 
   @Delete('equipment/:value')

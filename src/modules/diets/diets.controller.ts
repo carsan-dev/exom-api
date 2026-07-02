@@ -30,7 +30,9 @@ import { DietsQueryDto } from './dto/diets-query.dto';
 import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
 import { FindWeekDietQueryDto } from './dto/find-week-diet-query.dto';
 import {
+  CatalogBatchMutationResponseDto,
   CatalogMutationResponseDto,
+  DeleteCatalogValuesDto,
   RenameCatalogValueDto,
 } from '../../common/dto/catalog-value.dto';
 import {
@@ -138,6 +140,14 @@ export class DietsController {
     @Body() dto: UpdateCatalogColorDto,
   ) {
     return this.dietsService.updateNutritionalBadgeColor(value, dto.color);
+  }
+
+  @Post('nutritional-badges/delete-batch')
+  @ApiOperation({ summary: 'Remove multiple nutritional badges from active diet meals' })
+  @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteNutritionalBadges(@Body() dto: DeleteCatalogValuesDto) {
+    return this.dietsService.deleteNutritionalBadges(dto.values);
   }
 
   @Delete('nutritional-badges/:value')

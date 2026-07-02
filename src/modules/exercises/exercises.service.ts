@@ -243,6 +243,13 @@ export class ExercisesService {
     );
   }
 
+  deleteMuscleGroups(values: string[]) {
+    const keys = new Set(values.map((value) => this.getCatalogKey(value)));
+    return this.mutateExerciseCatalog('muscle_groups', values[0], (current) =>
+      current.filter((value) => !keys.has(this.getCatalogKey(value))),
+    ).then((result) => ({ values, affected_count: result.affected_count }));
+  }
+
   renameEquipment(from: string, to: string) {
     return this.renameExerciseCatalogValue('equipment', from, to);
   }
@@ -251,6 +258,14 @@ export class ExercisesService {
     return this.mutateExerciseCatalog('equipment', value, (values) =>
       this.removeCatalogValue(values, value),
     );
+  }
+
+
+  deleteEquipmentValues(values: string[]) {
+    const keys = new Set(values.map((value) => this.getCatalogKey(value)));
+    return this.mutateExerciseCatalog('equipment', values[0], (current) =>
+      current.filter((value) => !keys.has(this.getCatalogKey(value))),
+    ).then((result) => ({ values, affected_count: result.affected_count }));
   }
 
   async findAllMuscleGroups() {
