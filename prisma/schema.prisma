@@ -595,6 +595,7 @@ model BodyMetric {
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
+  @@unique([client_id, date])
   @@map("body_metrics")
 }
 

@@ -16,7 +16,7 @@ export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new body metric record' })
+  @ApiOperation({ summary: 'Create or update the body metric for a day' })
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateBodyMetricDto,

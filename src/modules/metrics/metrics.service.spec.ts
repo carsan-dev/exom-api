@@ -7,10 +7,10 @@ describe('MetricsService', () => {
   let service: MetricsService;
   let prisma: {
     bodyMetric: {
-      create: jest.Mock;
+      upsert: jest.Mock;
       findMany: jest.Mock;
-        findFirst: jest.Mock;
-      };
+      findFirst: jest.Mock;
+    };
   };
   let challengesService: {
     recalculateAutomaticProgress: jest.Mock;
@@ -22,7 +22,7 @@ describe('MetricsService', () => {
   beforeEach(() => {
     prisma = {
       bodyMetric: {
-        create: jest.fn(),
+        upsert: jest.fn(),
         findMany: jest.fn(),
         findFirst: jest.fn(),
       },
@@ -41,22 +41,15 @@ describe('MetricsService', () => {
     );
   });
 
-  it('deduplicates weight history by day keeping the latest value', async () => {
+  it('returns weight history ordered by day', async () => {
     prisma.bodyMetric.findMany.mockResolvedValue([
       {
         date: new Date('2026-03-20T00:00:00.000Z'),
-        weight_kg: 80.1,
-        created_at: new Date('2026-03-20T08:00:00.000Z'),
-      },
-      {
-        date: new Date('2026-03-20T00:00:00.000Z'),
         weight_kg: 80.4,
-        created_at: new Date('2026-03-20T10:00:00.000Z'),
       },
       {
         date: new Date('2026-03-21T00:00:00.000Z'),
         weight_kg: 79.9,
-        created_at: new Date('2026-03-21T09:00:00.000Z'),
       },
     ]);
 
@@ -70,8 +63,8 @@ describe('MetricsService', () => {
         client_id: 'client-1',
         weight_kg: { not: null },
       },
-      orderBy: [{ date: 'asc' }, { created_at: 'asc' }],
-      select: { date: true, weight_kg: true, created_at: true },
+      orderBy: { date: 'asc' },
+      select: { date: true, weight_kg: true },
     });
   });
 
@@ -88,8 +81,8 @@ describe('MetricsService', () => {
     });
   });
 
-  it('creates metrics using the provided date when present', async () => {
-    prisma.bodyMetric.create.mockResolvedValue({ id: 'metric-3' });
+  it('creates or updates metrics for the provided date', async () => {
+    prisma.bodyMetric.upsert.mockResolvedValue({ id: 'metric-3' });
 
     await expect(
       service.create('client-1', {
@@ -98,12 +91,19 @@ describe('MetricsService', () => {
       }),
     ).resolves.toEqual({ id: 'metric-3' });
 
-    expect(prisma.bodyMetric.create).toHaveBeenCalledWith({
-      data: {
+    expect(prisma.bodyMetric.upsert).toHaveBeenCalledWith({
+      where: {
+        client_id_date: {
+          client_id: 'client-1',
+          date: new Date(Date.UTC(2026, 2, 22)),
+        },
+      },
+      create: {
         client_id: 'client-1',
         date: new Date(Date.UTC(2026, 2, 22)),
         sleep_hours: 7.5,
       },
+      update: { sleep_hours: 7.5 },
     });
     expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
       'client-1',
