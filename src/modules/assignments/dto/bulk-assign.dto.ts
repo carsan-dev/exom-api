@@ -53,3 +53,20 @@ export class CopyWeekDto {
   @IsDateString()
   target_week_start: string;
 }
+
+export class CopySelectionDto {
+  @ApiProperty({ description: 'Client identifier' })
+  @IsString()
+  @IsNotEmpty()
+  client_id: string;
+
+  @ApiProperty({ type: [String], description: 'Selected source dates (YYYY-MM-DD)' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsDateString({}, { each: true })
+  source_dates: string[];
+
+  @ApiProperty({ description: 'Target date for the earliest selected day' })
+  @IsDateString()
+  target_start_date: string;
+}

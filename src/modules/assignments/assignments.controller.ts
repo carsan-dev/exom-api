@@ -24,7 +24,7 @@ import {
   CreateAutoAssignmentRuleDto,
   GetActiveAutoAssignmentRuleQueryDto,
 } from './dto/auto-assignment-rule.dto';
-import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
+import { BulkAssignmentDto, CopySelectionDto, CopyWeekDto } from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
@@ -154,6 +154,19 @@ export class AssignmentsController {
     @Body() dto: CopyWeekDto,
   ) {
     return this.assignmentsService.copyWeek(user, dto);
+  }
+
+  @Post('copy-selection')
+  @ApiOperation({ summary: 'Copy selected assignment days preserving relative offsets' })
+  @ApiOkResponse({ description: 'Selected days copied successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid source or target dates' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  copySelection(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CopySelectionDto,
+  ) {
+    return this.assignmentsService.copySelection(user, dto);
   }
 
   @Post('delete-batch')

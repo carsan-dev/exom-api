@@ -13,7 +13,7 @@ import {
   GetActiveAutoAssignmentRuleQueryDto,
 } from './dto/auto-assignment-rule.dto';
 import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
-import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
+import { BulkAssignmentDto, CopySelectionDto, CopyWeekDto } from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
@@ -1046,6 +1046,90 @@ export class AssignmentsService {
       client_id: dto.client_id,
       week_start: this.formatDate(targetWeek.start),
     });
+  }
+
+  async copySelection(user: AuthenticatedUser, dto: CopySelectionDto) {
+    await this.assertClientAccess(user, dto.client_id);
+
+    const sourceDates = Array.from(new Set(dto.source_dates)).sort();
+    const sourceStart = this.parseDate(sourceDates[0]);
+    const targetStart = this.parseDate(dto.target_start_date);
+
+    if (this.formatDate(sourceStart) === this.formatDate(targetStart)) {
+      throw new BadRequestException('La fecha inicial de origen y destino no puede ser la misma');
+    }
+
+    const parsedSourceDates = sourceDates.map((date) => this.parseDate(date));
+    const sourceAssignments = await this.prisma.planAssignment.findMany({
+      where: { client_id: dto.client_id, date: { in: parsedSourceDates } },
+    });
+    const sourceMap = new Map(
+      sourceAssignments.map((assignment) => [this.formatDate(assignment.date), assignment]),
+    );
+    const targets = parsedSourceDates.map((sourceDate) => ({
+      sourceDate,
+      targetDate: this.addDays(
+        targetStart,
+        Math.round((sourceDate.getTime() - sourceStart.getTime()) / (1000 * 60 * 60 * 24)),
+      ),
+    }));
+
+    await this.prisma.$transaction(
+      targets.map(({ sourceDate, targetDate }) => {
+        const source = sourceMap.get(this.formatDate(sourceDate));
+        if (!source) {
+          return this.prisma.planAssignment.deleteMany({
+            where: { client_id: dto.client_id, date: targetDate },
+          });
+        }
+        return this.prisma.planAssignment.upsert({
+          where: { client_id_date: { client_id: dto.client_id, date: targetDate } },
+          create: {
+            client_id: dto.client_id,
+            admin_id: user.id,
+            date: targetDate,
+            training_id: source.training_id,
+            diet_id: source.diet_id,
+            is_rest_day: source.is_rest_day,
+          },
+          update: {
+            admin_id: user.id,
+            training_id: source.training_id,
+            diet_id: source.diet_id,
+            is_rest_day: source.is_rest_day,
+          },
+        });
+      }),
+    );
+
+    const copiedDays = targets.flatMap(({ sourceDate, targetDate }) => {
+      const source = sourceMap.get(this.formatDate(sourceDate));
+      return source ? [{
+        date: targetDate,
+        training_id: source.training_id,
+        diet_id: source.diet_id,
+        is_rest_day: source.is_rest_day,
+      }] : [];
+    });
+    if (copiedDays.length > 0) {
+      const kind = this.inferPlanKind(copiedDays);
+      if (kind !== 'rest') {
+        const firstActive = copiedDays.find((day) => !day.is_rest_day);
+        await this.notifyPlanAssigned({
+          actorId: user.id,
+          clientId: dto.client_id,
+          kind,
+          dayCount: copiedDays.length,
+          firstDate: (firstActive ?? copiedDays[0]).date,
+        });
+      }
+    }
+
+    return {
+      copied_count: sourceAssignments.length,
+      cleared_count: sourceDates.length - sourceAssignments.length,
+      target_dates: targets.map(({ targetDate }) => this.formatDate(targetDate)),
+    };
   }
 
   async getWeek(user: AuthenticatedUser, query: GetWeekAssignmentsQueryDto) {

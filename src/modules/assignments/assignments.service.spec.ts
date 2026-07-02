@@ -712,6 +712,32 @@ describe('AssignmentsService', () => {
     expect(prisma.planAssignment.findMany).not.toHaveBeenCalled();
   });
 
+  it('copies a discontinuous selection and clears targets for empty source days', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.planAssignment.findMany.mockResolvedValue([
+      createAssignment({ date: new Date('2026-03-30T00:00:00.000Z') }),
+    ]);
+    prisma.planAssignment.upsert.mockResolvedValue({});
+    prisma.planAssignment.deleteMany.mockResolvedValue({ count: 1 });
+
+    await expect(service.copySelection(adminUser, {
+      client_id: 'client-1',
+      source_dates: ['2026-04-01', '2026-03-30', '2026-04-01'],
+      target_start_date: '2026-04-06',
+    })).resolves.toEqual({
+      copied_count: 1,
+      cleared_count: 1,
+      target_dates: ['2026-04-06', '2026-04-08'],
+    });
+    expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { client_id_date: { client_id: 'client-1', date: new Date('2026-04-06T00:00:00.000Z') } },
+    }));
+    expect(prisma.planAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { client_id: 'client-1', date: new Date('2026-04-08T00:00:00.000Z') },
+    });
+  });
+
   it('copyWeek notifies with the first active copied target date', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
