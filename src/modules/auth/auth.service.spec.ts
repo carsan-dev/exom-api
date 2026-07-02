@@ -186,10 +186,13 @@ describe('AuthService', () => {
   });
 
   it('returns custom token and user payload on social login when firebase uid matches', async () => {
-    verifyIdTokenMock.mockResolvedValue({
-      uid: 'firebase-google-1',
-      email: 'client@exom.dev',
-      firebase: { sign_in_provider: 'google.com' },
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ users: [{
+        localId: 'firebase-google-1',
+        email: 'client@exom.dev',
+        providerUserInfo: [{ providerId: 'google.com' }],
+      }] }),
     });
     prisma.user.findUnique.mockResolvedValue({
       id: 'user-1',
@@ -224,10 +227,13 @@ describe('AuthService', () => {
   });
 
   it('links social login when the verified email belongs to an existing user', async () => {
-    verifyIdTokenMock.mockResolvedValue({
-      uid: 'firebase-google-2',
-      email: 'client@exom.dev',
-      firebase: { sign_in_provider: 'google.com' },
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ users: [{
+        localId: 'firebase-google-2',
+        email: 'client@exom.dev',
+        providerUserInfo: [{ providerId: 'google.com' }],
+      }] }),
     });
     prisma.user.findUnique
       .mockResolvedValueOnce(null)
