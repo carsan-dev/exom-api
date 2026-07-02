@@ -28,6 +28,7 @@ import { BulkAssignmentDto, CopyWeekDto } from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
+import { DeleteAssignmentsDto } from './dto/delete-assignments.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -153,6 +154,20 @@ export class AssignmentsController {
     @Body() dto: CopyWeekDto,
   ) {
     return this.assignmentsService.copyWeek(user, dto);
+  }
+
+  @Post('delete-batch')
+  @ApiOperation({ summary: 'Delete multiple assignment days' })
+  @ApiOkResponse({ description: 'Assignments deleted successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid assignment identifiers' })
+  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiNotFoundResponse({ description: 'One or more assignments were not found' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteBatch(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: DeleteAssignmentsDto,
+  ) {
+    return this.assignmentsService.deleteAssignments(user, dto.assignment_ids);
   }
 
   @Get('week')
