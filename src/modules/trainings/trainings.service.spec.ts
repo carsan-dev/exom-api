@@ -243,6 +243,37 @@ describe('TrainingsService', () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it('deletes training types while preserving a remaining type', async () => {
+    prisma.training.findMany.mockResolvedValue([
+      { id: 'training-1', name: 'Mixto', type: 'Fuerza', types: ['Fuerza', 'Cardio'] },
+    ]);
+    prisma.achievement.findMany.mockResolvedValue([]);
+    prisma.training.update.mockResolvedValue({});
+
+    await expect(service.deleteTypes(['fuerza'])).resolves.toEqual({
+      values: ['fuerza'],
+      affected_count: 1,
+    });
+    expect(prisma.training.update).toHaveBeenCalledWith({
+      where: { id: 'training-1' },
+      data: { types: ['Cardio'], type: 'Cardio' },
+    });
+  });
+
+  it('blocks deleting a required or achievement-referenced training type', async () => {
+    prisma.training.findMany.mockResolvedValue([
+      { id: 'training-1', name: 'Fuerza', type: 'Fuerza', types: ['Fuerza'] },
+    ]);
+    prisma.achievement.findMany.mockResolvedValue([
+      { id: 'achievement-1', name: 'Fuerza', rule_config: { training_type: 'Fuerza' } },
+    ]);
+
+    await expect(service.deleteTypes(['Fuerza'])).rejects.toThrow(
+      'dejaría 1 entrenamiento sin tipo y afectaría 1 logro configurado',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('renames training types across trainings and achievement rules', async () => {
     prisma.training.findMany.mockResolvedValue([
       { id: 'training-1', type: 'Pilates', types: ['Pilates'] },

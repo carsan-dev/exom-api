@@ -9,6 +9,7 @@ describe('DietsService', () => {
     diet: {
       findMany: jest.Mock;
       count: jest.Mock;
+      update: jest.Mock;
     };
     meal: {
       findMany: jest.Mock;
@@ -26,6 +27,7 @@ describe('DietsService', () => {
       diet: {
         findMany: jest.fn(),
         count: jest.fn(),
+        update: jest.fn(),
       },
       meal: {
         findMany: jest.fn(),
@@ -39,6 +41,27 @@ describe('DietsService', () => {
     };
 
     service = new DietsService(prisma as unknown as PrismaService);
+  });
+
+  it('deletes multiple diet tags in one transaction', async () => {
+    prisma.diet.findMany.mockResolvedValue([
+      { id: 'diet-1', tags: ['Mesociclo 1', 'Déficit'] },
+      { id: 'diet-2', tags: ['Mesociclo 1'] },
+    ]);
+    prisma.diet.update.mockResolvedValue({});
+
+    await expect(service.deleteTags(['mesociclo 1'])).resolves.toEqual({
+      values: ['mesociclo 1'],
+      affected_count: 2,
+    });
+    expect(prisma.diet.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'diet-1' },
+      data: { tags: ['Déficit'] },
+    });
+    expect(prisma.diet.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'diet-2' },
+      data: { tags: [] },
+    });
   });
 
   it('filters diets by nested meal data and updated date range', async () => {

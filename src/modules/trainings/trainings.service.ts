@@ -835,6 +835,73 @@ export class TrainingsService {
     };
   }
 
+  async deleteTypes(values: string[]) {
+    const normalizedValues = this.normalizeCatalogValues(values);
+    const keys = new Set(
+      normalizedValues.map((value) => this.getCatalogKey(value)),
+    );
+    const [trainings, achievements] = await Promise.all([
+      this.prisma.training.findMany({
+        where: { is_active: true },
+        select: { id: true, name: true, type: true, types: true },
+      }),
+      this.prisma.achievement.findMany({
+        where: { criteria_type: 'TRAINING_DAYS' },
+        select: { id: true, name: true, rule_config: true },
+      }),
+    ]);
+
+    const referencedAchievements = achievements.filter((achievement) => {
+      const trainingType = this.parseAchievementRuleConfig(
+        achievement.rule_config,
+      )?.training_type;
+      return Boolean(trainingType && keys.has(this.getCatalogKey(trainingType)));
+    });
+    const plannedUpdates = trainings.flatMap((training) => {
+      const currentTypes = this.resolveTrainingTypes(training);
+      const nextTypes = currentTypes.filter(
+        (value) => !keys.has(this.getCatalogKey(value)),
+      );
+      return this.hasCatalogChanged(currentTypes, nextTypes)
+        ? [{ training, nextTypes }]
+        : [];
+    });
+    const trainingsWithoutType = plannedUpdates.filter(
+      ({ nextTypes }) => nextTypes.length === 0,
+    );
+
+    const blockers = [
+      ...(trainingsWithoutType.length > 0
+        ? [`dejaría ${trainingsWithoutType.length} ${trainingsWithoutType.length === 1 ? 'entrenamiento' : 'entrenamientos'} sin tipo`]
+        : []),
+      ...(referencedAchievements.length > 0
+        ? [`afectaría ${referencedAchievements.length} ${referencedAchievements.length === 1 ? 'logro configurado' : 'logros configurados'}`]
+        : []),
+    ];
+    if (blockers.length > 0) {
+      throw new BadRequestException(
+        `No se pueden eliminar los tipos seleccionados: ${blockers.join(' y ')}.`,
+      );
+    }
+
+    const updates = plannedUpdates.map(({ training, nextTypes }) =>
+      this.prisma.training.update({
+        where: { id: training.id },
+        data: { types: nextTypes, type: nextTypes[0] },
+      }),
+    );
+    if (updates.length > 0) {
+      await this.prisma.$transaction(updates);
+    }
+
+    return { values: normalizedValues, affected_count: updates.length };
+  }
+
+  async deleteType(value: string) {
+    const result = await this.deleteTypes([value]);
+    return { value: result.values[0], affected_count: result.affected_count };
+  }
+
   async findAllTags() {
     const trainings = await this.prisma.training.findMany({
       where: { is_active: true },

@@ -168,6 +168,14 @@ export class DietsController {
     return this.dietsService.renameTag(dto.from, dto.to);
   }
 
+  @Post('tags/delete-batch')
+  @ApiOperation({ summary: 'Remove multiple tags from all active diets' })
+  @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteTags(@Body() dto: DeleteCatalogValuesDto) {
+    return this.dietsService.deleteTags(dto.values);
+  }
+
   @Delete('tags/:value')
   @ApiOperation({ summary: 'Remove a tag from all active diets' })
   @ApiOkResponse({ type: CatalogMutationResponseDto })

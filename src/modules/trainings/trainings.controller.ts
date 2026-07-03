@@ -100,6 +100,22 @@ export class TrainingsController {
     return this.trainingsService.renameType(dto.from, dto.to);
   }
 
+  @Post('types/delete-batch')
+  @ApiOperation({ summary: 'Safely remove multiple training types' })
+  @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteTypes(@Body() dto: DeleteCatalogValuesDto) {
+    return this.trainingsService.deleteTypes(dto.values);
+  }
+
+  @Delete('types/:value')
+  @ApiOperation({ summary: 'Safely remove one training type' })
+  @ApiOkResponse({ type: CatalogMutationResponseDto })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  deleteType(@Param('value') value: string) {
+    return this.trainingsService.deleteType(value);
+  }
+
   @Patch('types/:value/color')
   @ApiOperation({ summary: 'Update the display color for a training type' })
   @ApiOkResponse({ type: CatalogColorMutationResponseDto })
