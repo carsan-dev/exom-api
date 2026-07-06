@@ -96,3 +96,35 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+## Backups de Supabase
+
+El workflow `.github/workflows/supabase-backup.yml` crea diariamente un backup
+cifrado de PostgreSQL y también puede ejecutarse manualmente.
+
+Configura estos secrets en **Settings > Secrets and variables > Actions**:
+
+- `SUPABASE_DB_URL`: URL de conexión directa a PostgreSQL, por ejemplo
+  `postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres`.
+- `BACKUP_PASSWORD`: contraseña robusta usada para cifrar el backup. Guárdala fuera
+  de GitHub; sin ella no se puede recuperar el contenido.
+
+Para lanzarlo manualmente, abre **Actions > Supabase database backup > Run
+workflow**. Al terminar, descarga el artifact desde la ejecución correspondiente.
+GitHub lo entrega dentro de un archivo ZIP; extrae primero el archivo `.tar.gz.enc`.
+
+Descifra y extrae el backup con OpenSSL:
+
+```bash
+export BACKUP_PASSWORD='<BACKUP_PASSWORD>'
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 \
+  -in supabase-backup-<run-id>-<attempt>.tar.gz.enc \
+  -out supabase-backup.tar.gz \
+  -pass env:BACKUP_PASSWORD
+tar -xzf supabase-backup.tar.gz
+unset BACKUP_PASSWORD
+```
+
+El backup contiene roles, esquema y datos de PostgreSQL, incluidos los metadatos
+de Supabase Storage almacenados en la base de datos. No contiene los archivos
+reales guardados en Supabase Storage; estos requieren un backup separado.
