@@ -220,7 +220,6 @@ describe('NotificationsService', () => {
         notification: {
           channelId: 'exom_high_importance',
           sound: 'default',
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
         },
       },
       apns: {

@@ -590,7 +590,6 @@ export class NotificationsService {
           notification: {
             channelId: NotificationsService.defaultChannelId,
             sound: 'default',
-            clickAction: 'FLUTTER_NOTIFICATION_CLICK',
           },
         },
         apns: {
