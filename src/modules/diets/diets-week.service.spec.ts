@@ -49,4 +49,35 @@ describe('DietsService.findWeek', () => {
     expect(result.week_start).toBe('2026-06-15');
     expect(result.days.every((day) => day.diet === null)).toBe(true);
   });
+
+  it('returns every day in a leap-year February with UTC boundaries', async () => {
+    findMany.mockResolvedValue([
+      {
+        date: new Date('2028-02-29T00:00:00.000Z'),
+        diet: { id: 'diet-leap', name: 'Leap', tags: [], meals: [] },
+      },
+    ]);
+    const result = await service.findMonth('client-1', 2028, 2);
+    expect(result.month_start).toBe('2028-02-01');
+    expect(result.month_end).toBe('2028-02-29');
+    expect(result.days).toHaveLength(29);
+    expect(result.days[28].diet?.id).toBe('diet-leap');
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          date: {
+            gte: new Date('2028-02-01T00:00:00.000Z'),
+            lte: new Date('2028-02-29T00:00:00.000Z'),
+          },
+        }),
+      }),
+    );
+  });
+
+  it('returns all empty natural days for an unassigned month', async () => {
+    findMany.mockResolvedValue([]);
+    const result = await service.findMonth('client-1', 2026, 7);
+    expect(result.days).toHaveLength(31);
+    expect(result.days.every((day) => day.diet === null)).toBe(true);
+  });
 });

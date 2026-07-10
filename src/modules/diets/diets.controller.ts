@@ -29,6 +29,7 @@ import { DietTagsResponseDto } from './dto/diet-tags-response.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { FindTodayDietQueryDto } from './dto/find-today-diet-query.dto';
 import { FindWeekDietQueryDto } from './dto/find-week-diet-query.dto';
+import { FindMonthDietQueryDto } from './dto/find-month-diet-query.dto';
 import {
   CatalogBatchMutationResponseDto,
   CatalogMutationResponseDto,
@@ -97,6 +98,20 @@ export class DietsController {
     @Query() query: FindWeekDietQueryDto,
   ) {
     return this.dietsService.findWeek(user.id, new Date(query.week_start));
+  }
+
+  @Get('month')
+  @ApiOperation({
+    summary: 'Get the diets assigned to the current client for a calendar month',
+  })
+  @ApiOkResponse({ description: 'Monthly diets fetched successfully' })
+  @ApiBadRequestResponse({ description: 'Invalid year or month parameter' })
+  @Roles(Role.CLIENT)
+  findMonth(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: FindMonthDietQueryDto,
+  ) {
+    return this.dietsService.findMonth(user.id, query.year, query.month);
   }
 
   @Get('nutritional-badges')

@@ -664,6 +664,28 @@ export class DietsService {
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 6);
 
+    const days = await this.findDietRange(clientId, start, end);
+
+    return {
+      week_start: this.formatUtcDate(start),
+      week_end: this.formatUtcDate(end),
+      days,
+    };
+  }
+
+  async findMonth(clientId: string, year: number, month: number) {
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0));
+    const days = await this.findDietRange(clientId, start, end);
+
+    return {
+      month_start: this.formatUtcDate(start),
+      month_end: this.formatUtcDate(end),
+      days,
+    };
+  }
+
+  private async findDietRange(clientId: string, start: Date, end: Date) {
     const assignments = await this.prisma.planAssignment.findMany({
       where: {
         client_id: clientId,
@@ -683,7 +705,9 @@ export class DietsService {
       ]),
     );
 
-    const days = Array.from({ length: 7 }, (_, offset) => {
+    const dayCount =
+      Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+    return Array.from({ length: dayCount }, (_, offset) => {
       const current = new Date(start);
       current.setUTCDate(current.getUTCDate() + offset);
       const dateKey = current.toISOString().split('T')[0];
@@ -694,11 +718,10 @@ export class DietsService {
       return { date: dateKey, diet: clientDiet };
     });
 
-    return {
-      week_start: start.toISOString().split('T')[0],
-      week_end: end.toISOString().split('T')[0],
-      days,
-    };
+  }
+
+  private formatUtcDate(date: Date) {
+    return date.toISOString().split('T')[0];
   }
 
   async findOne(id: string) {
