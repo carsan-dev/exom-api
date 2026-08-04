@@ -315,6 +315,59 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.findFirst).not.toHaveBeenCalled();
   });
 
+  it('updates all editable client profile fields', async () => {
+    const birthDate = new Date('1992-04-15T00:00:00.000Z');
+    prisma.user.findUnique
+      .mockResolvedValueOnce({
+        id: 'client-1',
+        role: Role.CLIENT,
+        profile: { id: 'profile-1' },
+      })
+      .mockResolvedValueOnce({
+        id: 'client-1',
+        role: Role.CLIENT,
+        profile: { first_name: 'Ada', last_name: 'Rivera' },
+        bodyMetrics: [],
+        streak: null,
+      });
+    prisma.user.update.mockResolvedValue({});
+
+    await service.updateClientProfile('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
+      first_name: ' Ada ',
+      last_name: ' Rivera ',
+      level: 'AVANZADO',
+      main_goal: ' Ganar fuerza ',
+      muscle_mass_goal: 30.5,
+      target_calories: 2400,
+      current_weight: 72.4,
+      height: 178,
+      birth_date: birthDate,
+    });
+
+    const expectedProfile = {
+      first_name: 'Ada',
+      last_name: 'Rivera',
+      level: 'AVANZADO',
+      main_goal: 'Ganar fuerza',
+      muscle_mass_goal: 30.5,
+      target_calories: 2400,
+      current_weight: 72.4,
+      height: 178,
+      birth_date: birthDate,
+    };
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'client-1' },
+      data: {
+        profile: {
+          upsert: {
+            create: expectedProfile,
+            update: expectedProfile,
+          },
+        },
+      },
+    });
+  });
+
   it('returns not found when trying to unlock a non-client account', async () => {
     prisma.user.findUnique.mockResolvedValue({
       id: 'admin-2',

@@ -642,15 +642,37 @@ export class UsersService {
 
     await this.assertClientAccess(currentUserId, currentUserRole, clientId);
 
-    const mainGoal = dto.main_goal?.trim() || null;
+    const profileData = {
+      ...(dto.first_name !== undefined && { first_name: dto.first_name.trim() }),
+      ...(dto.last_name !== undefined && { last_name: dto.last_name.trim() }),
+      ...(dto.level !== undefined && { level: dto.level }),
+      ...(dto.main_goal !== undefined && {
+        main_goal: dto.main_goal?.trim() || null,
+      }),
+      ...(dto.muscle_mass_goal !== undefined && {
+        muscle_mass_goal: dto.muscle_mass_goal,
+      }),
+      ...(dto.target_calories !== undefined && {
+        target_calories: dto.target_calories,
+      }),
+      ...(dto.current_weight !== undefined && {
+        current_weight: dto.current_weight,
+      }),
+      ...(dto.height !== undefined && { height: dto.height }),
+      ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
+    };
 
     await this.prisma.user.update({
       where: { id: clientId },
       data: {
         profile: {
           upsert: {
-            create: { first_name: '', last_name: '', main_goal: mainGoal },
-            update: { main_goal: mainGoal },
+            create: {
+              first_name: dto.first_name?.trim() ?? '',
+              last_name: dto.last_name?.trim() ?? '',
+              ...profileData,
+            },
+            update: profileData,
           },
         },
       },
