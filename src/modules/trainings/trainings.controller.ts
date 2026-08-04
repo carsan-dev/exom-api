@@ -70,6 +70,17 @@ export class TrainingsController {
     return this.trainingsService.findToday(user.id, date);
   }
 
+  @Get('day')
+  @ApiOperation({ summary: 'Get all ordered trainings and individual state for a date' })
+  @Roles(Role.CLIENT)
+  findDay(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('date') dateStr?: string,
+  ) {
+    const date = dateStr ? new Date(dateStr) : undefined;
+    return this.trainingsService.findDay(user.id, date);
+  }
+
   @Get('tags')
   @ApiOperation({ summary: 'List all unique tags used by active trainings' })
   @ApiOkResponse({ type: TrainingTagsResponseDto })

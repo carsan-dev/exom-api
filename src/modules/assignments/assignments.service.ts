@@ -36,6 +36,23 @@ const assignmentInclude = {
       estimated_calories: true,
     },
   },
+  trainings: {
+    orderBy: { position: 'asc' as const },
+    include: {
+      training: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          types: true,
+          accentColor: true,
+          level: true,
+          estimated_duration_min: true,
+          estimated_calories: true,
+        },
+      },
+    },
+  },
   diet: {
     select: {
       id: true,
@@ -62,6 +79,23 @@ const autoAssignmentRuleInclude = {
           level: true,
           estimated_duration_min: true,
           estimated_calories: true,
+        },
+      },
+      trainings: {
+        orderBy: { position: 'asc' as const },
+        include: {
+          training: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              types: true,
+              accentColor: true,
+              level: true,
+              estimated_duration_min: true,
+              estimated_calories: true,
+            },
+          },
         },
       },
       diet: {
@@ -104,6 +138,7 @@ export interface AssignmentRecord {
   date: Date;
   is_rest_day: boolean;
   training_id?: string | null;
+  trainings?: Array<{ position: number; training: AssignmentTrainingSummary }>;
   diet_id?: string | null;
   training: AssignmentTrainingSummary | null;
   diet: AssignmentDietSummary | null;
@@ -124,6 +159,7 @@ interface AutoAssignmentRuleDayRecord {
   id: string;
   weekday: number;
   training_id: string | null;
+  trainings?: Array<{ position: number; training: AssignmentTrainingSummary }>;
   diet_id: string | null;
   is_rest_day: boolean;
   training: AssignmentTrainingSummary | null;
@@ -277,13 +313,14 @@ export class AssignmentsService {
   private inferPlanKind(
     days: Array<{
       training_id?: string | null;
+      training_ids?: string[];
       diet_id?: string | null;
       is_rest_day?: boolean;
     }>,
   ): PlanNotifKind {
     const active = days.filter((d) => !d.is_rest_day);
     if (active.length === 0) return 'rest';
-    const hasTraining = active.some((d) => !!d.training_id);
+    const hasTraining = active.some((d) => Boolean(d.training_ids?.length || d.training_id));
     const hasDiet = active.some((d) => !!d.diet_id);
     if (hasTraining && hasDiet) return 'plan';
     if (hasTraining) return 'training';
@@ -419,14 +456,27 @@ export class AssignmentsService {
 
   private normalizeAssignmentInput(input: {
     training_id?: string | null;
+    training_ids?: string[];
     diet_id?: string | null;
     is_rest_day?: boolean;
   }) {
     const is_rest_day = input.is_rest_day ?? false;
-    const training_id = is_rest_day ? null : (input.training_id ?? null);
+    const requestedIds = input.training_ids !== undefined
+      ? input.training_ids
+      : input.training_id
+        ? [input.training_id]
+        : [];
+    const training_ids = is_rest_day ? [] : requestedIds;
+    if (training_ids.length > 5) {
+      throw new BadRequestException('No puedes asignar más de 5 entrenamientos por día');
+    }
+    if (new Set(training_ids).size !== training_ids.length) {
+      throw new BadRequestException('No puedes repetir un entrenamiento en el mismo día');
+    }
+    const training_id = training_ids[0] ?? null;
     const diet_id = is_rest_day ? null : (input.diet_id ?? null);
 
-    if (!is_rest_day && !training_id && !diet_id) {
+    if (!is_rest_day && training_ids.length === 0 && !diet_id) {
       throw new BadRequestException(
         'Debes asignar un entrenamiento, una dieta o marcar descanso',
       );
@@ -434,6 +484,7 @@ export class AssignmentsService {
 
     return {
       training_id,
+      training_ids,
       diet_id,
       is_rest_day,
     };
@@ -485,16 +536,16 @@ export class AssignmentsService {
   }
 
   private async validatePlanReferences(
-    trainingId: string | null,
+    trainingIds: string[],
     dietId: string | null,
   ) {
-    const [training, diet] = await Promise.all([
-      trainingId
-        ? this.prisma.training.findFirst({
-            where: { id: trainingId, is_active: true },
-            select: { id: true },
-          })
-        : Promise.resolve(null),
+    const [trainings, diet] = await Promise.all([
+      Promise.all(trainingIds.map((trainingId) =>
+        this.prisma.training.findFirst({
+          where: { id: trainingId, is_active: true },
+          select: { id: true },
+        }),
+      )),
       dietId
         ? this.prisma.diet.findFirst({
             where: { id: dietId, is_active: true },
@@ -503,7 +554,7 @@ export class AssignmentsService {
         : Promise.resolve(null),
     ]);
 
-    if (trainingId && !training) {
+    if (trainings.some((training) => !training)) {
       throw new NotFoundException('Entrenamiento no encontrado');
     }
 
@@ -512,13 +563,81 @@ export class AssignmentsService {
     }
   }
 
+  private async reconcileProgressForDate(clientId: string, date: Date) {
+    if (!(this.prisma as unknown as { dayProgress?: { findUnique?: unknown } }).dayProgress?.findUnique) {
+      return;
+    }
+    const [assignment, progress] = await Promise.all([
+      this.prisma.planAssignment.findUnique({
+        where: { client_id_date: { client_id: clientId, date } },
+        include: {
+          trainings: {
+            orderBy: { position: 'asc' },
+            include: {
+              training: { select: { id: true, exercises: { select: { id: true, exercise_id: true } } } },
+            },
+          },
+          training: { select: { id: true, exercises: { select: { id: true, exercise_id: true } } } },
+        },
+      }),
+      this.prisma.dayProgress.findUnique({
+        where: { client_id_date: { client_id: clientId, date } },
+      }),
+    ]);
+    if (!progress) return;
+
+    const trainings = assignment?.trainings.length
+      ? assignment.trainings.map((link) => link.training)
+      : assignment?.training ? [assignment.training] : [];
+    const validTrainingExerciseIds = new Set(
+      trainings.flatMap((training) => training.exercises.map((exercise) => exercise.id)),
+    );
+    const validExerciseIds = new Set(
+      trainings.flatMap((training) => training.exercises.map((exercise) => exercise.exercise_id)),
+    );
+    const entries = Array.isArray(progress.exercises_completed)
+      ? progress.exercises_completed as Array<{ training_exercise_id?: string; exercise_id?: string }>
+      : [];
+    const filtered = entries.filter((entry) => entry.training_exercise_id
+      ? validTrainingExerciseIds.has(entry.training_exercise_id)
+      : Boolean(entry.exercise_id && validExerciseIds.has(entry.exercise_id)));
+    const completedTrainingExerciseIds = new Set(
+      filtered.map((entry) => entry.training_exercise_id).filter((id): id is string => Boolean(id)),
+    );
+    const completedExerciseIds = new Set(
+      filtered.map((entry) => entry.exercise_id).filter((id): id is string => Boolean(id)),
+    );
+    const trainingsCompleted = trainings
+      .filter((training) => training.exercises.length > 0 && training.exercises.every((exercise) =>
+        completedTrainingExerciseIds.has(exercise.id) || completedExerciseIds.has(exercise.exercise_id),
+      ))
+      .map((training) => training.id);
+
+    await this.prisma.dayProgress.update({
+      where: { id: progress.id },
+      data: {
+        exercises_completed: filtered as never,
+        trainings_completed: trainingsCompleted,
+        training_completed: trainings.length > 0 && trainingsCompleted.length === trainings.length,
+      },
+    });
+  }
+
   private serializeAssignment(assignment: AssignmentRecord) {
+    const links = assignment.trainings ?? [];
+    const trainings = links.length
+      ? links.map((link) => this.serializeAssignmentTraining(link.training)!)
+      : assignment.training
+        ? [this.serializeAssignmentTraining(assignment.training)!]
+        : [];
     return {
       id: assignment.id,
       client_id: assignment.client_id,
       date: this.formatDate(assignment.date),
       is_rest_day: assignment.is_rest_day,
-      training: this.serializeAssignmentTraining(assignment.training),
+      training_ids: trainings.map((training) => training.id),
+      trainings,
+      training: trainings[0] ?? null,
       diet: assignment.diet,
     };
   }
@@ -543,6 +662,8 @@ export class AssignmentsService {
           date: dateKey,
           is_rest_day: false,
           training: null,
+          trainings: [],
+          training_ids: [],
           diet: null,
         };
       }
@@ -613,12 +734,20 @@ export class AssignmentsService {
       is_active: rule.is_active,
       deactivated_at: rule.deactivated_at?.toISOString() ?? null,
       days: rule.days.map((day) => ({
+        training_ids: ((day.trainings ?? []).length
+          ? day.trainings!.map((link) => link.training.id)
+          : day.training_id ? [day.training_id] : []),
         id: day.id,
         weekday: day.weekday,
         training_id: day.training_id,
         diet_id: day.diet_id,
         is_rest_day: day.is_rest_day,
-        training: this.serializeAssignmentTraining(day.training),
+        trainings: ((day.trainings ?? []).length
+          ? day.trainings!.map((link) => this.serializeAssignmentTraining(link.training)!)
+          : day.training ? [this.serializeAssignmentTraining(day.training)!] : []),
+        training: day.trainings?.[0]
+          ? this.serializeAssignmentTraining(day.trainings[0].training)
+          : this.serializeAssignmentTraining(day.training),
         diet: day.diet,
       })),
     };
@@ -667,7 +796,7 @@ export class AssignmentsService {
 
     await Promise.all(
       normalizedDays.map((day) =>
-        this.validatePlanReferences(day.training_id, day.diet_id),
+        this.validatePlanReferences(day.training_ids, day.diet_id),
       ),
     );
 
@@ -695,6 +824,9 @@ export class AssignmentsService {
               training_id: day.training_id,
               diet_id: day.diet_id,
               is_rest_day: day.is_rest_day,
+              trainings: {
+                create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+              },
             })),
           },
         },
@@ -757,7 +889,7 @@ export class AssignmentsService {
       }
       weekdays.add(day.weekday);
     }
-    await Promise.all(days.map((day) => this.validatePlanReferences(day.training_id, day.diet_id)));
+    await Promise.all(days.map((day) => this.validatePlanReferences(day.training_ids, day.diet_id)));
 
     const rule = await this.prisma.autoAssignmentRule.update({
       where: { id: ruleId },
@@ -773,6 +905,9 @@ export class AssignmentsService {
             training_id: day.training_id,
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
+            trainings: {
+              create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+            },
           })),
         },
       },
@@ -814,7 +949,7 @@ export class AssignmentsService {
 
     const normalizedInput = this.normalizeAssignmentInput(dto);
     await this.validatePlanReferences(
-      normalizedInput.training_id,
+      normalizedInput.training_ids,
       normalizedInput.diet_id,
     );
 
@@ -836,16 +971,31 @@ export class AssignmentsService {
             client_id: dto.client_id,
             admin_id: user.id,
             date,
-            ...normalizedInput,
+            training_id: normalizedInput.training_id,
+            diet_id: normalizedInput.diet_id,
+            is_rest_day: normalizedInput.is_rest_day,
+            trainings: {
+              create: normalizedInput.training_ids.map((training_id, position) => ({ training_id, position })),
+            },
           },
           update: {
             admin_id: user.id,
-            ...normalizedInput,
+            training_id: normalizedInput.training_id,
+            diet_id: normalizedInput.diet_id,
+            is_rest_day: normalizedInput.is_rest_day,
+            trainings: {
+              deleteMany: {},
+              create: normalizedInput.training_ids.map((training_id, position) => ({ training_id, position })),
+            },
           },
           include: assignmentInclude,
         });
       }),
     );
+
+    await Promise.all(uniqueDates.map((dateStr) =>
+      this.reconcileProgressForDate(dto.client_id, this.parseDate(dateStr)),
+    ));
 
     if (uniqueDates.length > 0) {
       const kind = this.inferPlanKind([normalizedInput]);
@@ -885,6 +1035,7 @@ export class AssignmentsService {
           {
             date: Date;
             training_id: string | null;
+            training_ids: string[];
             diet_id: string | null;
             is_rest_day: boolean;
           }
@@ -894,7 +1045,7 @@ export class AssignmentsService {
 
     await Promise.all(
       uniqueDays.map((day) =>
-        this.validatePlanReferences(day.training_id, day.diet_id),
+        this.validatePlanReferences(day.training_ids, day.diet_id),
       ),
     );
 
@@ -914,17 +1065,28 @@ export class AssignmentsService {
             training_id: day.training_id,
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
+            trainings: {
+              create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+            },
           },
           update: {
             admin_id: user.id,
             training_id: day.training_id,
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
+            trainings: {
+              deleteMany: {},
+              create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+            },
           },
           include: assignmentInclude,
         }),
       ),
     );
+
+    await Promise.all(uniqueDays.map((day) =>
+      this.reconcileProgressForDate(dto.client_id, day.date),
+    ));
 
     if (uniqueDays.length > 0) {
       const kind = this.inferPlanKind(uniqueDays);
@@ -996,12 +1158,25 @@ export class AssignmentsService {
             training_id: source.training_id,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            trainings: {
+              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+                training_id: link.training.id,
+                position: link.position,
+              })),
+            },
           },
           update: {
             admin_id: user.id,
             training_id: source.training_id,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            trainings: {
+              deleteMany: {},
+              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+                training_id: link.training.id,
+                position: link.position,
+              })),
+            },
           },
           include: assignmentInclude,
         });
@@ -1022,6 +1197,7 @@ export class AssignmentsService {
         return {
           date: this.addDays(targetWeek.start, offsetDays),
           training_id: source.training_id,
+          training_ids: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
           diet_id: source.diet_id,
           is_rest_day: source.is_rest_day,
         };
@@ -1062,6 +1238,7 @@ export class AssignmentsService {
     const parsedSourceDates = sourceDates.map((date) => this.parseDate(date));
     const sourceAssignments = await this.prisma.planAssignment.findMany({
       where: { client_id: dto.client_id, date: { in: parsedSourceDates } },
+      include: assignmentInclude,
     });
     const sourceMap = new Map(
       sourceAssignments.map((assignment) => [this.formatDate(assignment.date), assignment]),
@@ -1091,12 +1268,25 @@ export class AssignmentsService {
             training_id: source.training_id,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            trainings: {
+              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+                training_id: link.training.id,
+                position: link.position,
+              })),
+            },
           },
           update: {
             admin_id: user.id,
             training_id: source.training_id,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            trainings: {
+              deleteMany: {},
+              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+                training_id: link.training.id,
+                position: link.position,
+              })),
+            },
           },
         });
       }),
@@ -1107,6 +1297,7 @@ export class AssignmentsService {
       return source ? [{
         date: targetDate,
         training_id: source.training_id,
+        training_ids: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
         diet_id: source.diet_id,
         is_rest_day: source.is_rest_day,
       }] : [];
@@ -1189,6 +1380,11 @@ export class AssignmentsService {
     }
 
     const normalizedInput = this.normalizeAssignmentInput({
+      training_ids: dto.training_ids !== undefined
+        ? dto.training_ids
+        : (assignment.trainings ?? []).length
+          ? assignment.trainings!.map((link) => link.training.id)
+          : undefined,
       training_id:
         dto.training_id !== undefined ? dto.training_id : assignment.training_id,
       diet_id: dto.diet_id !== undefined ? dto.diet_id : assignment.diet_id,
@@ -1196,7 +1392,7 @@ export class AssignmentsService {
     });
 
     await this.validatePlanReferences(
-      normalizedInput.training_id,
+      normalizedInput.training_ids,
       normalizedInput.diet_id,
     );
 
@@ -1205,10 +1401,18 @@ export class AssignmentsService {
       data: {
         admin_id: user.id,
         date: nextDate,
-        ...normalizedInput,
+        training_id: normalizedInput.training_id,
+        diet_id: normalizedInput.diet_id,
+        is_rest_day: normalizedInput.is_rest_day,
+        trainings: {
+          deleteMany: {},
+          create: normalizedInput.training_ids.map((training_id, position) => ({ training_id, position })),
+        },
       },
       include: assignmentInclude,
     });
+
+    await this.reconcileProgressForDate(assignment.client_id, nextDate);
 
     const kind = this.inferPlanKind([normalizedInput]);
     if (kind !== 'rest') {

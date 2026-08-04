@@ -792,6 +792,9 @@ async function main() {
         diet_id: plan.dietId,
         is_rest_day: plan.isRestDay,
         notes: plan.notes,
+        trainings: plan.trainingId
+          ? { create: [{ training_id: plan.trainingId, position: 0 }] }
+          : undefined,
       },
     });
   }
@@ -982,6 +985,9 @@ async function main() {
         diet_id: plan.dietId,
         is_rest_day: plan.isRestDay,
         notes: plan.notes,
+        trainings: plan.trainingId
+          ? { create: [{ training_id: plan.trainingId, position: 0 }] }
+          : undefined,
       },
     });
   }

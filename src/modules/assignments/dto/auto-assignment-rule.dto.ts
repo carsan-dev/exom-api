@@ -2,6 +2,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  ArrayMaxSize,
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -24,7 +26,7 @@ class AutoAssignmentDaySelectionValidator
 {
   validate(_: boolean | undefined, args: ValidationArguments) {
     const day = args.object as AutoAssignmentRuleDayDto;
-    return Boolean(day.is_rest_day || day.training_id || day.diet_id);
+    return Boolean(day.is_rest_day || day.training_ids?.length || day.training_id || day.diet_id);
   }
 
   defaultMessage() {
@@ -44,6 +46,15 @@ export class AutoAssignmentRuleDayDto {
   @IsString()
   @IsNotEmpty()
   training_id?: string | null;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  training_ids?: string[];
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

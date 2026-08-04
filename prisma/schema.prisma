@@ -301,7 +301,9 @@ model Training {
   group       TrainingGroup? @relation(fields: [group_id], references: [id], onDelete: SetNull)
   exercises   TrainingExercise[]
   assignments PlanAssignment[]
+  assignmentLinks PlanAssignmentTraining[]
   autoAssignmentRuleDays AutoAssignmentRuleDay[]
+  autoAssignmentRuleDayLinks AutoAssignmentRuleDayTraining[]
   blocks                 TrainingBlock[]
 
   @@index([group_id])
@@ -508,12 +510,28 @@ model PlanAssignment {
   updated_at  DateTime @updatedAt
 
   training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  trainings PlanAssignmentTraining[]
   diet     Diet?     @relation(fields: [diet_id], references: [id], onDelete: SetNull)
   autoAssignmentRule AutoAssignmentRule? @relation(fields: [auto_assignment_rule_id], references: [id], onDelete: SetNull)
 
   @@unique([client_id, date])
   @@index([auto_assignment_rule_id])
   @@map("plan_assignments")
+}
+
+model PlanAssignmentTraining {
+  id            String @id @default(uuid())
+  assignment_id String
+  training_id   String
+  position      Int
+
+  assignment PlanAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  training   Training       @relation(fields: [training_id], references: [id], onDelete: Cascade)
+
+  @@unique([assignment_id, training_id])
+  @@unique([assignment_id, position])
+  @@index([training_id])
+  @@map("plan_assignment_trainings")
 }
 
 model AutoAssignmentRule {
@@ -545,10 +563,26 @@ model AutoAssignmentRuleDay {
 
   rule     AutoAssignmentRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
   training Training?          @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  trainings AutoAssignmentRuleDayTraining[]
   diet     Diet?              @relation(fields: [diet_id], references: [id], onDelete: SetNull)
 
   @@unique([rule_id, weekday])
   @@map("auto_assignment_rule_days")
+}
+
+model AutoAssignmentRuleDayTraining {
+  id          String @id @default(uuid())
+  rule_day_id String
+  training_id String
+  position    Int
+
+  ruleDay  AutoAssignmentRuleDay @relation(fields: [rule_day_id], references: [id], onDelete: Cascade)
+  training Training              @relation(fields: [training_id], references: [id], onDelete: Cascade)
+
+  @@unique([rule_day_id, training_id])
+  @@unique([rule_day_id, position])
+  @@index([training_id])
+  @@map("auto_assignment_rule_day_trainings")
 }
 
 model DayProgress {
@@ -556,6 +590,7 @@ model DayProgress {
   client_id           String
   date                DateTime @db.Date
   training_completed  Boolean  @default(false)
+  trainings_completed String[] @default([])
   exercises_completed Json     @default("[]")
   meals_completed     String[]
   notes               String?

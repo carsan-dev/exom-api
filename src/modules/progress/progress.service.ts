@@ -36,9 +36,12 @@ interface ExerciseCompletedEntry {
 
 interface AssignmentContext {
   date: Date;
+  trainingIds: string[];
   trainingExerciseIds: Set<string>;
   exerciseIds: Set<string>;
   exerciseIdByTrainingExerciseId: Map<string, string>;
+  trainingExerciseIdsByTrainingId: Map<string, Set<string>>;
+  exerciseIdsByTrainingId: Map<string, Set<string>>;
   mealIds: Set<string>;
   mealGroupById: Map<string, string>;
 }
@@ -83,8 +86,17 @@ export class ProgressService {
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date } },
       include: {
+        trainings: {
+          orderBy: { position: 'asc' },
+          include: {
+            training: {
+              select: { id: true, exercises: { select: { id: true, exercise_id: true } } },
+            },
+          },
+        },
         training: {
           select: {
+            id: true,
             exercises: {
               select: { id: true, exercise_id: true },
             },
@@ -101,22 +113,42 @@ export class ProgressService {
     });
 
     const dietMeals = assignment?.diet?.meals ?? [];
+    const assignedTrainings = (assignment?.trainings ?? []).length
+      ? assignment!.trainings!.map((link) => link.training)
+      : assignment?.training
+        ? [{
+            ...assignment.training,
+            id: assignment.training.id ?? assignment.training_id ?? '__legacy_training__',
+          }]
+        : [];
+    const allExercises = assignedTrainings.flatMap((training) => training.exercises);
 
     return {
       date,
+      trainingIds: assignedTrainings.map((training) => training.id),
       trainingExerciseIds: new Set(
-        assignment?.training?.exercises.map((exercise) => exercise.id) ?? [],
+        allExercises.map((exercise) => exercise.id),
       ),
       exerciseIds: new Set(
-        assignment?.training?.exercises.map(
-          (exercise) => exercise.exercise_id,
-        ) ?? [],
+        allExercises.map((exercise) => exercise.exercise_id),
       ),
       exerciseIdByTrainingExerciseId: new Map(
-        assignment?.training?.exercises.map((exercise) => [
+        allExercises.map((exercise) => [
           exercise.id,
           exercise.exercise_id,
-        ]) ?? [],
+        ]),
+      ),
+      trainingExerciseIdsByTrainingId: new Map(
+        assignedTrainings.map((training) => [
+          training.id,
+          new Set(training.exercises.map((exercise) => exercise.id)),
+        ]),
+      ),
+      exerciseIdsByTrainingId: new Map(
+        assignedTrainings.map((training) => [
+          training.id,
+          new Set(training.exercises.map((exercise) => exercise.exercise_id)),
+        ]),
       ),
       mealIds: new Set(dietMeals.map((meal) => meal.id)),
       mealGroupById: new Map(
@@ -152,6 +184,19 @@ export class ProgressService {
 
     return [...assignedExerciseIds].every((exerciseId) =>
       completedExerciseIds.has(exerciseId),
+    );
+  }
+
+  private getCompletedTrainingIds(
+    assignment: AssignmentContext,
+    completedEntries: ExerciseCompletedEntry[],
+  ): string[] {
+    return assignment.trainingIds.filter((trainingId) =>
+      this.getTrainingCompletedStatus(
+        assignment.trainingExerciseIdsByTrainingId.get(trainingId) ?? new Set(),
+        assignment.exerciseIdsByTrainingId.get(trainingId) ?? new Set(),
+        completedEntries,
+      ),
     );
   }
 
@@ -191,6 +236,7 @@ export class ProgressService {
         client_id: clientId,
         date,
         training_completed: false,
+        trainings_completed: [],
         exercises_completed: [],
         meals_completed: [],
         notes: null,
@@ -327,6 +373,10 @@ export class ProgressService {
       ...(dto.sets !== undefined && { sets: dto.sets }),
     });
 
+    const trainingsCompleted = this.getCompletedTrainingIds(assignment, filtered);
+    const allTrainingsCompleted = assignment.trainingIds.length > 0 &&
+      trainingsCompleted.length === assignment.trainingIds.length;
+
     const progress = await this.prisma.$transaction(async (tx) => {
       const result = await tx.dayProgress.upsert({
         where: { client_id_date: { client_id: clientId, date } },
@@ -337,18 +387,14 @@ export class ProgressService {
           meals_completed: existing?.meals_completed ?? [],
           notes: existing?.notes ?? null,
           training_completed: this.getTrainingCompletedStatus(
-            assignment.trainingExerciseIds,
-            assignment.exerciseIds,
-            filtered,
-          ),
+            assignment.trainingExerciseIds, assignment.exerciseIds, filtered,
+          ) && allTrainingsCompleted,
+          trainings_completed: trainingsCompleted,
         },
         update: {
           exercises_completed: this.serializeExercisesCompleted(filtered),
-          training_completed: this.getTrainingCompletedStatus(
-            assignment.trainingExerciseIds,
-            assignment.exerciseIds,
-            filtered,
-          ),
+          training_completed: allTrainingsCompleted,
+          trainings_completed: trainingsCompleted,
         },
       });
 
@@ -368,7 +414,7 @@ export class ProgressService {
     const date = this.parseDate(dto.date);
     const assignment = await this.getAssignmentContext(clientId, date);
 
-    if (!assignment.trainingExerciseIds.size) {
+    if (!assignment.trainingIds.length) {
       throw new ForbiddenException(
         'No tienes entrenamiento asignado para esa fecha',
       );
@@ -390,7 +436,12 @@ export class ProgressService {
       currentExercises.map((entry) => [entry.exercise_id, entry]),
     );
 
-    const completedExercises = [...assignment.trainingExerciseIds].map(
+    const targetTrainingId = dto.training_id ?? assignment.trainingIds[0];
+    if (!assignment.trainingIds.includes(targetTrainingId)) {
+      throw new ForbiddenException('Ese entrenamiento no está asignado para esa fecha');
+    }
+    const targetExerciseIds = assignment.trainingExerciseIdsByTrainingId.get(targetTrainingId) ?? new Set<string>();
+    const completedTargetExercises = [...targetExerciseIds].map(
       (trainingExerciseId) => {
         const exerciseId =
           assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
@@ -406,6 +457,16 @@ export class ProgressService {
         };
       },
     );
+    const completedExercises = [
+      ...currentExercises.filter((entry) =>
+        entry.training_exercise_id
+          ? !targetExerciseIds.has(entry.training_exercise_id)
+          : ![...(assignment.exerciseIdsByTrainingId.get(targetTrainingId) ?? new Set())].includes(entry.exercise_id),
+      ),
+      ...completedTargetExercises,
+    ];
+    const trainingsCompleted = this.getCompletedTrainingIds(assignment, completedExercises);
+    const allTrainingsCompleted = trainingsCompleted.length === assignment.trainingIds.length;
 
     const progress = await this.prisma.$transaction(async (tx) => {
       const result = await tx.dayProgress.upsert({
@@ -417,13 +478,15 @@ export class ProgressService {
             this.serializeExercisesCompleted(completedExercises),
           meals_completed: existing?.meals_completed ?? [],
           notes: dto.notes?.trim() || existing?.notes || null,
-          training_completed: true,
+          training_completed: allTrainingsCompleted,
+          trainings_completed: trainingsCompleted,
         },
         update: {
           exercises_completed:
             this.serializeExercisesCompleted(completedExercises),
           notes: dto.notes?.trim() || existing?.notes || null,
-          training_completed: true,
+          training_completed: allTrainingsCompleted,
+          trainings_completed: trainingsCompleted,
         },
       });
 
@@ -478,6 +541,7 @@ export class ProgressService {
           meals_completed: updatedMeals,
           notes: existing?.notes ?? null,
           training_completed: existing?.training_completed ?? false,
+          trainings_completed: existing?.trainings_completed ?? [],
         },
         update: {
           meals_completed: updatedMeals,
@@ -522,16 +586,15 @@ export class ProgressService {
         entry.training_exercise_id !== exerciseId &&
         entry.exercise_id !== exerciseId,
     );
+    const trainingsCompleted = this.getCompletedTrainingIds(assignment, filtered);
 
     const progress = await this.prisma.dayProgress.update({
       where: { client_id_date: { client_id: clientId, date } },
       data: {
         exercises_completed: this.serializeExercisesCompleted(filtered),
-        training_completed: this.getTrainingCompletedStatus(
-          assignment.trainingExerciseIds,
-          assignment.exerciseIds,
-          filtered,
-        ),
+        training_completed: assignment.trainingIds.length > 0 &&
+          trainingsCompleted.length === assignment.trainingIds.length,
+        trainings_completed: trainingsCompleted,
       },
     });
 

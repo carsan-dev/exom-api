@@ -47,6 +47,7 @@ export class CalendarService {
           date: { gte: firstDay, lte: lastDay },
         },
         include: {
+          trainings: { select: { training_id: true } },
           diet: {
             select: {
               meals: { select: { id: true, parent_meal_id: true } },
@@ -89,7 +90,7 @@ export class CalendarService {
 
       days.push({
         date: dateStr,
-        has_training: !!assignment?.training_id,
+        has_training: Boolean(assignment && ((assignment.trainings?.length ?? 0) > 0 || assignment.training_id)),
         has_diet: !!assignment?.diet_id,
         is_rest_day: assignment?.is_rest_day ?? false,
         training_completed: progress?.training_completed ?? false,
@@ -119,6 +120,7 @@ export class CalendarService {
           date: { gte: start, lte: end },
         },
         include: {
+          trainings: { select: { training_id: true } },
           diet: {
             select: {
               meals: { select: { id: true, parent_meal_id: true } },
@@ -134,9 +136,12 @@ export class CalendarService {
       }),
     ]);
 
-    const trainingsAssigned = assignments.filter(
-      (a) => !!a.training_id && !a.is_rest_day,
-    ).length;
+    const trainingsAssigned = assignments.reduce(
+      (sum, assignment) => sum + (assignment.is_rest_day
+        ? 0
+        : assignment.trainings?.length || (assignment.training_id ? 1 : 0)),
+      0,
+    );
 
     const progressMap = new Map(
       progresses.map((progress) => [
@@ -145,14 +150,17 @@ export class CalendarService {
       ]),
     );
 
-    const trainingsCompleted = assignments.filter((assignment) => {
-      if (!assignment.training_id || assignment.is_rest_day) return false;
-      return (
-        progressMap.get(
-          `${assignment.client_id}:${assignment.date.toISOString()}`,
-        )?.training_completed ?? false
+    const trainingsCompleted = assignments.reduce((sum, assignment) => {
+      if (assignment.is_rest_day) return sum;
+      const progress = progressMap.get(
+        `${assignment.client_id}:${assignment.date.toISOString()}`,
       );
-    }).length;
+      if (assignment.trainings?.length) {
+        const assignedIds = new Set(assignment.trainings.map((link) => link.training_id));
+        return sum + (progress?.trainings_completed.filter((id) => assignedIds.has(id)).length ?? 0);
+      }
+      return sum + (assignment.training_id && progress?.training_completed ? 1 : 0);
+    }, 0);
 
     const totalMeals = assignments.reduce((sum, a) => {
       return (

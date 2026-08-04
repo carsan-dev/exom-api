@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMinSize,
+  ArrayMaxSize,
+  ArrayUnique,
   IsDateString,
   IsArray,
   IsOptional,
@@ -26,6 +28,15 @@ export class BulkAssignmentDto {
   @IsString()
   @IsNotEmpty()
   training_id?: string | null;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  training_ids?: string[];
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

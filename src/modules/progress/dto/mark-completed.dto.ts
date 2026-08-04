@@ -77,6 +77,11 @@ export class CompleteTrainingDto {
   @IsString()
   date: string;
 
+  @ApiPropertyOptional({ description: 'Assigned training to complete; defaults to the first one' })
+  @IsOptional()
+  @IsString()
+  training_id?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

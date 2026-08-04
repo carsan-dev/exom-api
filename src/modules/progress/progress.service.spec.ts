@@ -444,4 +444,46 @@ describe('ProgressService', () => {
       },
     });
   });
+
+  it('completes only the selected training and keeps the day incomplete', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      trainings: [
+        {
+          position: 0,
+          training: {
+            id: 'training-1',
+            exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+          },
+        },
+        {
+          position: 1,
+          training: {
+            id: 'training-2',
+            exercises: [{ id: 'training-exercise-2', exercise_id: 'exercise-2' }],
+          },
+        },
+      ],
+      training: null,
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.completeTraining('client-1', {
+      date: '2026-08-04',
+      training_id: 'training-1',
+    });
+
+    expect(prisma.dayProgress.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          training_completed: false,
+          trainings_completed: ['training-1'],
+          exercises_completed: [
+            expect.objectContaining({ training_exercise_id: 'training-exercise-1' }),
+          ],
+        }),
+      }),
+    );
+  });
 });

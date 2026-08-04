@@ -248,7 +248,7 @@ describe('AssignmentsService', () => {
         dates: ['2026-03-30'],
         training_id: 'training-1',
       }),
-    ).resolves.toEqual([
+    ).resolves.toMatchObject([
       {
         id: 'assignment-1',
         client_id: 'client-1',
@@ -306,7 +306,7 @@ describe('AssignmentsService', () => {
     expect(response.week_start).toBe('2026-03-30');
     expect(response.week_end).toBe('2026-04-05');
     expect(response.days).toHaveLength(7);
-    expect(response.days[0]).toEqual({
+    expect(response.days[0]).toMatchObject({
       id: 'assignment-1',
       client_id: 'client-1',
       date: '2026-03-30',
@@ -314,7 +314,7 @@ describe('AssignmentsService', () => {
       training: createAssignment().training,
       diet: null,
     });
-    expect(response.days[1]).toEqual({
+    expect(response.days[1]).toMatchObject({
       id: null,
       client_id: 'client-1',
       date: '2026-03-31',
@@ -357,7 +357,7 @@ describe('AssignmentsService', () => {
     expect(response.month_start).toBe('2026-03-01');
     expect(response.month_end).toBe('2026-03-31');
     expect(response.days).toHaveLength(31);
-    expect(response.days[29]).toEqual({
+    expect(response.days[29]).toMatchObject({
       id: 'assignment-1',
       client_id: 'client-1',
       date: '2026-03-30',
@@ -365,7 +365,7 @@ describe('AssignmentsService', () => {
       training: createAssignment().training,
       diet: null,
     });
-    expect(response.days[30]).toEqual({
+    expect(response.days[30]).toMatchObject({
       id: 'assignment-2',
       client_id: 'client-1',
       date: '2026-03-31',
@@ -426,7 +426,7 @@ describe('AssignmentsService', () => {
           { date: '2026-03-31', is_rest_day: true },
         ],
       }),
-    ).resolves.toEqual([
+    ).resolves.toMatchObject([
       {
         id: 'assignment-rest',
         client_id: 'client-1',
@@ -601,23 +601,25 @@ describe('AssignmentsService', () => {
     });
 
     expect(response.week_start).toBe('2026-04-06');
-    expect(prisma.planAssignment.createMany).toHaveBeenCalledTimes(1);
-    expect(prisma.planAssignment.createMany).toHaveBeenCalledWith({
-      data: expect.arrayContaining([
-        expect.objectContaining({
+    expect(prisma.planAssignment.create).toHaveBeenCalledTimes(2);
+    expect(prisma.planAssignment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
           client_id: 'client-1',
           date: new Date('2026-04-06T00:00:00.000Z'),
           training_id: 'training-1',
           auto_assignment_rule_id: 'rule-1',
+          trainings: {
+            create: [{ training_id: 'training-1', position: 0 }],
+          },
         }),
-        expect.objectContaining({
+    });
+    expect(prisma.planAssignment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
           date: new Date('2026-04-08T00:00:00.000Z'),
           training_id: null,
           diet_id: null,
           is_rest_day: true,
         }),
-      ]),
-      skipDuplicates: true,
     });
   });
 
@@ -858,5 +860,58 @@ describe('AssignmentsService', () => {
     ).rejects.toThrow('Una o varias asignaciones no existen');
 
     expect(prisma.planAssignment.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('persists up to five training ids in the requested order', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.training.findFirst.mockImplementation(({ where }) =>
+      Promise.resolve({ id: where.id }),
+    );
+    prisma.planAssignment.upsert.mockResolvedValue(createAssignment({
+      trainings: [
+        { position: 0, training: createAssignment().training },
+      ],
+    }));
+
+    await service.bulkAssign(adminUser, {
+      client_id: 'client-1',
+      dates: ['2026-08-04'],
+      training_ids: ['training-2', 'training-1'],
+      is_rest_day: false,
+    });
+
+    expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          training_id: 'training-2',
+          trainings: {
+            create: [
+              { training_id: 'training-2', position: 0 },
+              { training_id: 'training-1', position: 1 },
+            ],
+          },
+        }),
+      }),
+    );
+  });
+
+  it('rejects duplicate and more than five trainings defensively', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+
+    await expect(service.bulkAssign(adminUser, {
+      client_id: 'client-1',
+      dates: ['2026-08-04'],
+      training_ids: ['training-1', 'training-1'],
+      is_rest_day: false,
+    })).rejects.toThrow('No puedes repetir un entrenamiento');
+
+    await expect(service.bulkAssign(adminUser, {
+      client_id: 'client-1',
+      dates: ['2026-08-04'],
+      training_ids: ['1', '2', '3', '4', '5', '6'],
+      is_rest_day: false,
+    })).rejects.toThrow('No puedes asignar más de 5 entrenamientos');
   });
 });

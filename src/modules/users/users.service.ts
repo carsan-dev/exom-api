@@ -1191,6 +1191,7 @@ export class UsersService {
           client_id: clientId,
           date: { gte: startDate, lte: endDate },
         },
+        include: { trainings: { select: { training_id: true } } },
       }),
       this.prisma.dayProgress.findMany({
         where: {
@@ -1223,7 +1224,7 @@ export class UsersService {
 
       days.push({
         date: dateStr,
-        has_training: Boolean(assignment?.training_id),
+        has_training: Boolean(assignment && (assignment.trainings.length || assignment.training_id)),
         has_diet: Boolean(assignment?.diet_id),
         is_rest_day: assignment ? assignment.is_rest_day : true,
         training_completed: dayProgress?.training_completed ?? false,
@@ -1253,7 +1254,10 @@ export class UsersService {
           client_id: clientId,
           date: { gte: start, lte: end },
         },
-        include: { diet: { include: { meals: true } } },
+        include: {
+          trainings: { select: { training_id: true } },
+          diet: { include: { meals: true } },
+        },
       }),
       this.prisma.dayProgress.findMany({
         where: {
@@ -1278,9 +1282,14 @@ export class UsersService {
       const dateStr = assignment.date.toISOString().split('T')[0];
       const dayProgress = progressByDate.get(dateStr);
 
-      if (assignment.training_id) {
-        trainingsAssigned += 1;
-        if (dayProgress?.training_completed) trainingsCompleted += 1;
+      const assignedTrainingIds = assignment.trainings.length
+        ? assignment.trainings.map((link) => link.training_id)
+        : assignment.training_id ? [assignment.training_id] : [];
+      if (assignedTrainingIds.length) {
+        trainingsAssigned += assignedTrainingIds.length;
+        trainingsCompleted += dayProgress?.trainings_completed.filter((id) =>
+          assignedTrainingIds.includes(id),
+        ).length ?? (dayProgress?.training_completed ? 1 : 0);
       }
 
       if (assignment.diet_id) {

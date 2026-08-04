@@ -559,8 +559,18 @@ export class TrainingsService {
         select: { id: true, exercise_id: true },
       }),
       tx.planAssignment.findMany({
-        where: { training_id: trainingId },
-        select: { client_id: true, date: true },
+        where: {
+          OR: [
+            { training_id: trainingId },
+            { trainings: { some: { training_id: trainingId } } },
+          ],
+        },
+        select: {
+          client_id: true,
+          date: true,
+          trainings: { orderBy: { position: 'asc' }, select: { training_id: true } },
+          training_id: true,
+        },
       }),
     ]);
     if (!assignments.length) return;
@@ -582,11 +592,21 @@ export class TrainingsService {
         currentExercises,
         explicitlyDeletedIds,
       );
+      const completedIds = new Set(progress.trainings_completed);
+      if (reconciled.trainingCompleted) completedIds.add(trainingId);
+      else completedIds.delete(trainingId);
+      const assignment = assignments.find(
+        (item) => `${item.client_id}:${item.date.toISOString()}` === key,
+      )!;
+      const assignedIds = assignment.trainings.length
+        ? assignment.trainings.map((link) => link.training_id)
+        : assignment.training_id ? [assignment.training_id] : [];
       await tx.dayProgress.update({
         where: { id: progress.id },
         data: {
           exercises_completed: reconciled.entries as unknown as Prisma.InputJsonValue,
-          training_completed: reconciled.trainingCompleted,
+          trainings_completed: [...completedIds].filter((id) => assignedIds.includes(id)),
+          training_completed: assignedIds.length > 0 && assignedIds.every((id) => completedIds.has(id)),
         },
       });
     }
@@ -1084,6 +1104,11 @@ export class TrainingsService {
   }
 
   async findToday(clientId: string, date?: Date) {
+    const day = await this.findDay(clientId, date);
+    return day.trainings[0] ?? null;
+  }
+
+  async findDay(clientId: string, date?: Date) {
     const now = date ?? new Date();
     const target = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
@@ -1092,17 +1117,33 @@ export class TrainingsService {
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },
       include: {
+        trainings: {
+          orderBy: { position: 'asc' },
+          include: { training: { include: trainingExercisesInclude } },
+        },
         training: {
           include: trainingExercisesInclude,
         },
       },
     });
 
-    if (!assignment || !assignment.training) {
-      return null;
-    }
-
-    return this.serializeTraining(assignment.training);
+    const progress = await this.prisma.dayProgress.findUnique({
+      where: { client_id_date: { client_id: clientId, date: target } },
+      select: { training_completed: true, trainings_completed: true },
+    });
+    const assignedTrainings = assignment?.trainings.length
+      ? assignment.trainings.map((link) => link.training)
+      : assignment?.training ? [assignment.training] : [];
+    const completedIds = new Set(progress?.trainings_completed ?? []);
+    return {
+      date: target.toISOString().split('T')[0],
+      training_completed: progress?.training_completed ?? false,
+      trainings: assignedTrainings.map((training) => ({
+        ...this.serializeTraining(training),
+        completed: completedIds.has(training.id) ||
+          Boolean(progress?.training_completed && assignedTrainings.length === 1),
+      })),
+    };
   }
 
   async findOne(id: string) {
