@@ -8,5 +8,6 @@ import { MetricsService } from './metrics.service';
   imports: [ChallengesModule, AchievementsModule],
   controllers: [MetricsController],
   providers: [MetricsService],
+  exports: [MetricsService],
 })
 export class MetricsModule {}

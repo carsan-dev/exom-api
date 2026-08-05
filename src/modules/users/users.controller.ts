@@ -29,6 +29,10 @@ import {
 } from './dto/admin-client-calendar-query.dto';
 import { AdminClientBodyHistoryQueryDto } from './dto/admin-client-metrics-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import {
+  CreateAdminClientMetricDto,
+  UpdateAdminClientMetricDto,
+} from './dto/admin-client-metric.dto';
 
 class UpdateFcmTokenDto {
   @ApiProperty()
@@ -244,6 +248,40 @@ export class UsersController {
     @Query() pagination: PaginationDto,
   ) {
     return this.usersService.getClientMetrics(admin.id, admin.role, clientId, pagination);
+  }
+
+  @Post('clients/:id/metrics')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Crear métricas corporales para un cliente' })
+  @ApiResponse({ status: 201, description: 'Métrica creada correctamente' })
+  @ApiResponse({ status: 409, description: 'Ya existe una métrica para esa fecha' })
+  createClientMetric(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Body() dto: CreateAdminClientMetricDto,
+  ) {
+    return this.usersService.createClientMetric(admin.id, admin.role, clientId, dto);
+  }
+
+  @Patch('clients/:id/metrics/:metricId')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Editar métricas corporales de un cliente' })
+  @ApiResponse({ status: 200, description: 'Métrica actualizada correctamente' })
+  @ApiResponse({ status: 404, description: 'Cliente o métrica no encontrados' })
+  @ApiResponse({ status: 409, description: 'Ya existe una métrica para esa fecha' })
+  updateClientMetric(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Param('metricId') metricId: string,
+    @Body() dto: UpdateAdminClientMetricDto,
+  ) {
+    return this.usersService.updateClientMetric(
+      admin.id,
+      admin.role,
+      clientId,
+      metricId,
+      dto,
+    );
   }
 
   @Get('clients/:id/metrics/weight-history')

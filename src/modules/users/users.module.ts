@@ -2,11 +2,12 @@ import { Module } from '@nestjs/common';
 import { ChallengesModule } from '../challenges/challenges.module';
 import { EmailModule } from '../email/email.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MetricsModule } from '../metrics/metrics.module';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 @Module({
-  imports: [ChallengesModule, EmailModule, NotificationsModule],
+  imports: [ChallengesModule, EmailModule, NotificationsModule, MetricsModule],
   controllers: [UsersController],
   providers: [UsersService],
   exports: [UsersService],

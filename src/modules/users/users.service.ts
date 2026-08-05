@@ -29,6 +29,11 @@ import { Prisma, Role } from '@prisma/client';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { UpdateClientProfileDto } from './dto/update-client-profile.dto';
 import type { BodyField } from './dto/admin-client-metrics-query.dto';
+import type {
+  CreateAdminClientMetricDto,
+  UpdateAdminClientMetricDto,
+} from './dto/admin-client-metric.dto';
+import { MetricsService } from '../metrics/metrics.service';
 
 type ClientAssignmentRecord = {
   client_id: string;
@@ -113,6 +118,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
     private readonly notifications: NotificationsService,
+    private readonly metricsService: MetricsService,
     @Optional() private readonly emailService?: EmailService,
   ) {}
 
@@ -609,7 +615,10 @@ export class UsersService {
       where: { id: clientId },
       include: {
         profile: true,
-        bodyMetrics: { orderBy: { created_at: 'desc' }, take: 10 },
+        bodyMetrics: {
+          orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
+          take: 10,
+        },
         streak: true,
       },
     });
@@ -1322,6 +1331,29 @@ export class UsersService {
     ]);
 
     return paginate(data, total, pagination);
+  }
+
+  async createClientMetric(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    dto: CreateAdminClientMetricDto,
+  ) {
+    await this.assertClientExists(clientId);
+    await this.assertClientAccess(adminId, adminRole, clientId);
+    return this.metricsService.createForClient(clientId, dto);
+  }
+
+  async updateClientMetric(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    metricId: string,
+    dto: UpdateAdminClientMetricDto,
+  ) {
+    await this.assertClientExists(clientId);
+    await this.assertClientAccess(adminId, adminRole, clientId);
+    return this.metricsService.updateForClient(clientId, metricId, dto);
   }
 
   async getClientWeightHistory(adminId: string, adminRole: string, clientId: string) {

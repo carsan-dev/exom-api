@@ -6,6 +6,7 @@ import { UsersService } from './users.service';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
 import { ChallengesService } from '../challenges/challenges.service';
 import type { NotificationsService } from '../notifications/notifications.service';
+import type { MetricsService } from '../metrics/metrics.service';
 
 const createUserMock = jest.fn();
 
@@ -51,6 +52,10 @@ describe('UsersService', () => {
   let notifications: {
     sendInternalTemplate: jest.Mock;
   };
+  let metricsService: {
+    createForClient: jest.Mock;
+    updateForClient: jest.Mock;
+  };
 
   beforeEach(() => {
     createUserMock.mockReset();
@@ -93,11 +98,16 @@ describe('UsersService', () => {
         failed: 0,
       }),
     };
+    metricsService = {
+      createForClient: jest.fn(),
+      updateForClient: jest.fn(),
+    };
 
     service = new UsersService(
       prisma as unknown as PrismaService,
       challengesService as unknown as ChallengesService,
       notifications as unknown as NotificationsService,
+      metricsService as unknown as MetricsService,
     );
   });
 
@@ -366,6 +376,41 @@ describe('UsersService', () => {
         },
       },
     });
+  });
+
+  it('lets a super admin create metrics for any client', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    metricsService.createForClient.mockResolvedValue({ id: 'metric-1' });
+
+    await expect(
+      service.createClientMetric('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
+        date: '2026-07-10',
+        weight_kg: 72,
+      }),
+    ).resolves.toEqual({ id: 'metric-1' });
+
+    expect(metricsService.createForClient).toHaveBeenCalledWith('client-1', {
+      date: '2026-07-10',
+      weight_kg: 72,
+    });
+    expect(prisma.adminClientAssignment.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('rejects metric editing by an unassigned admin', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.updateClientMetric(
+        'admin-1',
+        Role.ADMIN,
+        'client-1',
+        'metric-1',
+        { waist_cm: 80 },
+      ),
+    ).rejects.toThrow(new ForbiddenException('Este cliente no está asignado a ti'));
+
+    expect(metricsService.updateForClient).not.toHaveBeenCalled();
   });
 
   it('returns not found when trying to unlock a non-client account', async () => {
