@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+dist
+coverage
+uploads
+generated/prisma
+
+.env
+.env.*
+!.env.example
+
+*.log
+npm-debug.log*
+.temp
+.tmp
