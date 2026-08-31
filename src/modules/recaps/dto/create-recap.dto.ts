@@ -35,6 +35,13 @@ export class CreateRecapDto {
   @Max(5)
   training_sessions?: number;
 
+  @ApiPropertyOptional({ minimum: 0, maximum: 200000, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(200000)
+  average_daily_steps?: number | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

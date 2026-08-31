@@ -662,6 +662,7 @@ model WeeklyRecap {
   // Step 1: Training
   training_effort   Int?
   training_sessions Int?
+  average_daily_steps Int?
   training_progress String?
   training_notes    String?
 

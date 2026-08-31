@@ -93,6 +93,39 @@ describe('RecapsService', () => {
     expect(prisma.weeklyRecap.update).not.toHaveBeenCalled();
   });
 
+  it('stores average daily steps when creating a recap', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue(null);
+    prisma.weeklyRecap.create.mockResolvedValue({
+      id: 'recap-1',
+      average_daily_steps: 8500,
+    });
+
+    await service.create('client-1', {
+      ...createRecapDto,
+      average_daily_steps: 8500,
+    });
+
+    expect(prisma.weeklyRecap.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        client_id: 'client-1',
+        average_daily_steps: 8500,
+      }),
+    });
+  });
+
+  it('includes average daily steps in client recap responses', async () => {
+    prisma.weeklyRecap.findMany.mockResolvedValue([]);
+    prisma.weeklyRecap.count.mockResolvedValue(0);
+
+    await service.findMyRecaps('client-1', new AdminRecapQueryDto());
+
+    expect(prisma.weeklyRecap.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ average_daily_steps: true }),
+      }),
+    );
+  });
+
   it('stores submitted_at when a client submits a recap', async () => {
     prisma.weeklyRecap.findUnique.mockResolvedValue({
       id: 'recap-1',
@@ -124,6 +157,27 @@ describe('RecapsService', () => {
     ).rejects.toThrow(new ForbiddenException('Only draft recaps can be edited'));
 
     expect(prisma.weeklyRecap.update).not.toHaveBeenCalled();
+  });
+
+  it('clears average daily steps when updating a draft with null', async () => {
+    prisma.weeklyRecap.findUnique.mockResolvedValue({
+      id: 'recap-1',
+      client_id: 'client-1',
+      status: RecapStatus.DRAFT,
+    });
+    prisma.weeklyRecap.update.mockResolvedValue({
+      id: 'recap-1',
+      average_daily_steps: null,
+    });
+
+    await service.update('client-1', 'recap-1', {
+      average_daily_steps: null,
+    });
+
+    expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
+      where: { id: 'recap-1' },
+      data: { average_daily_steps: null },
+    });
   });
 
   it('rejects submitting a recap that is already submitted', async () => {
@@ -312,6 +366,11 @@ describe('RecapsService', () => {
         where: expect.objectContaining({
           client_id: { in: ['client-1'] },
           archived_at: null,
+        }),
+        select: expect.objectContaining({
+          id: true,
+          average_daily_steps: true,
+          client: expect.any(Object),
         }),
       }),
     );

@@ -31,6 +31,7 @@ const CLIENT_RECAP_SELECT = {
   submitted_at: true,
   training_effort: true,
   training_sessions: true,
+  average_daily_steps: true,
   training_progress: true,
   training_notes: true,
   nutrition_quality: true,
@@ -60,6 +61,32 @@ const CLIENT_RECAP_SELECT = {
   created_at: true,
   updated_at: true,
   // admin_comments intentionally excluded — internal note
+} as const;
+
+const ADMIN_RECAP_LIST_SELECT = {
+  id: true,
+  client_id: true,
+  week_start_date: true,
+  week_end_date: true,
+  submitted_at: true,
+  average_daily_steps: true,
+  admin_comments: true,
+  status: true,
+  archived_at: true,
+  created_at: true,
+  client: {
+    select: {
+      id: true,
+      email: true,
+      profile: {
+        select: {
+          first_name: true,
+          last_name: true,
+          avatar_url: true,
+        },
+      },
+    },
+  },
 } as const;
 
 @Injectable()
@@ -247,6 +274,7 @@ export class RecapsService {
       week_end_date: weekEnd,
       training_effort: dto.training_effort,
       training_sessions: dto.training_sessions,
+      average_daily_steps: dto.average_daily_steps,
       training_progress: dto.training_progress,
       training_notes: dto.training_notes,
       nutrition_quality: dto.nutrition_quality,
@@ -283,6 +311,7 @@ export class RecapsService {
         week_end_date: weekEnd,
         training_effort: dto.training_effort,
         training_sessions: dto.training_sessions,
+        average_daily_steps: dto.average_daily_steps,
         training_progress: dto.training_progress,
         training_notes: dto.training_notes,
         nutrition_quality: dto.nutrition_quality,
@@ -500,21 +529,7 @@ export class RecapsService {
         orderBy: { week_start_date: 'desc' },
         skip: query.skip,
         take: query.limit,
-        include: {
-          client: {
-            select: {
-              id: true,
-              email: true,
-              profile: {
-                select: {
-                  first_name: true,
-                  last_name: true,
-                  avatar_url: true,
-                },
-              },
-            },
-          },
-        },
+        select: ADMIN_RECAP_LIST_SELECT,
       }),
       this.prisma.weeklyRecap.count({ where }),
     ]);
