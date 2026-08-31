@@ -594,6 +594,8 @@ model DayProgress {
   exercises_completed Json     @default("[]")
   meals_completed     String[]
   notes               String?
+  admin_reply_text    String?
+  admin_reply_sent_at DateTime?
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 

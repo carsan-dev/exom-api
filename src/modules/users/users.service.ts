@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -23,7 +24,11 @@ import {
   type UserStatusFilter,
 } from './dto/admin-users-query.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
-import { CreateAdminDto, UpdateUserDto, UpdateUserStatusDto } from './dto/manage-user.dto';
+import {
+  CreateAdminDto,
+  UpdateUserDto,
+  UpdateUserStatusDto,
+} from './dto/manage-user.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { Prisma, Role } from '@prisma/client';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
@@ -132,7 +137,8 @@ export class UsersService {
         : Object.assign(new AdminUsersQueryDto(), pagination, {
             ...(roleOrQuery ? { role: roleOrQuery } : {}),
           });
-    const { role, search, status, created_from, created_to, skip, limit } = query;
+    const { role, search, status, created_from, created_to, skip, limit } =
+      query;
     const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
     const createdAtRange = getDateRange(created_from, created_to);
@@ -147,7 +153,9 @@ export class UsersService {
       is_active: true,
       is_locked: true,
       created_at: true,
-      profile: { select: { first_name: true, last_name: true, avatar_url: true } },
+      profile: {
+        select: { first_name: true, last_name: true, avatar_url: true },
+      },
     } as const;
 
     if (normalizedSearch || status?.length) {
@@ -228,7 +236,11 @@ export class UsersService {
     return this.serializeUserSummary(user);
   }
 
-  async createClient(adminId: string, currentUserRole: string, dto: CreateClientDto) {
+  async createClient(
+    adminId: string,
+    currentUserRole: string,
+    dto: CreateClientDto,
+  ) {
     const email = this.normalizeEmail(dto.email);
     const firstName = dto.first_name.trim();
     const lastName = dto.last_name.trim();
@@ -300,7 +312,12 @@ export class UsersService {
     const lastName = dto.last_name.trim();
 
     await this.assertEmailAvailable(email, user.id);
-    await this.updateFirebaseEmailUser(user.firebase_uid, email, firstName, lastName);
+    await this.updateFirebaseEmailUser(
+      user.firebase_uid,
+      email,
+      firstName,
+      lastName,
+    );
 
     const updatedUser = await this.prisma.user.update({
       where: { id },
@@ -325,14 +342,20 @@ export class UsersService {
     return this.serializeUserSummary(updatedUser);
   }
 
-  async updateUserStatus(currentUserId: string, id: string, dto: UpdateUserStatusDto) {
+  async updateUserStatus(
+    currentUserId: string,
+    id: string,
+    dto: UpdateUserStatusDto,
+  ) {
     const user = await this.getManageableUserOrFail(id, true);
 
     if (!dto.is_active && user.id === currentUserId) {
       throw new ForbiddenException('No puedes desactivar tu propia cuenta');
     }
 
-    await admin.auth().updateUser(user.firebase_uid, { disabled: !dto.is_active });
+    await admin
+      .auth()
+      .updateUser(user.firebase_uid, { disabled: !dto.is_active });
 
     if (!dto.is_active) {
       await admin.auth().revokeRefreshTokens(user.firebase_uid);
@@ -344,7 +367,7 @@ export class UsersService {
         is_active: dto.is_active,
         is_locked: dto.is_active ? user.is_locked : false,
         login_attempts: dto.is_active ? user.login_attempts : 0,
-        locked_at: dto.is_active ? user.locked_at ?? null : null,
+        locked_at: dto.is_active ? (user.locked_at ?? null) : null,
       },
     });
 
@@ -356,11 +379,16 @@ export class UsersService {
   }
 
   async unlockUser(currentUserId: string, currentUserRole: string, id: string) {
-    const user = await this.getManageableUserOrFail(id, currentUserRole === Role.SUPER_ADMIN);
+    const user = await this.getManageableUserOrFail(
+      id,
+      currentUserRole === Role.SUPER_ADMIN,
+    );
 
     if (currentUserRole === Role.ADMIN) {
       if (user.role !== Role.CLIENT) {
-        throw new ForbiddenException('Solo puedes desbloquear clientes asignados a tu cuenta');
+        throw new ForbiddenException(
+          'Solo puedes desbloquear clientes asignados a tu cuenta',
+        );
       }
 
       await this.assertClientAccess(currentUserId, currentUserRole, id);
@@ -536,11 +564,7 @@ export class UsersService {
         this.prisma.user.count({ where }),
       ]);
 
-      return paginate(
-        clients.map(mapClientWithAdminCount),
-        total,
-        query,
-      );
+      return paginate(clients.map(mapClientWithAdminCount), total, query);
     }
 
     const where: Prisma.AdminClientAssignmentWhereInput = {
@@ -549,7 +573,9 @@ export class UsersService {
       client: {
         is: {
           role: Role.CLIENT,
-          ...(level?.length ? { profile: { is: { level: { in: level } } } } : {}),
+          ...(level?.length
+            ? { profile: { is: { level: { in: level } } } }
+            : {}),
           ...(createdAtRange ? { created_at: createdAtRange } : {}),
         },
       },
@@ -610,7 +636,11 @@ export class UsersService {
     return { message: 'FCM token updated' };
   }
 
-  async getClientProfile(currentUserId: string, currentUserRole: string, clientId: string) {
+  async getClientProfile(
+    currentUserId: string,
+    currentUserRole: string,
+    clientId: string,
+  ) {
     const client = await this.prisma.user.findUnique({
       where: { id: clientId },
       include: {
@@ -652,7 +682,9 @@ export class UsersService {
     await this.assertClientAccess(currentUserId, currentUserRole, clientId);
 
     const profileData = {
-      ...(dto.first_name !== undefined && { first_name: dto.first_name.trim() }),
+      ...(dto.first_name !== undefined && {
+        first_name: dto.first_name.trim(),
+      }),
       ...(dto.last_name !== undefined && { last_name: dto.last_name.trim() }),
       ...(dto.level !== undefined && { level: dto.level }),
       ...(dto.main_goal !== undefined && {
@@ -690,7 +722,11 @@ export class UsersService {
     return this.getClientProfile(currentUserId, currentUserRole, clientId);
   }
 
-  async getClientAssignments(currentUserId: string, currentUserRole: string, clientId: string) {
+  async getClientAssignments(
+    currentUserId: string,
+    currentUserRole: string,
+    clientId: string,
+  ) {
     this.assertSuperAdminAccess(currentUserId, currentUserRole);
     await this.assertClientExists(clientId);
 
@@ -829,13 +865,19 @@ export class UsersService {
     return result.response;
   }
 
-  private async assertClientAccess(currentUserId: string, currentUserRole: string, clientId: string) {
+  private async assertClientAccess(
+    currentUserId: string,
+    currentUserRole: string,
+    clientId: string,
+  ) {
     if (currentUserRole === Role.SUPER_ADMIN) {
       return;
     }
 
     if (currentUserRole !== Role.ADMIN) {
-      throw new ForbiddenException('No tienes permisos para acceder a este cliente');
+      throw new ForbiddenException(
+        'No tienes permisos para acceder a este cliente',
+      );
     }
 
     const assignment = await this.prisma.adminClientAssignment.findFirst({
@@ -847,7 +889,10 @@ export class UsersService {
     }
   }
 
-  private assertSuperAdminAccess(currentUserId: string, currentUserRole: string) {
+  private assertSuperAdminAccess(
+    currentUserId: string,
+    currentUserRole: string,
+  ) {
     if (currentUserRole === Role.SUPER_ADMIN) {
       return;
     }
@@ -855,7 +900,9 @@ export class UsersService {
     this.logger.warn(
       `User ${currentUserId} attempted to manage client assignments without SUPER_ADMIN role`,
     );
-    throw new ForbiddenException('Solo un super admin puede gestionar asignaciones de clientes');
+    throw new ForbiddenException(
+      'Solo un super admin puede gestionar asignaciones de clientes',
+    );
   }
 
   private async assertClientExists(clientId: string) {
@@ -886,7 +933,9 @@ export class UsersService {
     });
 
     if (admins.length !== adminIds.length) {
-      throw new NotFoundException('Uno o más administradores activos no existen');
+      throw new NotFoundException(
+        'Uno o más administradores activos no existen',
+      );
     }
 
     return admins;
@@ -982,7 +1031,11 @@ export class UsersService {
     }
   }
 
-  async resendInvitation(currentUserId: string, currentUserRole: string, targetUserId: string) {
+  async resendInvitation(
+    currentUserId: string,
+    currentUserRole: string,
+    targetUserId: string,
+  ) {
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true, email: true, role: true },
@@ -994,7 +1047,11 @@ export class UsersService {
       if (target.role !== Role.CLIENT) {
         throw new ForbiddenException('Sin permisos');
       }
-      await this.assertClientAccess(currentUserId, currentUserRole, targetUserId);
+      await this.assertClientAccess(
+        currentUserId,
+        currentUserRole,
+        targetUserId,
+      );
     }
 
     await this.sendInvitationEmail(target.email);
@@ -1058,17 +1115,16 @@ export class UsersService {
     return `${firstName} ${lastName}`.trim();
   }
 
-  private buildClientNotificationName(user: {
-    email?: string | null;
-    profile?: {
-      first_name?: string | null;
-      last_name?: string | null;
-    } | null;
-  } | null) {
-    const fullName = [
-      user?.profile?.first_name,
-      user?.profile?.last_name,
-    ]
+  private buildClientNotificationName(
+    user: {
+      email?: string | null;
+      profile?: {
+        first_name?: string | null;
+        last_name?: string | null;
+      } | null;
+    } | null,
+  ) {
+    const fullName = [user?.profile?.first_name, user?.profile?.last_name]
       .filter(Boolean)
       .join(' ')
       .trim();
@@ -1114,7 +1170,10 @@ export class UsersService {
     return email.trim().toLowerCase();
   }
 
-  private serializeClientAssignments(clientId: string, assignments: ClientAssignmentRecord[]) {
+  private serializeClientAssignments(
+    clientId: string,
+    assignments: ClientAssignmentRecord[],
+  ) {
     return {
       client_id: clientId,
       active_admins: assignments.map((assignment) => ({
@@ -1128,7 +1187,12 @@ export class UsersService {
 
   // ─── Admin Progress Endpoints ─────────────────────────────────────────────
 
-  async getClientDayProgress(adminId: string, adminRole: string, clientId: string, date: string) {
+  async getClientDayProgress(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    date: string,
+  ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
     const progress = await this.prisma.dayProgress.findFirst({
@@ -1140,10 +1204,15 @@ export class UsersService {
     }
 
     const completedExercises = Array.isArray(progress.exercises_completed)
-      ? (progress.exercises_completed as Array<{ exercise_id: string; [key: string]: unknown }>)
+      ? (progress.exercises_completed as Array<{
+          exercise_id: string;
+          [key: string]: unknown;
+        }>)
       : [];
     const exerciseIds = [
-      ...new Set(completedExercises.map((entry) => entry.exercise_id).filter(Boolean)),
+      ...new Set(
+        completedExercises.map((entry) => entry.exercise_id).filter(Boolean),
+      ),
     ];
     const mealIds = [...new Set(progress.meals_completed)];
 
@@ -1163,7 +1232,9 @@ export class UsersService {
     ]);
 
     const exerciseNames = new Map<string, string>(
-      exercises.map((exercise) => [exercise.id, exercise.name] as [string, string]),
+      exercises.map(
+        (exercise) => [exercise.id, exercise.name] as [string, string],
+      ),
     );
     const mealNames = new Map<string, string>(
       meals.map((meal) => [meal.id, meal.name] as [string, string]),
@@ -1180,6 +1251,73 @@ export class UsersService {
         meal_name: mealNames.get(mealId) ?? null,
       })),
     };
+  }
+
+  async replyToTrainingNote(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    date: string,
+    reply: string,
+  ) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+
+    const progress = await this.prisma.dayProgress.findFirst({
+      where: { client_id: clientId, date: new Date(date) },
+    });
+
+    if (!progress) {
+      throw new NotFoundException('Progreso del día no encontrado');
+    }
+
+    if (!progress.notes?.trim()) {
+      throw new BadRequestException(
+        'El progreso no contiene una nota del cliente',
+      );
+    }
+
+    const normalizedReply = reply.trim() || null;
+    const previousReply = progress.admin_reply_text?.trim() || null;
+
+    if (normalizedReply === previousReply) {
+      return progress;
+    }
+
+    const updatedProgress = await this.prisma.dayProgress.update({
+      where: { id: progress.id },
+      data: {
+        admin_reply_text: normalizedReply,
+        admin_reply_sent_at: normalizedReply ? new Date() : null,
+      },
+    });
+
+    if (normalizedReply) {
+      const trainingId = progress.trainings_completed[0];
+      const route = trainingId
+        ? `/trainings/${trainingId}?date=${date}`
+        : `/trainings?date=${date}`;
+
+      this.notifications
+        .sendToUser(
+          adminId,
+          clientId,
+          'Tu entrenador ha respondido a tu nota',
+          'Abre el entreno para leer su respuesta.',
+          {
+            type: 'training_note_reply',
+            route,
+          },
+        )
+        .catch((error: unknown) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `Failed to send training note reply notification to ${clientId}: ${message}`,
+          );
+        });
+    }
+
+    return updatedProgress;
   }
 
   async getClientCalendarMonth(
@@ -1226,18 +1364,26 @@ export class UsersService {
       diet_completed: boolean;
     }> = [];
 
-    for (let d = new Date(startDate); d <= endDate; d.setUTCDate(d.getUTCDate() + 1)) {
+    for (
+      let d = new Date(startDate);
+      d <= endDate;
+      d.setUTCDate(d.getUTCDate() + 1)
+    ) {
       const dateStr = d.toISOString().split('T')[0];
       const assignment = assignmentByDate.get(dateStr);
       const dayProgress = progressByDate.get(dateStr);
 
       days.push({
         date: dateStr,
-        has_training: Boolean(assignment && (assignment.trainings.length || assignment.training_id)),
+        has_training: Boolean(
+          assignment && (assignment.trainings.length || assignment.training_id),
+        ),
         has_diet: Boolean(assignment?.diet_id),
         is_rest_day: assignment ? assignment.is_rest_day : true,
         training_completed: dayProgress?.training_completed ?? false,
-        diet_completed: dayProgress ? dayProgress.meals_completed.length > 0 : false,
+        diet_completed: dayProgress
+          ? dayProgress.meals_completed.length > 0
+          : false,
       });
     }
 
@@ -1293,12 +1439,15 @@ export class UsersService {
 
       const assignedTrainingIds = assignment.trainings.length
         ? assignment.trainings.map((link) => link.training_id)
-        : assignment.training_id ? [assignment.training_id] : [];
+        : assignment.training_id
+          ? [assignment.training_id]
+          : [];
       if (assignedTrainingIds.length) {
         trainingsAssigned += assignedTrainingIds.length;
-        trainingsCompleted += dayProgress?.trainings_completed.filter((id) =>
-          assignedTrainingIds.includes(id),
-        ).length ?? (dayProgress?.training_completed ? 1 : 0);
+        trainingsCompleted +=
+          dayProgress?.trainings_completed.filter((id) =>
+            assignedTrainingIds.includes(id),
+          ).length ?? (dayProgress?.training_completed ? 1 : 0);
       }
 
       if (assignment.diet_id) {
@@ -1317,7 +1466,12 @@ export class UsersService {
     };
   }
 
-  async getClientMetrics(adminId: string, adminRole: string, clientId: string, pagination: PaginationDto) {
+  async getClientMetrics(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    pagination: PaginationDto,
+  ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
     const [data, total] = await Promise.all([
@@ -1356,7 +1510,11 @@ export class UsersService {
     return this.metricsService.updateForClient(clientId, metricId, dto);
   }
 
-  async getClientWeightHistory(adminId: string, adminRole: string, clientId: string) {
+  async getClientWeightHistory(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+  ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
     const metrics = await this.prisma.bodyMetric.findMany({
@@ -1365,10 +1523,18 @@ export class UsersService {
       select: { date: true, weight_kg: true },
     });
 
-    return metrics.map((m) => ({ date: m.date.toISOString().split('T')[0], value: m.weight_kg }));
+    return metrics.map((m) => ({
+      date: m.date.toISOString().split('T')[0],
+      value: m.weight_kg,
+    }));
   }
 
-  async getClientBodyHistory(adminId: string, adminRole: string, clientId: string, field: BodyField) {
+  async getClientBodyHistory(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    field: BodyField,
+  ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
     const metrics = await this.prisma.bodyMetric.findMany({
@@ -1400,23 +1566,35 @@ export class UsersService {
       currentAssignments.map((assignment) => [assignment.admin_id, assignment]),
     );
     const assignmentsToDeactivate = currentAssignments.filter(
-      (assignment) => assignment.is_active && !desiredAdminIdSet.has(assignment.admin_id),
+      (assignment) =>
+        assignment.is_active && !desiredAdminIdSet.has(assignment.admin_id),
     );
     const assignmentsToReactivate = currentAssignments.filter(
-      (assignment) => !assignment.is_active && desiredAdminIdSet.has(assignment.admin_id),
+      (assignment) =>
+        !assignment.is_active && desiredAdminIdSet.has(assignment.admin_id),
     );
-    const adminIdsToCreate = desiredAdminIds.filter((adminId) => !assignmentsByAdminId.has(adminId));
+    const adminIdsToCreate = desiredAdminIds.filter(
+      (adminId) => !assignmentsByAdminId.has(adminId),
+    );
 
     await Promise.all([
       assignmentsToDeactivate.length > 0
         ? tx.adminClientAssignment.updateMany({
-            where: { id: { in: assignmentsToDeactivate.map((assignment) => assignment.id) } },
+            where: {
+              id: {
+                in: assignmentsToDeactivate.map((assignment) => assignment.id),
+              },
+            },
             data: { is_active: false },
           })
         : Promise.resolve(),
       assignmentsToReactivate.length > 0
         ? tx.adminClientAssignment.updateMany({
-            where: { id: { in: assignmentsToReactivate.map((assignment) => assignment.id) } },
+            where: {
+              id: {
+                in: assignmentsToReactivate.map((assignment) => assignment.id),
+              },
+            },
             data: { is_active: true },
           })
         : Promise.resolve(),

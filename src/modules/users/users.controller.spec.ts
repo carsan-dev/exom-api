@@ -15,6 +15,7 @@ describe('UsersController', () => {
     updateRole: jest.fn(),
     getMyClients: jest.fn(),
     getClientProfile: jest.fn(),
+    replyToTrainingNote: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -29,6 +30,15 @@ describe('UsersController', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
+    app.use((request: { user?: unknown }, _response: unknown, next: () => void) => {
+      request.user = {
+        id: 'admin-1',
+        email: 'admin@exom.dev',
+        role: Role.ADMIN,
+        firebase_uid: 'firebase-admin-1',
+      };
+      next();
+    });
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -75,5 +85,31 @@ describe('UsersController', () => {
         limit: 10,
       }),
     );
+  });
+
+  it('passes a validated training note reply to the service', async () => {
+    usersService.replyToTrainingNote.mockResolvedValue({ id: 'progress-1' });
+
+    await request(app.getHttpServer())
+      .put('/admin/clients/client-1/progress/reply')
+      .send({ date: '2026-06-29', reply: '  Reduce el peso  ' })
+      .expect(200);
+
+    expect(usersService.replyToTrainingNote).toHaveBeenCalledWith(
+      'admin-1',
+      Role.ADMIN,
+      'client-1',
+      '2026-06-29',
+      'Reduce el peso',
+    );
+  });
+
+  it('rejects training note replies longer than 1000 characters', async () => {
+    await request(app.getHttpServer())
+      .put('/admin/clients/client-1/progress/reply')
+      .send({ date: '2026-06-29', reply: 'x'.repeat(1001) })
+      .expect(400);
+
+    expect(usersService.replyToTrainingNote).not.toHaveBeenCalled();
   });
 });

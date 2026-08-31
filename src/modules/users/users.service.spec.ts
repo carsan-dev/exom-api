@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -38,6 +42,7 @@ describe('UsersService', () => {
     };
     dayProgress: {
       findFirst: jest.Mock;
+      update: jest.Mock;
     };
     exercise: {
       findMany: jest.Mock;
@@ -51,6 +56,7 @@ describe('UsersService', () => {
   };
   let notifications: {
     sendInternalTemplate: jest.Mock;
+    sendToUser: jest.Mock;
   };
   let metricsService: {
     createForClient: jest.Mock;
@@ -79,6 +85,7 @@ describe('UsersService', () => {
       },
       dayProgress: {
         findFirst: jest.fn(),
+        update: jest.fn(),
       },
       exercise: {
         findMany: jest.fn(),
@@ -89,7 +96,9 @@ describe('UsersService', () => {
     };
 
     challengesService = {
-      syncGlobalChallengesForCreatorClient: jest.fn().mockResolvedValue(undefined),
+      syncGlobalChallengesForCreatorClient: jest
+        .fn()
+        .mockResolvedValue(undefined),
     };
     notifications = {
       sendInternalTemplate: jest.fn().mockResolvedValue({
@@ -97,6 +106,7 @@ describe('UsersService', () => {
         sent: 1,
         failed: 0,
       }),
+      sendToUser: jest.fn().mockResolvedValue({ success: true }),
     };
     metricsService = {
       createForClient: jest.fn(),
@@ -145,7 +155,9 @@ describe('UsersService', () => {
       is_active: true,
     });
 
-    await expect(service.createClient('admin-1', Role.ADMIN, dto)).resolves.toEqual({
+    await expect(
+      service.createClient('admin-1', Role.ADMIN, dto),
+    ).resolves.toEqual({
       id: 'client-1',
       email: dto.email,
       role: Role.CLIENT,
@@ -210,7 +222,10 @@ describe('UsersService', () => {
       training_completed: true,
       exercises_completed: [
         { exercise_id: 'ex-plank', completed_at: '2026-06-29T10:00:00.000Z' },
-        { exercise_id: 'missing-exercise', completed_at: '2026-06-29T10:05:00.000Z' },
+        {
+          exercise_id: 'missing-exercise',
+          completed_at: '2026-06-29T10:05:00.000Z',
+        },
       ],
       meals_completed: ['meal-1', 'missing-meal'],
       notes: null,
@@ -219,7 +234,9 @@ describe('UsersService', () => {
     prisma.exercise.findMany.mockResolvedValue([
       { id: 'ex-plank', name: 'Plancha isométrica' },
     ]);
-    prisma.meal.findMany.mockResolvedValue([{ id: 'meal-1', name: 'Desayuno' }]);
+    prisma.meal.findMany.mockResolvedValue([
+      { id: 'meal-1', name: 'Desayuno' },
+    ]);
 
     await expect(
       service.getClientDayProgress(
@@ -258,6 +275,125 @@ describe('UsersService', () => {
     });
   });
 
+  it('stores a training note reply and notifies the client', async () => {
+    const progress = {
+      id: 'progress-1',
+      client_id: 'client-1',
+      date: new Date('2026-06-29T00:00:00.000Z'),
+      notes: 'Me molestó la rodilla',
+      admin_reply_text: null,
+      admin_reply_sent_at: null,
+      trainings_completed: ['training-1'],
+    };
+    const updated = {
+      ...progress,
+      admin_reply_text: 'Baja el peso y avísame si continúa.',
+      admin_reply_sent_at: new Date(),
+    };
+    prisma.dayProgress.findFirst.mockResolvedValue(progress);
+    prisma.dayProgress.update.mockResolvedValue(updated);
+
+    await expect(
+      service.replyToTrainingNote(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        '2026-06-29',
+        '  Baja el peso y avísame si continúa.  ',
+      ),
+    ).resolves.toEqual(updated);
+
+    expect(prisma.dayProgress.update).toHaveBeenCalledWith({
+      where: { id: 'progress-1' },
+      data: {
+        admin_reply_text: 'Baja el peso y avísame si continúa.',
+        admin_reply_sent_at: expect.any(Date),
+      },
+    });
+    expect(notifications.sendToUser).toHaveBeenCalledWith(
+      'super-admin-1',
+      'client-1',
+      'Tu entrenador ha respondido a tu nota',
+      'Abre el entreno para leer su respuesta.',
+      {
+        type: 'training_note_reply',
+        route: '/trainings/training-1?date=2026-06-29',
+      },
+    );
+  });
+
+  it('does not update or notify when the training note reply is unchanged', async () => {
+    const progress = {
+      id: 'progress-1',
+      notes: 'Nota',
+      admin_reply_text: 'Respuesta actual',
+      trainings_completed: ['training-1'],
+    };
+    prisma.dayProgress.findFirst.mockResolvedValue(progress);
+
+    await expect(
+      service.replyToTrainingNote(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        '2026-06-29',
+        ' Respuesta actual ',
+      ),
+    ).resolves.toEqual(progress);
+
+    expect(prisma.dayProgress.update).not.toHaveBeenCalled();
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('clears a training note reply without notifying the client', async () => {
+    prisma.dayProgress.findFirst.mockResolvedValue({
+      id: 'progress-1',
+      notes: 'Nota',
+      admin_reply_text: 'Respuesta actual',
+      trainings_completed: [],
+    });
+    prisma.dayProgress.update.mockResolvedValue({
+      id: 'progress-1',
+      admin_reply_text: null,
+      admin_reply_sent_at: null,
+    });
+
+    await service.replyToTrainingNote(
+      'super-admin-1',
+      Role.SUPER_ADMIN,
+      'client-1',
+      '2026-06-29',
+      '   ',
+    );
+
+    expect(prisma.dayProgress.update).toHaveBeenCalledWith({
+      where: { id: 'progress-1' },
+      data: { admin_reply_text: null, admin_reply_sent_at: null },
+    });
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects a reply when the daily progress has no client note', async () => {
+    prisma.dayProgress.findFirst.mockResolvedValue({
+      id: 'progress-1',
+      notes: null,
+      admin_reply_text: null,
+      trainings_completed: [],
+    });
+
+    await expect(
+      service.replyToTrainingNote(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        '2026-06-29',
+        'Respuesta',
+      ),
+    ).rejects.toThrow(
+      new BadRequestException('El progreso no contiene una nota del cliente'),
+    );
+  });
+
   it('allows a super admin to view a client profile without assignment', async () => {
     prisma.user.findUnique.mockResolvedValue({
       id: 'client-1',
@@ -292,7 +428,9 @@ describe('UsersService', () => {
 
     await expect(
       service.getClientProfile('admin-1', Role.ADMIN, 'client-1'),
-    ).rejects.toThrow(new ForbiddenException('Este cliente no está asignado a ti'));
+    ).rejects.toThrow(
+      new ForbiddenException('Este cliente no está asignado a ti'),
+    );
 
     expect(prisma.adminClientAssignment.findFirst).toHaveBeenCalledWith({
       where: { admin_id: 'admin-1', client_id: 'client-1', is_active: true },
@@ -342,17 +480,22 @@ describe('UsersService', () => {
       });
     prisma.user.update.mockResolvedValue({});
 
-    await service.updateClientProfile('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
-      first_name: ' Ada ',
-      last_name: ' Rivera ',
-      level: 'AVANZADO',
-      main_goal: ' Ganar fuerza ',
-      muscle_mass_goal: 30.5,
-      target_calories: 2400,
-      current_weight: 72.4,
-      height: 178,
-      birth_date: birthDate,
-    });
+    await service.updateClientProfile(
+      'super-admin-1',
+      Role.SUPER_ADMIN,
+      'client-1',
+      {
+        first_name: ' Ada ',
+        last_name: ' Rivera ',
+        level: 'AVANZADO',
+        main_goal: ' Ganar fuerza ',
+        muscle_mass_goal: 30.5,
+        target_calories: 2400,
+        current_weight: 72.4,
+        height: 178,
+        birth_date: birthDate,
+      },
+    );
 
     const expectedProfile = {
       first_name: 'Ada',
@@ -379,14 +522,22 @@ describe('UsersService', () => {
   });
 
   it('lets a super admin create metrics for any client', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     metricsService.createForClient.mockResolvedValue({ id: 'metric-1' });
 
     await expect(
-      service.createClientMetric('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
-        date: '2026-07-10',
-        weight_kg: 72,
-      }),
+      service.createClientMetric(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        {
+          date: '2026-07-10',
+          weight_kg: 72,
+        },
+      ),
     ).resolves.toEqual({ id: 'metric-1' });
 
     expect(metricsService.createForClient).toHaveBeenCalledWith('client-1', {
@@ -397,7 +548,10 @@ describe('UsersService', () => {
   });
 
   it('rejects metric editing by an unassigned admin', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue(null);
 
     await expect(
@@ -408,7 +562,9 @@ describe('UsersService', () => {
         'metric-1',
         { waist_cm: 80 },
       ),
-    ).rejects.toThrow(new ForbiddenException('Este cliente no está asignado a ti'));
+    ).rejects.toThrow(
+      new ForbiddenException('Este cliente no está asignado a ti'),
+    );
 
     expect(metricsService.updateForClient).not.toHaveBeenCalled();
   });
@@ -423,14 +579,19 @@ describe('UsersService', () => {
     await expect(
       service.unlockUser('admin-1', Role.ADMIN, 'admin-2'),
     ).rejects.toThrow(
-      new ForbiddenException('Solo puedes desbloquear clientes asignados a tu cuenta'),
+      new ForbiddenException(
+        'Solo puedes desbloquear clientes asignados a tu cuenta',
+      ),
     );
 
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('returns active client assignments for a super admin', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findMany.mockResolvedValue([
       {
         client_id: 'client-1',
@@ -448,7 +609,11 @@ describe('UsersService', () => {
     ]);
 
     await expect(
-      service.getClientAssignments('super-admin-1', Role.SUPER_ADMIN, 'client-1'),
+      service.getClientAssignments(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+      ),
     ).resolves.toEqual({
       client_id: 'client-1',
       active_admins: [
@@ -501,7 +666,9 @@ describe('UsersService', () => {
     await expect(
       service.getClientAssignments('admin-1', Role.ADMIN, 'client-1'),
     ).rejects.toThrow(
-      new ForbiddenException('Solo un super admin puede gestionar asignaciones de clientes'),
+      new ForbiddenException(
+        'Solo un super admin puede gestionar asignaciones de clientes',
+      ),
     );
 
     expect(prisma.user.findUnique).not.toHaveBeenCalled();
@@ -509,14 +676,19 @@ describe('UsersService', () => {
   });
 
   it('updates client assignments atomically by deactivating, reactivating, and creating relations', async () => {
-    const dto: UpdateClientAssignmentsDto = { admin_ids: ['admin-2', 'admin-3'] };
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
-    prisma.user.findMany.mockResolvedValue([{ id: 'admin-2' }, { id: 'admin-3' }]);
+    const dto: UpdateClientAssignmentsDto = {
+      admin_ids: ['admin-2', 'admin-3'],
+    };
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
+    prisma.user.findMany.mockResolvedValue([
+      { id: 'admin-2' },
+      { id: 'admin-3' },
+    ]);
     prisma.adminClientAssignment.findMany
-      .mockResolvedValueOnce([
-        { admin_id: 'admin-1' },
-        { admin_id: 'admin-2' },
-      ])
+      .mockResolvedValueOnce([{ admin_id: 'admin-1' }, { admin_id: 'admin-2' }])
       .mockResolvedValueOnce([
         { id: 'assignment-1', admin_id: 'admin-1', is_active: true },
         { id: 'assignment-2', admin_id: 'admin-2', is_active: false },
@@ -528,7 +700,11 @@ describe('UsersService', () => {
           admin: {
             id: 'admin-2',
             email: 'admin-2@exom.dev',
-            profile: { first_name: 'Lin', last_name: 'Coach', avatar_url: null },
+            profile: {
+              first_name: 'Lin',
+              last_name: 'Coach',
+              avatar_url: null,
+            },
           },
         },
         {
@@ -537,7 +713,11 @@ describe('UsersService', () => {
           admin: {
             id: 'admin-3',
             email: 'admin-3@exom.dev',
-            profile: { first_name: 'Maya', last_name: 'Coach', avatar_url: null },
+            profile: {
+              first_name: 'Maya',
+              last_name: 'Coach',
+              avatar_url: null,
+            },
           },
         },
       ]);
@@ -545,7 +725,12 @@ describe('UsersService', () => {
     prisma.adminClientAssignment.createMany.mockResolvedValue({ count: 1 });
 
     await expect(
-      service.updateClientAssignments('super-admin-1', Role.SUPER_ADMIN, 'client-1', dto),
+      service.updateClientAssignments(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        dto,
+      ),
     ).resolves.toEqual({
       client_id: 'client-1',
       active_admins: [
@@ -601,14 +786,24 @@ describe('UsersService', () => {
   });
 
   it('rejects assignment updates when any admin is missing or has the wrong role', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.user.findMany.mockResolvedValue([{ id: 'admin-1' }]);
 
     await expect(
-      service.updateClientAssignments('super-admin-1', Role.SUPER_ADMIN, 'client-1', {
-        admin_ids: ['admin-1', 'admin-2'],
-      }),
-    ).rejects.toThrow(new NotFoundException('Uno o más administradores activos no existen'));
+      service.updateClientAssignments(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        {
+          admin_ids: ['admin-1', 'admin-2'],
+        },
+      ),
+    ).rejects.toThrow(
+      new NotFoundException('Uno o más administradores activos no existen'),
+    );
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -634,7 +829,9 @@ describe('UsersService', () => {
     pagination.page = 2;
     pagination.limit = 10;
 
-    await expect(service.getMyClients('admin-1', Role.ADMIN, pagination)).resolves.toEqual({
+    await expect(
+      service.getMyClients('admin-1', Role.ADMIN, pagination),
+    ).resolves.toEqual({
       data: [
         {
           id: 'client-1',
@@ -746,7 +943,11 @@ describe('UsersService', () => {
     prisma.user.count.mockResolvedValue(1);
 
     await expect(
-      service.getMyClients('super-admin-1', Role.SUPER_ADMIN, new PaginationDto()),
+      service.getMyClients(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        new PaginationDto(),
+      ),
     ).resolves.toEqual({
       data: [
         {
@@ -803,7 +1004,9 @@ describe('UsersService', () => {
     prisma.user.findMany.mockResolvedValue([]);
     prisma.user.count.mockResolvedValue(0);
 
-    await expect(service.findAll(undefined, new PaginationDto())).resolves.toEqual({
+    await expect(
+      service.findAll(undefined, new PaginationDto()),
+    ).resolves.toEqual({
       data: [],
       total: 0,
       page: 1,
@@ -822,10 +1025,11 @@ describe('UsersService', () => {
         is_active: true,
         is_locked: true,
         created_at: true,
-        profile: { select: { first_name: true, last_name: true, avatar_url: true } },
+        profile: {
+          select: { first_name: true, last_name: true, avatar_url: true },
+        },
       },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     });
   });
-
 });

@@ -240,6 +240,8 @@ export class ProgressService {
         exercises_completed: [],
         meals_completed: [],
         notes: null,
+        admin_reply_text: null,
+        admin_reply_sent_at: null,
       };
     }
 
