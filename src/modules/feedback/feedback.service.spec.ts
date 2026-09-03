@@ -1,11 +1,13 @@
-import { FeedbackStatus, MediaType, Role } from '@prisma/client';
+import { FeedbackStatus, MediaType, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { FeedbackService } from './feedback.service';
+import type { UploadsService } from '../uploads/uploads.service';
 
 describe('FeedbackService', () => {
   let service: FeedbackService;
   let prisma: {
+    $transaction: jest.Mock;
     feedbackMedia: {
       create: jest.Mock;
       findUnique: jest.Mock;
@@ -17,9 +19,14 @@ describe('FeedbackService', () => {
   let notifications: {
     sendInternalTemplate: jest.Mock;
   };
+  let uploadsService: {
+    prepareForConsumption: jest.Mock;
+    consumePrepared: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(),
       feedbackMedia: {
         create: jest.fn(),
         findUnique: jest.fn(),
@@ -35,10 +42,21 @@ describe('FeedbackService', () => {
         failed: 0,
       }),
     };
+    uploadsService = {
+      prepareForConsumption: jest.fn().mockResolvedValue({
+        id: 'upload-1',
+        file_url: 'https://cdn.exom.dev/feedback_video/client-1/video.mp4',
+      }),
+      consumePrepared: jest.fn().mockResolvedValue(undefined),
+    };
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+    );
 
     service = new FeedbackService(
       prisma as unknown as PrismaService,
       notifications as unknown as NotificationsService,
+      uploadsService as unknown as UploadsService,
     );
   });
 
@@ -47,7 +65,7 @@ describe('FeedbackService', () => {
       id: 'feedback-1',
       client_id: 'client-1',
       media_type: MediaType.VIDEO,
-      media_url: 'https://cdn.exom.dev/video.mp4',
+      media_url: 'https://cdn.exom.dev/feedback_video/client-1/video.mp4',
       notes: 'Revisar técnica',
       status: FeedbackStatus.PENDING,
     });
@@ -77,7 +95,7 @@ describe('FeedbackService', () => {
     await expect(
       service.create('client-1', {
         media_type: MediaType.VIDEO,
-        media_url: 'https://cdn.exom.dev/video.mp4',
+        media_url: 'https://cdn.exom.dev/feedback_video/client-1/video.mp4',
         notes: 'Revisar técnica',
       }),
     ).resolves.toMatchObject({ id: 'feedback-1' });
@@ -85,13 +103,24 @@ describe('FeedbackService', () => {
     expect(prisma.feedbackMedia.create).toHaveBeenCalledWith({
       data: {
         client_id: 'client-1',
-        exercise_id: undefined,
         media_type: MediaType.VIDEO,
-        media_url: 'https://cdn.exom.dev/video.mp4',
+        media_url: 'https://cdn.exom.dev/feedback_video/client-1/video.mp4',
         notes: 'Revisar técnica',
         status: FeedbackStatus.PENDING,
       },
     });
+    expect(uploadsService.prepareForConsumption).toHaveBeenCalledWith({
+      ownerId: 'client-1',
+      uploadId: undefined,
+      legacyUrl: 'https://cdn.exom.dev/feedback_video/client-1/video.mp4',
+      purposes: ['FEEDBACK_VIDEO'],
+    });
+    expect(uploadsService.consumePrepared).toHaveBeenCalledWith(
+      prisma,
+      'client-1',
+      'upload-1',
+      ['FEEDBACK_VIDEO'],
+    );
     expect(prisma.adminClientAssignment.findMany).toHaveBeenCalledWith({
       where: {
         client_id: 'client-1',
@@ -156,6 +185,34 @@ describe('FeedbackService', () => {
     ).resolves.toMatchObject({ id: 'feedback-existing' });
 
     expect(prisma.feedbackMedia.create).not.toHaveBeenCalled();
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
+  });
+
+  it('returns the winner when concurrent client upload ids race', async () => {
+    const existing = {
+      id: 'feedback-existing',
+      client_id: 'client-1',
+      client_upload_id: 'upload-1',
+    };
+    prisma.feedbackMedia.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existing);
+    prisma.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('duplicate feedback upload', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(
+      service.create('client-1', {
+        client_upload_id: 'upload-1',
+        media_type: MediaType.VIDEO,
+        media_url: 'https://cdn.exom.dev/video.mp4',
+      }),
+    ).resolves.toEqual(existing);
+
+    expect(prisma.feedbackMedia.findUnique).toHaveBeenCalledTimes(2);
     expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 });

@@ -2,9 +2,18 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { CreateFeedbackDto, RespondFeedbackDto } from './dto/create-feedback.dto';
-import { FeedbackStatus, Role } from '@prisma/client';
+import {
+  FeedbackKind,
+  FeedbackStatus,
+  ManagedUploadPurpose,
+  MediaType,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UploadsService } from '../uploads/uploads.service';
+import { parseDateOnly } from '../../common/date-only';
 
 @Injectable()
 export class FeedbackService {
@@ -13,6 +22,7 @@ export class FeedbackService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly uploadsService: UploadsService,
   ) {}
 
   private async resolveAccessibleClientIds(currentUserId: string, currentUserRole: string) {
@@ -49,17 +59,101 @@ export class FeedbackService {
       });
       if (existing) return existing;
     }
-    const feedback = await this.prisma.feedbackMedia.create({
-      data: {
-        client_id: clientId,
-        client_upload_id: dto.client_upload_id,
-        exercise_id: dto.exercise_id,
-        media_type: dto.media_type,
-        media_url: dto.media_url,
-        notes: dto.notes,
-        status: FeedbackStatus.PENDING,
-      },
+    const feedbackKind = dto.feedback_kind ?? FeedbackKind.GENERAL;
+    let assignmentDate: Date | undefined;
+    if (feedbackKind === FeedbackKind.LAST_SET) {
+      if (
+        dto.media_type !== MediaType.VIDEO ||
+        !dto.exercise_id ||
+        !dto.training_id ||
+        !dto.training_exercise_id ||
+        !dto.assignment_date ||
+        !dto.client_upload_id
+      ) {
+        throw new BadRequestException(
+          'El feedback de última serie requiere vídeo, fecha, entrenamiento, ejercicio e identificador de subida',
+        );
+      }
+      assignmentDate = parseDateOnly(dto.assignment_date, 'assignment_date');
+      const assignment = await this.prisma.planAssignment.findUnique({
+        where: { client_id_date: { client_id: clientId, date: assignmentDate } },
+        select: {
+          trainings: {
+            where: { training_id: dto.training_id },
+            select: { requires_last_set_video: true },
+          },
+        },
+      });
+      const trainingExercise = await this.prisma.trainingExercise.findFirst({
+        where: {
+          id: dto.training_exercise_id,
+          training_id: dto.training_id,
+          exercise_id: dto.exercise_id,
+        },
+        select: { id: true },
+      });
+      if (!assignment?.trainings.length || !trainingExercise) {
+        throw new ForbiddenException(
+          'El ejercicio no pertenece al entrenamiento asignado para esa fecha',
+        );
+      }
+    }
+    const expectedPurpose = dto.media_type === MediaType.VIDEO
+      ? ManagedUploadPurpose.FEEDBACK_VIDEO
+      : ManagedUploadPurpose.FEEDBACK_IMAGE;
+    const upload = await this.uploadsService.prepareForConsumption({
+      ownerId: clientId,
+      uploadId: dto.upload_id,
+      legacyUrl: dto.media_url,
+      purposes: [expectedPurpose],
     });
+    let feedback;
+    try {
+      feedback = await this.prisma.$transaction(async (tx) => {
+        await this.uploadsService.consumePrepared(
+          tx,
+          clientId,
+          upload.id,
+          [expectedPurpose],
+        );
+        return tx.feedbackMedia.create({
+          data: {
+            client_id: clientId,
+            ...(dto.client_upload_id && { client_upload_id: dto.client_upload_id }),
+            ...(dto.exercise_id && { exercise_id: dto.exercise_id }),
+            ...(dto.training_id && { training_id: dto.training_id }),
+            ...(dto.training_exercise_id && {
+              training_exercise_id: dto.training_exercise_id,
+            }),
+            ...(assignmentDate && { assignment_date: assignmentDate }),
+            ...(feedbackKind !== FeedbackKind.GENERAL && {
+              feedback_kind: feedbackKind,
+            }),
+            media_type: dto.media_type,
+            media_url: upload.file_url,
+            notes: dto.notes,
+            status: FeedbackStatus.PENDING,
+          },
+        });
+      });
+    } catch (error) {
+      if (
+        dto.client_upload_id &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await this.prisma.feedbackMedia.findUnique({
+          where: {
+            client_id_client_upload_id: {
+              client_id: clientId,
+              client_upload_id: dto.client_upload_id,
+            },
+          },
+        });
+        if (existing) return existing;
+      }
+      throw error;
+    }
 
     await this.notifyFeedbackSubmitted(clientId, feedback.id);
 
@@ -93,6 +187,7 @@ export class FeedbackService {
         include: {
           client: { select: { id: true, email: true, profile: { select: { first_name: true, last_name: true } } } },
           exercise: { select: { id: true, name: true } },
+          training: { select: { id: true, name: true } },
         },
       }),
       this.prisma.feedbackMedia.count({ where }),
@@ -126,6 +221,7 @@ export class FeedbackService {
         take: pagination.limit,
         include: {
           exercise: { select: { id: true, name: true } },
+          training: { select: { id: true, name: true } },
         },
       }),
       this.prisma.feedbackMedia.count({ where: { client_id: clientId } }),
