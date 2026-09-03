@@ -3,7 +3,11 @@
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CatalogColorType, Prisma } from '@prisma/client';
+import {
+  CatalogColorType,
+  ManagedUploadPurpose,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
@@ -14,6 +18,7 @@ import {
 } from './dto/create-diet.dto';
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { reconcileMealProgress } from '../../common/progress/plan-progress-reconciliation';
+import { UploadsService } from '../uploads/uploads.service';
 
 type DietSortField = 'name' | 'updated_at' | 'created_at';
 const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
@@ -109,7 +114,10 @@ function getDateRange(
 
 @Injectable()
 export class DietsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploadsService: UploadsService,
+  ) {}
 
   private collectUnique(values: string[][]): string[] {
     const unique = new Map<string, string>();
@@ -738,6 +746,7 @@ export class DietsService {
   }
 
   async create(adminId: string, dto: CreateDietDto) {
+    const prepared = await this.prepareMealImages(dto.meals, adminId);
     return this.prisma.$transaction(async (tx) => {
       const diet = await tx.diet.create({
         data: {
@@ -751,7 +760,8 @@ export class DietsService {
         },
       });
 
-      await this.createMeals(tx, diet.id, dto.meals);
+      await this.createMeals(tx, diet.id, prepared.meals);
+      await this.consumeMealImages(tx, adminId, prepared.uploadIds);
 
       return tx.diet.findUniqueOrThrow({
         where: { id: diet.id },
@@ -760,8 +770,23 @@ export class DietsService {
     });
   }
 
-  async update(id: string, dto: UpdateDietDto) {
-    await this.findOne(id);
+  async update(
+    id: string,
+    dto: UpdateDietDto,
+    ownerId?: string,
+    approvalRequestId?: string,
+  ) {
+    const existing = await this.findOne(id);
+    const existingImages = new Map<string, string | null>();
+    for (const meal of existing.meals) {
+      existingImages.set(meal.id, meal.image_url);
+      for (const variant of meal.variants) {
+        existingImages.set(variant.id, variant.image_url);
+      }
+    }
+    const prepared = dto.meals
+      ? await this.prepareMealImages(dto.meals, ownerId, existingImages, approvalRequestId)
+      : null;
 
     return this.prisma.$transaction(async (tx) => {
       await tx.diet.update({
@@ -787,7 +812,8 @@ export class DietsService {
       });
 
       if (dto.meals !== undefined) {
-        await this.replaceMeals(tx, id, dto.meals);
+        await this.replaceMeals(tx, id, prepared!.meals);
+        await this.consumeMealImages(tx, ownerId!, prepared!.uploadIds, approvalRequestId);
       }
 
       return tx.diet.findUniqueOrThrow({
@@ -795,6 +821,72 @@ export class DietsService {
         include: dietInclude,
       });
     });
+  }
+
+  private async prepareMealImages(
+    meals: CreateMealDto[],
+    ownerId?: string,
+    existingImages = new Map<string, string | null>(),
+    approvalRequestId?: string,
+  ): Promise<{ meals: CreateMealDto[]; uploadIds: string[] }> {
+    const uploadIds = new Set<string>();
+    const resolveMeal = async <T extends CreateMealDto | CreateMealVariantDto>(
+      meal: T,
+    ): Promise<T> => {
+      const unchanged =
+        !!meal.id &&
+        !meal.image_upload_id &&
+        meal.image_url !== undefined &&
+        this.uploadsService.referencesSame(
+          existingImages.get(meal.id),
+          meal.image_url,
+        );
+      let imageUrl = unchanged
+        ? existingImages.get(meal.id!)
+        : meal.image_url;
+      if (!unchanged && (meal.image_upload_id || meal.image_url)) {
+        if (!ownerId) {
+          throw new BadRequestException({
+            code: 'MANAGED_UPLOAD_REQUIRED',
+            message: 'Las imágenes deben pertenecer a subidas gestionadas',
+          });
+        }
+        const upload = await this.uploadsService.prepareForConsumption({
+          ownerId,
+          uploadId: meal.image_upload_id,
+          legacyUrl: meal.image_url,
+          purposes: [ManagedUploadPurpose.MEAL_IMAGE],
+          approvalRequestId,
+        });
+        imageUrl = upload.file_url;
+        uploadIds.add(upload.id);
+      }
+      return { ...meal, image_url: imageUrl };
+    };
+
+    const resolvedMeals: CreateMealDto[] = [];
+    for (const meal of meals) {
+      const resolvedMeal = await resolveMeal(meal);
+      const variants: CreateMealVariantDto[] = [];
+      for (const variant of meal.variants ?? []) {
+        variants.push(await resolveMeal(variant));
+      }
+      resolvedMeals.push({ ...resolvedMeal, variants });
+    }
+    return { meals: resolvedMeals, uploadIds: [...uploadIds] };
+  }
+
+  private async consumeMealImages(
+    tx: Prisma.TransactionClient,
+    ownerId: string,
+    uploadIds: string[],
+    approvalRequestId?: string,
+  ) {
+    for (const uploadId of uploadIds) {
+      await this.uploadsService.consumePrepared(tx, ownerId, uploadId, [
+        ManagedUploadPurpose.MEAL_IMAGE,
+      ], approvalRequestId);
+    }
   }
 
   async remove(id: string) {

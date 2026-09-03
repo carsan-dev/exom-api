@@ -2,6 +2,7 @@ import { MealType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { DietsService } from './diets.service';
+import type { UploadsService } from '../uploads/uploads.service';
 
 describe('DietsService', () => {
   let service: DietsService;
@@ -20,6 +21,10 @@ describe('DietsService', () => {
       upsert: jest.Mock;
     };
     $transaction: jest.Mock;
+  };
+  let uploadsService: {
+    referencesSame: jest.Mock;
+    prepareForConsumption: jest.Mock;
   };
 
   beforeEach(() => {
@@ -40,7 +45,15 @@ describe('DietsService', () => {
       $transaction: jest.fn().mockResolvedValue([]),
     };
 
-    service = new DietsService(prisma as unknown as PrismaService);
+    uploadsService = {
+      referencesSame: jest.fn(),
+      prepareForConsumption: jest.fn(),
+    };
+
+    service = new DietsService(
+      prisma as unknown as PrismaService,
+      uploadsService as unknown as UploadsService,
+    );
   });
 
   it('deletes multiple diet tags in one transaction', async () => {
@@ -248,5 +261,37 @@ describe('DietsService', () => {
     await expect(service.updateNutritionalBadgeColor('Proteína', 'green')).rejects.toThrow(
       'El color del catálogo debe ser un valor hex #RRGGBB válido',
     );
+  });
+
+  it('preserves the canonical meal URL when a signed URL has the same key', async () => {
+    const canonical = 'r2://meal-image/admin-1/meal.webp';
+    const signed =
+      'https://bucket.r2.example/meal-image/admin-1/meal.webp?X-Amz-Signature=abc';
+    uploadsService.referencesSame.mockReturnValue(true);
+
+    const prepared = await (
+      service as unknown as {
+        prepareMealImages(
+          meals: unknown[],
+          ownerId: string,
+          existing: Map<string, string>,
+        ): Promise<{ meals: Array<{ image_url?: string }> }>;
+      }
+    ).prepareMealImages(
+      [
+        {
+          id: 'meal-1',
+          type: MealType.BREAKFAST,
+          name: 'Desayuno',
+          image_url: signed,
+          ingredients: [],
+        },
+      ],
+      'admin-1',
+      new Map([['meal-1', canonical]]),
+    );
+
+    expect(prepared.meals[0].image_url).toBe(canonical);
+    expect(uploadsService.prepareForConsumption).not.toHaveBeenCalled();
   });
 });

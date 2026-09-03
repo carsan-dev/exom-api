@@ -232,9 +232,9 @@ export class DietsController {
   update(
     @Param('id') id: string,
     @Body() dto: UpdateDietDto,
-    @CurrentUser() _user: AuthenticatedUser,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.dietsService.update(id, dto);
+    return this.dietsService.update(id, dto, user.id);
   }
 
   @Delete(':id')

@@ -61,6 +61,12 @@ class MealBaseDto {
   @IsUrl()
   image_url?: string;
 
+  @ApiPropertyOptional({ description: 'Verified managed upload session' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  image_upload_id?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
