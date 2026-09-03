@@ -43,7 +43,7 @@ export class ProfileController {
   @ApiOperation({ summary: 'Get presigned URL for avatar upload' })
   @HttpCode(HttpStatus.OK)
   getAvatarUploadUrl(@CurrentUser() user: AuthenticatedUser) {
-    return this.profileService.getAvatarUploadUrl(user.id);
+    return this.profileService.getAvatarUploadUrl(user.id, user.role);
   }
 
   @Delete('me')

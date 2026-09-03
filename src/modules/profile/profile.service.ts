@@ -4,6 +4,7 @@ import * as admin from 'firebase-admin';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ManagedUploadPurpose } from '@prisma/client';
 
 @Injectable()
 export class ProfileService {
@@ -55,14 +56,25 @@ export class ProfileService {
     const profile = await this.prisma.profile.findUnique({
       where: { user_id: userId },
     });
+    const avatarChanged = Boolean(dto.avatar_upload_id) || Boolean(
+      dto.avatar_url &&
+      !this.uploadsService.referencesSame(dto.avatar_url, profile?.avatar_url),
+    );
+    const avatarUpload = avatarChanged
+      ? await this.uploadsService.prepareForConsumption({
+          ownerId: userId,
+          uploadId: dto.avatar_upload_id,
+          legacyUrl: dto.avatar_url,
+          purposes: [ManagedUploadPurpose.AVATAR],
+        })
+      : null;
 
-    if (!profile) {
-      await this.prisma.profile.create({
-        data: {
+    await this.prisma.$transaction(async (tx) => {
+      const profileData = {
           user_id: userId,
           first_name: dto.first_name ?? '',
           last_name: dto.last_name ?? '',
-          ...(dto.avatar_url !== undefined && { avatar_url: dto.avatar_url }),
+          ...(avatarUpload && { avatar_url: avatarUpload.file_url }),
           ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
           ...(dto.level !== undefined && { level: dto.level }),
           ...(dto.muscle_mass_goal !== undefined && {
@@ -76,16 +88,14 @@ export class ProfileService {
           }),
           ...(dto.height !== undefined && { height: dto.height }),
           ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
-        },
-      });
-
-      return this.buildProfileResponse(userId);
-    }
-
-    await this.prisma.profile.update({
-      where: { user_id: userId },
-      data: {
-        ...(dto.avatar_url !== undefined && { avatar_url: dto.avatar_url }),
+      };
+      if (!profile) {
+        await tx.profile.create({ data: profileData });
+      } else {
+        await tx.profile.update({
+          where: { user_id: userId },
+          data: {
+        ...(avatarUpload && { avatar_url: avatarUpload.file_url }),
         ...(dto.first_name !== undefined && { first_name: dto.first_name }),
         ...(dto.last_name !== undefined && { last_name: dto.last_name }),
         ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
@@ -101,15 +111,27 @@ export class ProfileService {
         }),
         ...(dto.height !== undefined && { height: dto.height }),
         ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
-      },
+          },
+        });
+      }
+      if (avatarUpload) {
+        await this.uploadsService.consumePrepared(
+          tx,
+          userId,
+          avatarUpload.id,
+          [ManagedUploadPurpose.AVATAR],
+        );
+      }
     });
 
     return this.buildProfileResponse(userId);
   }
 
-  async getAvatarUploadUrl(userId: string) {
-    const key = `avatars/${userId}/${Date.now()}.jpg`;
-    return this.uploadsService.getPresignedUrl(key, 'image/jpeg');
+  async getAvatarUploadUrl(userId: string, role: string) {
+    return this.uploadsService.createSession(userId, role, {
+      purpose: ManagedUploadPurpose.AVATAR,
+      mimeType: 'image/jpeg',
+    });
   }
 
   async deleteMyAccount(userId: string) {
@@ -120,6 +142,7 @@ export class ProfileService {
         firebase_uid: true,
         profile: { select: { avatar_url: true } },
         feedbackMedia: { select: { media_url: true } },
+        managedUploads: { select: { object_key: true } },
       },
     });
 
@@ -130,6 +153,7 @@ export class ProfileService {
     const mediaUrls = [
       user.profile?.avatar_url ?? null,
       ...user.feedbackMedia.map((m) => m.media_url),
+      ...user.managedUploads.map((upload) => `r2://${upload.object_key}`),
     ].filter((url): url is string => !!url);
 
     await this.prisma.$transaction(async (tx) => {

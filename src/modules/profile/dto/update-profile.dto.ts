@@ -15,6 +15,11 @@ export class UpdateProfileDto {
   @IsString()
   avatar_url?: string;
 
+  @ApiPropertyOptional({ description: 'Managed avatar upload session identifier' })
+  @IsOptional()
+  @IsString()
+  avatar_upload_id?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
