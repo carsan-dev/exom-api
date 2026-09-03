@@ -20,6 +20,8 @@ describe('TrainingsService', () => {
       findMany: jest.Mock;
       upsert: jest.Mock;
     };
+    planAssignment: { findUnique: jest.Mock };
+    dayProgress: { findUnique: jest.Mock };
   };
 
   beforeEach(() => {
@@ -38,6 +40,8 @@ describe('TrainingsService', () => {
         findMany: jest.fn(),
         upsert: jest.fn(),
       },
+      planAssignment: { findUnique: jest.fn() },
+      dayProgress: { findUnique: jest.fn() },
     };
 
     service = new TrainingsService(prisma as unknown as PrismaService);
@@ -357,6 +361,40 @@ describe('TrainingsService', () => {
 
     await expect(service.updateTypeColor('Pilates', 'green')).rejects.toThrow(
       'El color del catálogo debe ser un valor hex #RRGGBB válido',
+    );
+  });
+
+  it('does not return inactive assigned trainings as the current training', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      trainings: [],
+      training: {
+        id: 'training-inactive',
+        name: 'Retirado',
+        type: 'FUERZA',
+        types: ['FUERZA'],
+        is_active: false,
+        blocks: [],
+        exercises: [],
+      },
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.findDay('client-1', new Date('2026-09-03T00:00:00.000Z')),
+    ).resolves.toEqual({
+      date: '2026-09-03',
+      training_completed: false,
+      trainings: [],
+    });
+    expect(prisma.planAssignment.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          trainings: expect.objectContaining({
+            where: { training: { is_active: true } },
+            orderBy: { position: 'asc' },
+          }),
+        }),
+      }),
     );
   });
 });

@@ -35,7 +35,7 @@ export class CalendarService {
     const firstDay = new Date(Date.UTC(year, month - 1, 1));
     const lastDay = new Date(Date.UTC(year, month, 0));
 
-    await this.autoAssignmentMaterializer.materialize(
+    await this.autoAssignmentMaterializer.reconcile(
       clientId,
       this.buildRange(firstDay, lastDay),
     );
@@ -108,7 +108,7 @@ export class CalendarService {
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 6);
 
-    await this.autoAssignmentMaterializer.materialize(
+    await this.autoAssignmentMaterializer.reconcile(
       clientId,
       this.buildRange(start, end),
     );

@@ -5,12 +5,12 @@ describe('CalendarService', () => {
     planAssignment: { findMany: jest.fn() },
     dayProgress: { findMany: jest.fn() },
   };
-  const materializer = { materialize: jest.fn() };
+  const materializer = { reconcile: jest.fn() };
   const service = new CalendarService(prisma as never, materializer as never);
 
   beforeEach(() => {
     jest.clearAllMocks();
-    materializer.materialize.mockResolvedValue(undefined);
+    materializer.reconcile.mockResolvedValue(undefined);
   });
 
   it('counts completed meal groups instead of variants or stale ids', async () => {
@@ -39,7 +39,7 @@ describe('CalendarService', () => {
     ]);
 
     const days = await service.getMonthCalendar('client-1', 2026, 6);
-    expect(materializer.materialize).toHaveBeenCalledWith(
+    expect(materializer.reconcile).toHaveBeenCalledWith(
       'client-1',
       expect.objectContaining({
         start: new Date('2026-06-01T00:00:00.000Z'),
@@ -52,7 +52,7 @@ describe('CalendarService', () => {
     });
 
     const summary = await service.getWeekSummary('client-1', '2026-06-08');
-    expect(materializer.materialize).toHaveBeenLastCalledWith(
+    expect(materializer.reconcile).toHaveBeenLastCalledWith(
       'client-1',
       expect.objectContaining({
         start: new Date('2026-06-08T00:00:00.000Z'),

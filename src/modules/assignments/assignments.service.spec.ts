@@ -47,6 +47,7 @@ describe('AssignmentsService', () => {
       upsert: jest.Mock;
       findMany: jest.Mock;
       findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
       update: jest.Mock;
       delete: jest.Mock;
       deleteMany: jest.Mock;
@@ -93,7 +94,16 @@ describe('AssignmentsService', () => {
     firebase_uid: 'firebase-client-1',
   };
 
+  beforeAll(() => {
+    jest.useFakeTimers();
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   beforeEach(() => {
+    jest.setSystemTime(new Date('2026-04-01T12:00:00.000Z'));
     prisma = {
       user: {
         findUnique: jest.fn(),
@@ -114,8 +124,9 @@ describe('AssignmentsService', () => {
         create: jest.fn(),
         createMany: jest.fn().mockResolvedValue({ count: 0 }),
         upsert: jest.fn(),
-        findMany: jest.fn(),
-        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
         deleteMany: jest.fn(),
@@ -124,12 +135,12 @@ describe('AssignmentsService', () => {
         create: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn().mockResolvedValue([]),
-        findUnique: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn(),
         updateMany: jest.fn(),
       },
       dayProgress: {
-        findUnique: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn(),
       },
       $transaction: jest.fn(async (input: unknown) =>
@@ -137,7 +148,7 @@ describe('AssignmentsService', () => {
           ? (input as (tx: typeof prisma) => unknown)(prisma)
           : Promise.all(input as Promise<unknown>[]),
       ),
-      $queryRaw: jest.fn().mockResolvedValue(1),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
 
     notifications = {
@@ -289,8 +300,14 @@ describe('AssignmentsService', () => {
     expect(prisma.adminClientAssignment.findFirst).not.toHaveBeenCalled();
     expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({ admin_id: 'super-admin-1' }),
-        update: expect.objectContaining({ admin_id: 'super-admin-1' }),
+        create: expect.objectContaining({
+          admin_id: 'super-admin-1',
+          auto_assignment_rule_id: null,
+        }),
+        update: expect.objectContaining({
+          admin_id: 'super-admin-1',
+          auto_assignment_rule_id: null,
+        }),
       }),
     );
     expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
@@ -512,9 +529,13 @@ describe('AssignmentsService', () => {
       expect.objectContaining({
         create: expect.objectContaining({
           date: new Date('2026-03-31T00:00:00.000Z'),
+          auto_assignment_rule_id: null,
           training_id: null,
           diet_id: null,
           is_rest_day: true,
+        }),
+        update: expect.objectContaining({
+          auto_assignment_rule_id: null,
         }),
       }),
     );
@@ -682,6 +703,83 @@ describe('AssignmentsService', () => {
     });
   });
 
+  it('reconciles already materialized weeks when an auto rule changes', async () => {
+    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.training.findFirst.mockResolvedValue({ id: 'training-new' });
+    prisma.autoAssignmentRule.findUnique.mockResolvedValue({
+      id: 'rule-1',
+      client_id: 'client-1',
+      is_active: true,
+    });
+    const updatedRule = {
+      id: 'rule-1',
+      client_id: 'client-1',
+      admin_id: 'admin-1',
+      source_week_start: new Date('2026-03-30T00:00:00.000Z'),
+      starts_on: new Date('2026-04-06T00:00:00.000Z'),
+      ends_on: null,
+      is_active: true,
+      deactivated_at: null,
+      created_at: new Date('2026-04-01T00:00:00.000Z'),
+      days: [
+        {
+          id: 'rule-day-1',
+          weekday: 1,
+          training_id: 'training-new',
+          diet_id: null,
+          is_rest_day: false,
+          training: createAssignment({
+            training_id: 'training-new',
+          }).training,
+          trainings: [],
+          diet: null,
+        },
+      ],
+    };
+    prisma.autoAssignmentRule.update.mockResolvedValue(updatedRule);
+    prisma.autoAssignmentRule.findMany.mockResolvedValue([updatedRule]);
+    prisma.planAssignment.findMany
+      .mockResolvedValueOnce([
+        { date: new Date('2026-04-06T00:00:00.000Z') },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'auto-1',
+          admin_id: 'admin-1',
+          date: new Date('2026-04-06T00:00:00.000Z'),
+          training_id: 'training-old',
+          diet_id: null,
+          is_rest_day: false,
+          auto_assignment_rule_id: 'rule-1',
+          trainings: [],
+        },
+      ]);
+
+    await service.updateAutoRule(adminUser, 'rule-1', {
+      client_id: 'client-1',
+      source_week_start: '2026-03-30',
+      starts_on: '2026-04-06',
+      days: [
+        {
+          weekday: 1,
+          training_id: 'training-new',
+          is_rest_day: false,
+        },
+      ],
+    });
+
+    expect(prisma.planAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'auto-1' },
+        data: expect.objectContaining({
+          training_id: 'training-new',
+          auto_assignment_rule_id: 'rule-1',
+        }),
+      }),
+    );
+  });
+
   it('does not overwrite existing assignments when materializing an auto rule', async () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
@@ -703,7 +801,10 @@ describe('AssignmentsService', () => {
       },
     ]);
     prisma.planAssignment.findMany
-      .mockResolvedValueOnce([{ date: new Date('2026-04-06T00:00:00.000Z') }])
+      .mockResolvedValueOnce([{
+        date: new Date('2026-04-06T00:00:00.000Z'),
+        auto_assignment_rule_id: null,
+      }])
       .mockResolvedValueOnce([
         createAssignment({
           id: 'manual-monday',
@@ -739,10 +840,29 @@ describe('AssignmentsService', () => {
       deactivated_at: new Date('2026-04-01T00:00:00.000Z'),
       days: [],
     });
+    prisma.planAssignment.findMany
+      .mockResolvedValueOnce([
+        { date: new Date('2026-04-06T00:00:00.000Z') },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'auto-1',
+          admin_id: 'admin-1',
+          date: new Date('2026-04-06T00:00:00.000Z'),
+          training_id: 'training-1',
+          diet_id: null,
+          is_rest_day: false,
+          auto_assignment_rule_id: 'rule-1',
+          trainings: [],
+        },
+      ]);
 
     await expect(service.deactivateAutoRule(adminUser, 'rule-1')).resolves.toMatchObject({
       id: 'rule-1',
       is_active: false,
+    });
+    expect(prisma.planAssignment.delete).toHaveBeenCalledWith({
+      where: { id: 'auto-1' },
     });
 
     prisma.autoAssignmentRule.findMany.mockResolvedValue([]);
@@ -774,7 +894,10 @@ describe('AssignmentsService', () => {
   });
 
   it('copies a discontinuous selection and clears targets for empty source days', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.planAssignment.findMany.mockResolvedValue([
       createAssignment({ date: new Date('2026-03-30T00:00:00.000Z') }),
@@ -782,24 +905,40 @@ describe('AssignmentsService', () => {
     prisma.planAssignment.upsert.mockResolvedValue({});
     prisma.planAssignment.deleteMany.mockResolvedValue({ count: 1 });
 
-    await expect(service.copySelection(adminUser, {
+    await expect(
+      service.copySelection(adminUser, {
       client_id: 'client-1',
       source_dates: ['2026-04-01', '2026-03-30', '2026-04-01'],
       target_start_date: '2026-04-06',
-    })).resolves.toEqual({
+      }),
+    ).resolves.toEqual({
       copied_count: 1,
       cleared_count: 1,
       target_dates: ['2026-04-06', '2026-04-08'],
     });
-    expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { client_id_date: { client_id: 'client-1', date: new Date('2026-04-06T00:00:00.000Z') } },
-    }));
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.planAssignment.findMany.mock.invocationCallOrder[0],
+    );
+    expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          client_id_date: {
+            client_id: 'client-1',
+            date: new Date('2026-04-06T00:00:00.000Z'),
+          },
+        },
+      }),
+    );
     expect(prisma.planAssignment.deleteMany).toHaveBeenCalledWith({
-      where: { client_id: 'client-1', date: new Date('2026-04-08T00:00:00.000Z') },
+      where: {
+        client_id: 'client-1',
+        date: new Date('2026-04-08T00:00:00.000Z'),
+      },
     });
     expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
+          auto_assignment_rule_id: null,
           trainings: {
             create: [
               {
@@ -810,6 +949,9 @@ describe('AssignmentsService', () => {
               },
             ],
           },
+        }),
+        update: expect.objectContaining({
+          auto_assignment_rule_id: null,
         }),
       }),
     );
@@ -902,6 +1044,12 @@ describe('AssignmentsService', () => {
       },
       { type: 'training' },
     );
+    expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ auto_assignment_rule_id: null }),
+        update: expect.objectContaining({ auto_assignment_rule_id: null }),
+      }),
+    );
 
     getWeekSpy.mockRestore();
   });
@@ -909,8 +1057,12 @@ describe('AssignmentsService', () => {
   it('rejects update when moving an assignment to a date already occupied', async () => {
     prisma.planAssignment.findUnique
       .mockResolvedValueOnce(createAssignment())
+      .mockResolvedValueOnce(createAssignment())
       .mockResolvedValueOnce({ id: 'assignment-2' });
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
 
     await expect(
@@ -927,12 +1079,97 @@ describe('AssignmentsService', () => {
     expect(prisma.planAssignment.update).not.toHaveBeenCalled();
   });
 
+  it('turns a direct update of an automatic assignment into a manual override', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue(
+      createAssignment({
+        auto_assignment_rule_id: 'rule-1',
+        trainings: [],
+      }),
+    );
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.training.findFirst.mockResolvedValue({ id: 'training-2' });
+    prisma.planAssignment.findUniqueOrThrow.mockResolvedValue(
+      createAssignment({
+        training_id: 'training-2',
+      }),
+    );
+
+    await service.updateAssignment(adminUser, 'assignment-1', {
+      training_id: 'training-2',
+      is_rest_day: false,
+    });
+
+    expect(prisma.planAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'assignment-1' },
+        data: expect.objectContaining({
+          auto_assignment_rule_id: null,
+          training_id: 'training-2',
+        }),
+      }),
+    );
+  });
+
+  it('re-reads an assignment after locking before applying a partial update', async () => {
+    const initial = createAssignment();
+    const latest = createAssignment({
+      training_id: 'training-latest',
+      training: {
+        ...createAssignment().training,
+        id: 'training-latest',
+        name: 'Latest training',
+      },
+    });
+    prisma.planAssignment.findUnique
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(latest);
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
+    prisma.training.findFirst.mockResolvedValue({ id: 'training-latest' });
+    prisma.planAssignment.findUniqueOrThrow.mockResolvedValue(latest);
+
+    await service.updateAssignment(adminUser, 'assignment-1', {
+      is_rest_day: false,
+    });
+
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.planAssignment.findUnique.mock.invocationCallOrder[1],
+    );
+    expect(prisma.planAssignment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          training_id: 'training-latest',
+          auto_assignment_rule_id: null,
+        }),
+      }),
+    );
+  });
+
   it('deletes a single assignment day after validating access', async () => {
-    prisma.planAssignment.findUnique.mockResolvedValue({
+    const initialDate = new Date('2026-03-30T00:00:00.000Z');
+    const lockedDate = new Date('2026-04-01T00:00:00.000Z');
+    prisma.planAssignment.findUnique
+      .mockResolvedValueOnce({
+        id: 'assignment-1',
+        client_id: 'client-1',
+        date: initialDate,
+      })
+      .mockResolvedValueOnce({
       id: 'assignment-1',
       client_id: 'client-1',
+        date: lockedDate,
+      });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
     });
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.planAssignment.delete.mockResolvedValue(undefined);
 
@@ -945,6 +1182,9 @@ describe('AssignmentsService', () => {
     expect(prisma.planAssignment.delete).toHaveBeenCalledWith({
       where: { id: 'assignment-1' },
     });
+    expect(lastSetVideoPolicy.monthsForDates).toHaveBeenCalledWith([
+      lockedDate,
+    ]);
   });
 
   it('deletes multiple assignment days after validating every client', async () => {
@@ -1000,6 +1240,7 @@ describe('AssignmentsService', () => {
     expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
+          auto_assignment_rule_id: null,
           training_id: 'training-2',
           trainings: {
             create: [

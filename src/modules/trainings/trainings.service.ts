@@ -1118,6 +1118,7 @@ export class TrainingsService {
       where: { client_id_date: { client_id: clientId, date: target } },
       include: {
         trainings: {
+          where: { training: { is_active: true } },
           orderBy: { position: 'asc' },
           include: { training: { include: trainingExercisesInclude } },
         },
@@ -1137,7 +1138,7 @@ export class TrainingsService {
           assignmentTrainingId: link.id,
           requiresLastSetVideo: link.requires_last_set_video,
         }))
-      : assignment?.training ? [{
+      : assignment?.training?.is_active ? [{
           training: assignment.training,
           assignmentTrainingId: null,
           requiresLastSetVideo: false,

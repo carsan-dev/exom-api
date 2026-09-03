@@ -21,7 +21,11 @@ import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
 import { formatDateOnly, parseDateOnly } from '../../common/date-only';
-import { LastSetVideoPolicyService } from './last-set-video-policy.service';
+import {
+  LastSetVideoPolicyService,
+  type AssignmentTransaction,
+} from './last-set-video-policy.service';
+import { lockAssignmentPlanning } from './assignment-planning-lock';
 
 type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
@@ -561,16 +565,17 @@ export class AssignmentsService {
   private async validatePlanReferences(
     trainingIds: string[],
     dietId: string | null,
+    db: AssignmentTransaction = this.prisma,
   ) {
     const [trainings, diet] = await Promise.all([
       Promise.all(trainingIds.map((trainingId) =>
-        this.prisma.training.findFirst({
+        db.training.findFirst({
           where: { id: trainingId, is_active: true },
           select: { id: true },
         }),
       )),
       dietId
-        ? this.prisma.diet.findFirst({
+        ? db.diet.findFirst({
             where: { id: dietId, is_active: true },
             select: { id: true },
           })
@@ -656,16 +661,12 @@ export class AssignmentsService {
   }
 
   private serializeAssignment(assignment: AssignmentRecord) {
-    const links = assignment.trainings ?? [];
-    const trainings = links.length
-      ? links.map((link) => ({
+    const trainings = this.resolveAssignmentTrainingLinks(assignment)
+      .map((link) => ({
           ...this.serializeAssignmentTraining(link.training)!,
           last_set_video_policy: link.last_set_video_policy,
           requires_last_set_video: link.requires_last_set_video,
-        }))
-      : assignment.training
-        ? [this.serializeAssignmentTraining(assignment.training)!]
-        : [];
+        }));
     return {
       id: assignment.id,
       client_id: assignment.client_id,
@@ -676,6 +677,22 @@ export class AssignmentsService {
       training: trainings[0] ?? null,
       diet: assignment.diet,
     };
+  }
+
+  private resolveAssignmentTrainingLinks(
+    assignment: AssignmentRecord,
+  ): NonNullable<AssignmentRecord['trainings']> {
+    if (assignment.trainings?.length) {
+      return assignment.trainings;
+    }
+    return assignment.training
+      ? [{
+          position: 0,
+          last_set_video_policy: LastSetVideoPolicy.AUTO,
+          requires_last_set_video: false,
+          training: assignment.training,
+        }]
+      : [];
   }
 
   private serializeRangeAssignments(
@@ -772,35 +789,35 @@ export class AssignmentsService {
       ends_on: rule.ends_on ? this.formatDate(rule.ends_on) : null,
       is_active: rule.is_active,
       deactivated_at: rule.deactivated_at?.toISOString() ?? null,
-      days: rule.days.map((day) => ({
-        training_ids: ((day.trainings ?? []).length
-          ? day.trainings!.map((link) => link.training.id)
-          : day.training_id ? [day.training_id] : []),
-        id: day.id,
-        weekday: day.weekday,
-        training_id: day.training_id,
-        diet_id: day.diet_id,
-        is_rest_day: day.is_rest_day,
-        trainings: ((day.trainings ?? []).length
+      days: rule.days.map((day) => {
+        const trainings = (day.trainings ?? []).length
           ? day.trainings!.map((link) => ({
               ...this.serializeAssignmentTraining(link.training)!,
               last_set_video_policy: link.last_set_video_policy,
               requires_last_set_video: link.requires_last_set_video,
             }))
-          : day.training ? [this.serializeAssignmentTraining(day.training)!] : []),
-        training: day.trainings?.[0]
-          ? this.serializeAssignmentTraining(day.trainings[0].training)
-          : this.serializeAssignmentTraining(day.training),
-        diet: day.diet,
-      })),
+          : day.training ? [this.serializeAssignmentTraining(day.training)!] : [];
+        return {
+          training_ids: trainings.map((training) => training.id),
+          id: day.id,
+          weekday: day.weekday,
+          training_id: trainings[0]?.id ?? null,
+          diet_id: day.diet_id,
+          is_rest_day: day.is_rest_day,
+          trainings,
+          training: trainings[0] ?? null,
+          diet: day.diet,
+        };
+      }),
     };
   }
 
-  private async materializeAutoAssignmentsForRange(
+  private async reconcileAutoAssignmentsForRange(
     clientId: string,
     range: AssignmentRange,
   ) {
-    return this.autoAssignmentMaterializer.materialize(clientId, range);
+    // Auto rules are indefinite, so planning reads reconcile only their requested window.
+    return this.autoAssignmentMaterializer.reconcile(clientId, range);
   }
 
   async createAutoRule(
@@ -843,8 +860,9 @@ export class AssignmentsService {
       ),
     );
 
-    const [, rule] = await this.prisma.$transaction([
-      this.prisma.autoAssignmentRule.updateMany({
+    const rule = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, dto.client_id);
+      await tx.autoAssignmentRule.updateMany({
         where: {
           client_id: dto.client_id,
           is_active: true,
@@ -853,8 +871,8 @@ export class AssignmentsService {
           is_active: false,
           deactivated_at: new Date(),
         },
-      }),
-      this.prisma.autoAssignmentRule.create({
+      });
+      const createdRule = await tx.autoAssignmentRule.create({
         data: {
           client_id: dto.client_id,
           admin_id: user.id,
@@ -880,8 +898,13 @@ export class AssignmentsService {
           },
         },
         include: autoAssignmentRuleInclude,
-      }),
-    ]);
+      });
+      await this.autoAssignmentMaterializer.reconcileMaterialized(
+        dto.client_id,
+        tx,
+      );
+      return createdRule;
+    });
 
     return this.serializeAutoRule(rule);
   }
@@ -940,33 +963,51 @@ export class AssignmentsService {
     }
     await Promise.all(days.map((day) => this.validatePlanReferences(day.training_ids, day.diet_id)));
 
-    const rule = await this.prisma.autoAssignmentRule.update({
-      where: { id: ruleId },
-      data: {
-        admin_id: user.id,
-        source_week_start: sourceWeek.start,
-        starts_on: startsOn,
-        ends_on: endsOn,
-        days: {
-          deleteMany: {},
-          create: days.map((day) => ({
-            weekday: day.weekday,
-            training_id: day.training_id,
-            diet_id: day.diet_id,
-            is_rest_day: day.is_rest_day,
-            trainings: {
-              create: day.trainings.map((training, position) => ({
-                training_id: training.training_id,
-                position,
-                last_set_video_policy: training.last_set_video_policy,
-                requires_last_set_video:
-                  training.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
-              })),
-            },
-          })),
+    const rule = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, existing.client_id);
+      const lockedRule = await tx.autoAssignmentRule.findUnique({
+        where: { id: ruleId },
+        select: { client_id: true, is_active: true },
+      });
+      if (!lockedRule?.is_active) {
+        throw new NotFoundException('Autoasignación activa no encontrada');
+      }
+      if (lockedRule.client_id !== existing.client_id) {
+        throw new BadRequestException('La regla no pertenece al cliente indicado');
+      }
+      const updatedRule = await tx.autoAssignmentRule.update({
+        where: { id: ruleId },
+        data: {
+          admin_id: user.id,
+          source_week_start: sourceWeek.start,
+          starts_on: startsOn,
+          ends_on: endsOn,
+          days: {
+            deleteMany: {},
+            create: days.map((day) => ({
+              weekday: day.weekday,
+              training_id: day.training_id,
+              diet_id: day.diet_id,
+              is_rest_day: day.is_rest_day,
+              trainings: {
+                create: day.trainings.map((training, position) => ({
+                  training_id: training.training_id,
+                  position,
+                  last_set_video_policy: training.last_set_video_policy,
+                  requires_last_set_video:
+                    training.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+                })),
+              },
+            })),
+          },
         },
-      },
-      include: autoAssignmentRuleInclude,
+        include: autoAssignmentRuleInclude,
+      });
+      await this.autoAssignmentMaterializer.reconcileMaterialized(
+        existing.client_id,
+        tx,
+      );
+      return updatedRule;
     });
     return this.serializeAutoRule(rule);
   }
@@ -987,13 +1028,21 @@ export class AssignmentsService {
 
     await this.assertClientAccess(user, rule.client_id);
 
-    const updatedRule = await this.prisma.autoAssignmentRule.update({
-      where: { id: ruleId },
-      data: {
-        is_active: false,
-        deactivated_at: new Date(),
-      },
-      include: autoAssignmentRuleInclude,
+    const updatedRule = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, rule.client_id);
+      const deactivatedRule = await tx.autoAssignmentRule.update({
+        where: { id: ruleId },
+        data: {
+          is_active: false,
+          deactivated_at: new Date(),
+        },
+        include: autoAssignmentRuleInclude,
+      });
+      await this.autoAssignmentMaterializer.reconcileMaterialized(
+        rule.client_id,
+        tx,
+      );
+      return deactivatedRule;
     });
 
     return this.serializeAutoRule(updatedRule);
@@ -1015,6 +1064,7 @@ export class AssignmentsService {
     const affectedMonths = this.lastSetVideoPolicy.monthsForDates(parsedDates);
 
     const results = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, dto.client_id);
       for (const date of parsedDates) {
         await tx.planAssignment.upsert({
           where: {
@@ -1026,6 +1076,7 @@ export class AssignmentsService {
           create: {
             client_id: dto.client_id,
             admin_id: user.id,
+            auto_assignment_rule_id: null,
             date,
             training_id: normalizedInput.training_id,
             diet_id: normalizedInput.diet_id,
@@ -1042,6 +1093,7 @@ export class AssignmentsService {
           },
           update: {
             admin_id: user.id,
+            auto_assignment_rule_id: null,
             training_id: normalizedInput.training_id,
             diet_id: normalizedInput.diet_id,
             is_rest_day: normalizedInput.is_rest_day,
@@ -1130,6 +1182,7 @@ export class AssignmentsService {
     );
 
     const results = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, dto.client_id);
       for (const day of uniqueDays) {
         await tx.planAssignment.upsert({
           where: {
@@ -1141,6 +1194,7 @@ export class AssignmentsService {
           create: {
             client_id: dto.client_id,
             admin_id: user.id,
+            auto_assignment_rule_id: null,
             date: day.date,
             training_id: day.training_id,
             diet_id: day.diet_id,
@@ -1157,6 +1211,7 @@ export class AssignmentsService {
           },
           update: {
             admin_id: user.id,
+            auto_assignment_rule_id: null,
             training_id: day.training_id,
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
@@ -1212,26 +1267,27 @@ export class AssignmentsService {
       throw new BadRequestException('La semana de origen y destino no puede ser la misma');
     }
 
-    const sourceAssignments = await this.prisma.planAssignment.findMany({
-      where: {
-        client_id: dto.client_id,
-        date: {
-          gte: sourceWeek.start,
-          lte: sourceWeek.end,
-        },
-      },
-      include: assignmentInclude,
-    });
-
-    const sourceMap = new Map(
-      sourceAssignments.map((a) => [
-        a.date.toISOString().split('T')[0],
-        a,
-      ]),
-    );
     const affectedMonths = this.lastSetVideoPolicy.monthsForDates(targetWeek.dates);
 
-    await this.prisma.$transaction(async (tx) => {
+    const copiedDays = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, dto.client_id);
+      const sourceAssignments = await tx.planAssignment.findMany({
+        where: {
+          client_id: dto.client_id,
+          date: {
+            gte: sourceWeek.start,
+            lte: sourceWeek.end,
+          },
+        },
+        include: assignmentInclude,
+      });
+      const sourceMap = new Map(
+        sourceAssignments.map((assignment) => [
+          this.formatDate(assignment.date),
+          assignment,
+        ]),
+      );
+
       for (const [index, sourceDate] of sourceWeek.dates.entries()) {
         const sourceDateKey = this.formatDate(sourceDate);
         const source = sourceMap.get(sourceDateKey);
@@ -1240,6 +1296,8 @@ export class AssignmentsService {
         if (!source) {
           continue;
         }
+        const sourceTrainings = this.resolveAssignmentTrainingLinks(source);
+        const sourceTrainingId = sourceTrainings[0]?.training.id ?? null;
 
         await tx.planAssignment.upsert({
           where: {
@@ -1251,12 +1309,13 @@ export class AssignmentsService {
           create: {
             client_id: dto.client_id,
             admin_id: user.id,
+            auto_assignment_rule_id: null,
             date: targetDate,
-            training_id: source.training_id,
+            training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
             trainings: {
-              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
                 last_set_video_policy: 'last_set_video_policy' in link
@@ -1270,12 +1329,13 @@ export class AssignmentsService {
           },
           update: {
             admin_id: user.id,
-            training_id: source.training_id,
+            auto_assignment_rule_id: null,
+            training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
             trainings: {
               deleteMany: {},
-              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
                 last_set_video_policy: 'last_set_video_policy' in link
@@ -1290,26 +1350,25 @@ export class AssignmentsService {
         });
       }
       await this.lastSetVideoPolicy.reconcile(dto.client_id, affectedMonths, tx);
+      return sourceWeek.dates
+        .map((sourceDate) => {
+          const source = sourceMap.get(this.formatDate(sourceDate));
+          if (!source) return null;
+          const sourceTrainings = this.resolveAssignmentTrainingLinks(source);
+          const offsetDays = Math.round(
+            (sourceDate.getTime() - sourceWeek.start.getTime()) /
+              (1000 * 60 * 60 * 24),
+          );
+          return {
+            date: this.addDays(targetWeek.start, offsetDays),
+            training_id: sourceTrainings[0]?.training.id ?? null,
+            training_ids: sourceTrainings.map((link) => link.training.id),
+            diet_id: source.diet_id,
+            is_rest_day: source.is_rest_day,
+          };
+        })
+        .filter((day): day is NonNullable<typeof day> => day !== null);
     });
-
-    const copiedDays = sourceWeek.dates
-      .map((sourceDate) => {
-        const sourceDateKey = this.formatDate(sourceDate);
-        const source = sourceMap.get(sourceDateKey);
-        if (!source) return null;
-        const offsetDays = Math.round(
-          (sourceDate.getTime() - sourceWeek.start.getTime()) /
-            (1000 * 60 * 60 * 24),
-        );
-        return {
-          date: this.addDays(targetWeek.start, offsetDays),
-          training_id: source.training_id,
-          training_ids: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
-          diet_id: source.diet_id,
-          is_rest_day: source.is_rest_day,
-        };
-      })
-      .filter((d): d is NonNullable<typeof d> => d !== null);
 
     if (copiedDays.length > 0) {
       const kind = this.inferPlanKind(copiedDays);
@@ -1343,13 +1402,6 @@ export class AssignmentsService {
     }
 
     const parsedSourceDates = sourceDates.map((date) => this.parseDate(date));
-    const sourceAssignments = await this.prisma.planAssignment.findMany({
-      where: { client_id: dto.client_id, date: { in: parsedSourceDates } },
-      include: assignmentInclude,
-    });
-    const sourceMap = new Map(
-      sourceAssignments.map((assignment) => [this.formatDate(assignment.date), assignment]),
-    );
     const targets = parsedSourceDates.map((sourceDate) => ({
       sourceDate,
       targetDate: this.addDays(
@@ -1361,7 +1413,19 @@ export class AssignmentsService {
       targets.map(({ targetDate }) => targetDate),
     );
 
-    await this.prisma.$transaction(async (tx) => {
+    const { copiedDays, copiedCount } = await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, dto.client_id);
+      const sourceAssignments = await tx.planAssignment.findMany({
+        where: { client_id: dto.client_id, date: { in: parsedSourceDates } },
+        include: assignmentInclude,
+      });
+      const sourceMap = new Map(
+        sourceAssignments.map((assignment) => [
+          this.formatDate(assignment.date),
+          assignment,
+        ]),
+      );
+
       for (const { sourceDate, targetDate } of targets) {
         const source = sourceMap.get(this.formatDate(sourceDate));
         if (!source) {
@@ -1370,17 +1434,20 @@ export class AssignmentsService {
           });
           continue;
         }
+        const sourceTrainings = this.resolveAssignmentTrainingLinks(source);
+        const sourceTrainingId = sourceTrainings[0]?.training.id ?? null;
         await tx.planAssignment.upsert({
           where: { client_id_date: { client_id: dto.client_id, date: targetDate } },
           create: {
             client_id: dto.client_id,
             admin_id: user.id,
+            auto_assignment_rule_id: null,
             date: targetDate,
-            training_id: source.training_id,
+            training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
             trainings: {
-              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
                 last_set_video_policy: 'last_set_video_policy' in link
@@ -1394,12 +1461,13 @@ export class AssignmentsService {
           },
           update: {
             admin_id: user.id,
-            training_id: source.training_id,
+            auto_assignment_rule_id: null,
+            training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
             trainings: {
               deleteMany: {},
-              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
                 last_set_video_policy: 'last_set_video_policy' in link
@@ -1414,17 +1482,22 @@ export class AssignmentsService {
         });
       }
       await this.lastSetVideoPolicy.reconcile(dto.client_id, affectedMonths, tx);
-    });
-
-    const copiedDays = targets.flatMap(({ sourceDate, targetDate }) => {
-      const source = sourceMap.get(this.formatDate(sourceDate));
-      return source ? [{
-        date: targetDate,
-        training_id: source.training_id,
-        training_ids: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
-        diet_id: source.diet_id,
-        is_rest_day: source.is_rest_day,
-      }] : [];
+      return {
+        copiedCount: sourceAssignments.length,
+        copiedDays: targets.flatMap(({ sourceDate, targetDate }) => {
+          const source = sourceMap.get(this.formatDate(sourceDate));
+          const sourceTrainings = source
+            ? this.resolveAssignmentTrainingLinks(source)
+            : [];
+          return source ? [{
+            date: targetDate,
+            training_id: sourceTrainings[0]?.training.id ?? null,
+            training_ids: sourceTrainings.map((link) => link.training.id),
+            diet_id: source.diet_id,
+            is_rest_day: source.is_rest_day,
+          }] : [];
+        }),
+      };
     });
     if (copiedDays.length > 0) {
       const kind = this.inferPlanKind(copiedDays);
@@ -1441,8 +1514,8 @@ export class AssignmentsService {
     }
 
     return {
-      copied_count: sourceAssignments.length,
-      cleared_count: sourceDates.length - sourceAssignments.length,
+      copied_count: copiedCount,
+      cleared_count: sourceDates.length - copiedCount,
       target_dates: targets.map(({ targetDate }) => this.formatDate(targetDate)),
     };
   }
@@ -1451,7 +1524,7 @@ export class AssignmentsService {
     await this.assertClientAccess(user, query.client_id);
 
     const weekRange = this.buildWeekRange(query.week_start);
-    await this.materializeAutoAssignmentsForRange(query.client_id, weekRange);
+    await this.reconcileAutoAssignmentsForRange(query.client_id, weekRange);
     const lookupStart = new Date(Date.UTC(
       weekRange.start.getUTCFullYear(),
       weekRange.start.getUTCMonth(),
@@ -1475,7 +1548,7 @@ export class AssignmentsService {
     await this.assertClientAccess(user, query.client_id);
 
     const monthRange = this.buildMonthRange(query.year, query.month);
-    await this.materializeAutoAssignmentsForRange(query.client_id, monthRange);
+    await this.reconcileAutoAssignmentsForRange(query.client_id, monthRange);
     const assignments = await this.getAssignmentsForRange(query.client_id, monthRange);
 
     return this.serializeMonthAssignments(query.client_id, monthRange, assignments);
@@ -1497,62 +1570,65 @@ export class AssignmentsService {
 
     await this.assertClientAccess(user, assignment.client_id);
 
-    const nextDate = dto.date ? this.parseDate(dto.date) : assignment.date;
-
-    if (this.formatDate(nextDate) !== this.formatDate(assignment.date)) {
-      const existingAssignment = await this.prisma.planAssignment.findUnique({
-        where: {
-          client_id_date: {
-            client_id: assignment.client_id,
-            date: nextDate,
-          },
-        },
-        select: { id: true },
+    const { updatedAssignment, nextDate, normalizedInput } =
+      await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, assignment.client_id);
+      const lockedAssignment = await tx.planAssignment.findUnique({
+        where: { id: assignmentId },
+        include: assignmentInclude,
       });
-
-      if (existingAssignment && existingAssignment.id !== assignmentId) {
-        throw new ConflictException(
-          'Ya existe una asignación para ese cliente en la fecha indicada',
-        );
+      if (!lockedAssignment) {
+        throw new NotFoundException('Asignación no encontrada');
       }
-    }
 
-    const existingTrainings = (assignment.trainings ?? []).length
-      ? assignment.trainings!.map((link) => ({
+      const nextDate = dto.date ? this.parseDate(dto.date) : lockedAssignment.date;
+      const existingTrainings = this.resolveAssignmentTrainingLinks(lockedAssignment)
+        .map((link) => ({
           training_id: link.training.id,
           last_set_video_policy: link.last_set_video_policy,
-        }))
-      : assignment.training
-        ? [{
-            training_id: assignment.training.id,
-            last_set_video_policy: LastSetVideoPolicy.AUTO,
-          }]
-        : [];
-    const normalizedInput = this.normalizeAssignmentInput({
-      ...(dto.trainings !== undefined
-        ? { trainings: dto.trainings }
-        : dto.training_ids !== undefined
-          ? { training_ids: dto.training_ids }
-          : dto.training_id !== undefined
-            ? { training_id: dto.training_id }
-            : { trainings: existingTrainings }),
-      diet_id: dto.diet_id !== undefined ? dto.diet_id : assignment.diet_id,
-      is_rest_day: dto.is_rest_day ?? assignment.is_rest_day,
-    });
+        }));
+      const normalizedInput = this.normalizeAssignmentInput({
+        ...(dto.trainings !== undefined
+          ? { trainings: dto.trainings }
+          : dto.training_ids !== undefined
+            ? { training_ids: dto.training_ids }
+            : dto.training_id !== undefined
+              ? { training_id: dto.training_id }
+              : { trainings: existingTrainings }),
+        diet_id: dto.diet_id !== undefined ? dto.diet_id : lockedAssignment.diet_id,
+        is_rest_day: dto.is_rest_day ?? lockedAssignment.is_rest_day,
+      });
 
-    await this.validatePlanReferences(
-      normalizedInput.training_ids,
-      normalizedInput.diet_id,
-    );
-    const affectedMonths = this.lastSetVideoPolicy.monthsForDates([
-      assignment.date,
-      nextDate,
-    ]);
-    const updatedAssignment = await this.prisma.$transaction(async (tx) => {
+      if (this.formatDate(nextDate) !== this.formatDate(lockedAssignment.date)) {
+        const existingTarget = await tx.planAssignment.findUnique({
+          where: {
+            client_id_date: {
+              client_id: lockedAssignment.client_id,
+              date: nextDate,
+            },
+          },
+          select: { id: true },
+        });
+        if (existingTarget && existingTarget.id !== assignmentId) {
+          throw new ConflictException(
+            'Ya existe una asignación para ese cliente en la fecha indicada',
+          );
+        }
+      }
+      await this.validatePlanReferences(
+        normalizedInput.training_ids,
+        normalizedInput.diet_id,
+        tx,
+      );
+      const affectedMonths = this.lastSetVideoPolicy.monthsForDates([
+        lockedAssignment.date,
+        nextDate,
+      ]);
       await tx.planAssignment.update({
         where: { id: assignmentId },
         data: {
           admin_id: user.id,
+          auto_assignment_rule_id: null,
           date: nextDate,
           training_id: normalizedInput.training_id,
           diet_id: normalizedInput.diet_id,
@@ -1570,14 +1646,15 @@ export class AssignmentsService {
         },
       });
       await this.lastSetVideoPolicy.reconcile(
-        assignment.client_id,
+        lockedAssignment.client_id,
         affectedMonths,
         tx,
       );
-      return tx.planAssignment.findUniqueOrThrow({
+      const updatedAssignment = await tx.planAssignment.findUniqueOrThrow({
         where: { id: assignmentId },
         include: assignmentInclude,
       });
+      return { updatedAssignment, nextDate, normalizedInput };
     });
 
     await this.reconcileProgressForDate(assignment.client_id, nextDate);
@@ -1613,10 +1690,18 @@ export class AssignmentsService {
     await this.assertClientAccess(user, assignment.client_id);
 
     await this.prisma.$transaction(async (tx) => {
+      await lockAssignmentPlanning(tx, assignment.client_id);
+      const lockedAssignment = await tx.planAssignment.findUnique({
+        where: { id: assignmentId },
+        select: { id: true, client_id: true, date: true },
+      });
+      if (!lockedAssignment) {
+        throw new NotFoundException('Asignación no encontrada');
+      }
       await tx.planAssignment.delete({ where: { id: assignmentId } });
       await this.lastSetVideoPolicy.reconcile(
-        assignment.client_id,
-        this.lastSetVideoPolicy.monthsForDates([assignment.date]),
+        lockedAssignment.client_id,
+        this.lastSetVideoPolicy.monthsForDates([lockedAssignment.date]),
         tx,
       );
     });
@@ -1643,12 +1728,22 @@ export class AssignmentsService {
     await Promise.all(clientIds.map((clientId) => this.assertClientAccess(user, clientId)));
 
     const result = await this.prisma.$transaction(async (tx) => {
+      for (const clientId of [...clientIds].sort()) {
+        await lockAssignmentPlanning(tx, clientId);
+      }
+      const lockedAssignments = await tx.planAssignment.findMany({
+        where: { id: { in: assignmentIds } },
+        select: { id: true, client_id: true, date: true },
+      });
+      if (lockedAssignments.length !== assignmentIds.length) {
+        throw new NotFoundException('Una o varias asignaciones no existen');
+      }
       const deleted = await tx.planAssignment.deleteMany({
         where: { id: { in: assignmentIds } },
       });
       for (const clientId of clientIds) {
         const months = this.lastSetVideoPolicy.monthsForDates(
-          assignments
+          lockedAssignments
             .filter((assignment) => assignment.client_id === clientId)
             .map((assignment) => assignment.date),
         );
