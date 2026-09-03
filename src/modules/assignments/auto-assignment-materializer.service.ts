@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import { LastSetVideoPolicy } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { formatDateOnly } from '../../common/date-only';
+import { LastSetVideoPolicyService } from './last-set-video-policy.service';
 
 export interface AutoAssignmentRange {
   start: Date;
@@ -9,7 +12,10 @@ export interface AutoAssignmentRange {
 
 @Injectable()
 export class AutoAssignmentMaterializerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly lastSetVideoPolicy: LastSetVideoPolicyService,
+  ) {}
 
   async materialize(clientId: string, range: AutoAssignmentRange) {
     const activeRules = await this.prisma.autoAssignmentRule.findMany({
@@ -29,14 +35,24 @@ export class AutoAssignmentMaterializerService {
 
     if (activeRules.length === 0) return;
 
+    const lookupStart = new Date(Date.UTC(
+      range.start.getUTCFullYear(),
+      range.start.getUTCMonth(),
+      1,
+    ));
+    const lookupEnd = new Date(Date.UTC(
+      range.end.getUTCFullYear(),
+      range.end.getUTCMonth() + 1,
+      0,
+    ));
     const existingAssignments = await this.prisma.planAssignment.findMany({
       where: {
         client_id: clientId,
-        date: { gte: range.start, lte: range.end },
+        date: { gte: lookupStart, lte: lookupEnd },
       },
-      select: { date: true },
+      select: { date: true, training_id: true, trainings: { select: { id: true } } },
     });
-    const dateKey = (date: Date) => date.toISOString().split('T')[0];
+    const dateKey = formatDateOnly;
     const occupiedDates = new Set(existingAssignments.map(({ date }) => dateKey(date)));
     const assignmentsToCreate: Array<{
       client_id: string;
@@ -46,7 +62,10 @@ export class AutoAssignmentMaterializerService {
       diet_id: string | null;
       is_rest_day: boolean;
       auto_assignment_rule_id: string;
-      training_ids: string[];
+      trainings: Array<{
+        training_id: string;
+        last_set_video_policy: LastSetVideoPolicy;
+      }>;
     }> = [];
 
     for (const rule of activeRules) {
@@ -69,11 +88,17 @@ export class AutoAssignmentMaterializerService {
           diet_id: day.is_rest_day ? null : day.diet_id,
           is_rest_day: day.is_rest_day,
           auto_assignment_rule_id: rule.id,
-          training_ids: day.is_rest_day
+          trainings: day.is_rest_day
             ? []
             : (day.trainings ?? []).length
-              ? day.trainings!.map((link) => link.training_id)
-              : day.training_id ? [day.training_id] : [],
+              ? day.trainings!.map((link) => ({
+                  training_id: link.training_id,
+                  last_set_video_policy: link.last_set_video_policy,
+                }))
+              : day.training_id ? [{
+                  training_id: day.training_id,
+                  last_set_video_policy: LastSetVideoPolicy.AUTO,
+                }] : [],
         });
         occupiedDates.add(key);
       }
@@ -82,26 +107,33 @@ export class AutoAssignmentMaterializerService {
     if (assignmentsToCreate.length > 0) {
       if (typeof (this.prisma.planAssignment as { create?: unknown }).create !== 'function') {
         await this.prisma.planAssignment.createMany({
-          data: assignmentsToCreate.map(({ training_ids: _, ...assignment }) => assignment),
+          data: assignmentsToCreate.map(({ trainings: _, ...assignment }) => assignment),
           skipDuplicates: true,
         });
         return;
       }
-      await this.prisma.$transaction(
-        assignmentsToCreate.map(({ training_ids, ...assignment }) =>
-          this.prisma.planAssignment.create({
+      const affectedMonths = this.lastSetVideoPolicy.monthsForDates(
+        assignmentsToCreate.map((assignment) => assignment.date),
+      );
+      await this.prisma.$transaction(async (tx) => {
+        for (const { trainings, ...assignment } of assignmentsToCreate) {
+          await tx.planAssignment.create({
             data: {
               ...assignment,
               trainings: {
-                create: training_ids.map((training_id, position) => ({
-                  training_id,
+                create: trainings.map((training, position) => ({
+                  training_id: training.training_id,
                   position,
+                  last_set_video_policy: training.last_set_video_policy,
+                  requires_last_set_video:
+                    training.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
                 })),
               },
             },
-          }),
-        ),
-      );
+          });
+        }
+        await this.lastSetVideoPolicy.reconcile(clientId, affectedMonths, tx);
+      });
     }
   }
 }

@@ -3,13 +3,16 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   ArrayUnique,
-  IsDateString,
   IsArray,
   IsOptional,
   IsBoolean,
   IsNotEmpty,
   IsString,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { AssignmentTrainingInputDto } from './assignment-training-input.dto';
+import { IsDateOnly } from '../../../common/date-only';
 
 export class BulkAssignmentDto {
   @ApiProperty({ description: 'Client identifier' })
@@ -20,7 +23,8 @@ export class BulkAssignmentDto {
   @ApiProperty({ type: [String], description: 'ISO date strings YYYY-MM-DD' })
   @IsArray()
   @ArrayMinSize(1)
-  @IsDateString({}, { each: true })
+  @ArrayMaxSize(93)
+  @IsDateOnly({ each: true })
   dates: string[];
 
   @ApiPropertyOptional({ nullable: true })
@@ -37,6 +41,14 @@ export class BulkAssignmentDto {
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   training_ids?: string[];
+
+  @ApiPropertyOptional({ type: [AssignmentTrainingInputDto], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ValidateNested({ each: true })
+  @Type(() => AssignmentTrainingInputDto)
+  trainings?: AssignmentTrainingInputDto[];
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
@@ -57,11 +69,11 @@ export class CopyWeekDto {
   client_id: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })
-  @IsDateString()
+  @IsDateOnly()
   source_week_start: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })
-  @IsDateString()
+  @IsDateOnly()
   target_week_start: string;
 }
 
@@ -74,10 +86,11 @@ export class CopySelectionDto {
   @ApiProperty({ type: [String], description: 'Selected source dates (YYYY-MM-DD)' })
   @IsArray()
   @ArrayMinSize(1)
-  @IsDateString({}, { each: true })
+  @ArrayMaxSize(93)
+  @IsDateOnly({ each: true })
   source_dates: string[];
 
   @ApiProperty({ description: 'Target date for the earliest selected day' })
-  @IsDateString()
+  @IsDateOnly()
   target_start_date: string;
 }

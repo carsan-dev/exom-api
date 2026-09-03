@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AssignmentsService } from './assignments.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
+import type { LastSetVideoPolicyService } from './last-set-video-policy.service';
 
 function createAssignment(overrides: Record<string, unknown> = {}) {
   return {
@@ -58,10 +59,18 @@ describe('AssignmentsService', () => {
       update: jest.Mock;
       updateMany: jest.Mock;
     };
+    dayProgress: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
+    };
     $transaction: jest.Mock;
     $queryRaw: jest.Mock;
   };
   let notifications: { sendInternalTemplate: jest.Mock };
+  let lastSetVideoPolicy: {
+    monthsForDates: jest.Mock;
+    reconcile: jest.Mock;
+  };
 
   const adminUser = {
     id: 'admin-1',
@@ -119,8 +128,14 @@ describe('AssignmentsService', () => {
         update: jest.fn(),
         updateMany: jest.fn(),
       },
-      $transaction: jest.fn(async (operations: Promise<unknown>[]) =>
-        Promise.all(operations),
+      dayProgress: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
+      $transaction: jest.fn(async (input: unknown) =>
+        typeof input === 'function'
+          ? (input as (tx: typeof prisma) => unknown)(prisma)
+          : Promise.all(input as Promise<unknown>[]),
       ),
       $queryRaw: jest.fn().mockResolvedValue(1),
     };
@@ -132,11 +147,22 @@ describe('AssignmentsService', () => {
         failed: 0,
       }),
     };
+    lastSetVideoPolicy = {
+      monthsForDates: jest.fn().mockReturnValue([
+        { year: 2026, month: 3 },
+        { year: 2026, month: 4 },
+      ]),
+      reconcile: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new AssignmentsService(
       prisma as unknown as PrismaService,
       notifications as unknown as NotificationsService,
-      new AutoAssignmentMaterializerService(prisma as unknown as PrismaService),
+      new AutoAssignmentMaterializerService(
+        prisma as unknown as PrismaService,
+        lastSetVideoPolicy as unknown as LastSetVideoPolicyService,
+      ),
+      lastSetVideoPolicy as unknown as LastSetVideoPolicyService,
     );
   });
 
@@ -241,6 +267,7 @@ describe('AssignmentsService', () => {
     prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
     prisma.training.findFirst.mockResolvedValue({ id: 'training-1' });
     prisma.planAssignment.upsert.mockResolvedValue(createAssignment());
+    prisma.planAssignment.findMany.mockResolvedValue([createAssignment()]);
 
     await expect(
       service.bulkAssign(superAdminUser, {
@@ -416,6 +443,33 @@ describe('AssignmentsService', () => {
           },
         }),
       );
+    prisma.planAssignment.findMany.mockResolvedValue([
+      createAssignment({
+        id: 'assignment-rest',
+        date: new Date('2026-03-31T00:00:00.000Z'),
+        training_id: null,
+        diet_id: null,
+        is_rest_day: true,
+        training: null,
+        diet: null,
+      }),
+      createAssignment({
+        id: 'assignment-diet',
+        date: new Date('2026-04-01T00:00:00.000Z'),
+        training_id: null,
+        diet_id: 'diet-1',
+        is_rest_day: false,
+        training: null,
+        diet: {
+          id: 'diet-1',
+          name: 'Dieta Abril',
+          total_calories: 1900,
+          total_protein_g: 150,
+          total_carbs_g: 200,
+          total_fat_g: 60,
+        },
+      }),
+    ]);
 
     await expect(
       service.batchAssign(adminUser, {
@@ -609,7 +663,12 @@ describe('AssignmentsService', () => {
           training_id: 'training-1',
           auto_assignment_rule_id: 'rule-1',
           trainings: {
-            create: [{ training_id: 'training-1', position: 0 }],
+            create: [{
+              training_id: 'training-1',
+              position: 0,
+              last_set_video_policy: 'AUTO',
+              requires_last_set_video: false,
+            }],
           },
         }),
     });
@@ -738,6 +797,62 @@ describe('AssignmentsService', () => {
     expect(prisma.planAssignment.deleteMany).toHaveBeenCalledWith({
       where: { client_id: 'client-1', date: new Date('2026-04-08T00:00:00.000Z') },
     });
+    expect(prisma.planAssignment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          trainings: {
+            create: [
+              {
+                training_id: 'training-1',
+                position: 0,
+                last_set_video_policy: 'AUTO',
+                requires_last_set_video: false,
+              },
+            ],
+          },
+        }),
+      }),
+    );
+  });
+
+  it('never rewrites completed progress after an assignment change', async () => {
+    const date = new Date('2026-04-08T00:00:00.000Z');
+    prisma.planAssignment.findUnique.mockResolvedValue(
+      createAssignment({
+        date,
+        trainings: [
+          {
+            position: 0,
+            training: {
+              id: 'training-new',
+              exercises: [
+                { id: 'training-exercise-new', exercise_id: 'exercise-new' },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      id: 'progress-1',
+      training_completed: true,
+      trainings_completed: ['training-old'],
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-old',
+          exercise_id: 'exercise-old',
+          completed: true,
+        },
+      ],
+    });
+
+    await (
+      service as unknown as {
+        reconcileProgressForDate(clientId: string, date: Date): Promise<void>;
+      }
+    ).reconcileProgressForDate('client-1', date);
+
+    expect(prisma.dayProgress.update).not.toHaveBeenCalled();
   });
 
   it('copyWeek notifies with the first active copied target date', async () => {
@@ -873,6 +988,7 @@ describe('AssignmentsService', () => {
         { position: 0, training: createAssignment().training },
       ],
     }));
+    prisma.planAssignment.findMany.mockResolvedValue([createAssignment()]);
 
     await service.bulkAssign(adminUser, {
       client_id: 'client-1',
@@ -887,8 +1003,18 @@ describe('AssignmentsService', () => {
           training_id: 'training-2',
           trainings: {
             create: [
-              { training_id: 'training-2', position: 0 },
-              { training_id: 'training-1', position: 1 },
+              {
+                training_id: 'training-2',
+                position: 0,
+                last_set_video_policy: 'AUTO',
+                requires_last_set_video: false,
+              },
+              {
+                training_id: 'training-1',
+                position: 1,
+                last_set_video_policy: 'AUTO',
+                requires_last_set_video: false,
+              },
             ],
           },
         }),

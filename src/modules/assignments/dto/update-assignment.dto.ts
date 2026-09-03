@@ -1,10 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { AssignmentTrainingInputDto } from './assignment-training-input.dto';
+import { IsDateOnly } from '../../../common/date-only';
 
 export class UpdateAssignmentDto {
   @ApiPropertyOptional({ description: 'ISO date string YYYY-MM-DD', nullable: true })
   @IsOptional()
-  @IsDateString()
+  @IsDateOnly()
   date?: string | null;
 
   @ApiPropertyOptional({ nullable: true })
@@ -21,6 +24,14 @@ export class UpdateAssignmentDto {
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   training_ids?: string[];
+
+  @ApiPropertyOptional({ type: [AssignmentTrainingInputDto], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ValidateNested({ each: true })
+  @Type(() => AssignmentTrainingInputDto)
+  trainings?: AssignmentTrainingInputDto[];
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

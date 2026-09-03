@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
+import { IsDateOnly } from '../../../common/date-only';
 
 export class GetWeekAssignmentsQueryDto {
   @ApiProperty({ description: 'Client identifier' })
@@ -8,6 +9,6 @@ export class GetWeekAssignmentsQueryDto {
   client_id: string;
 
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD (Monday)' })
-  @IsDateString()
+  @IsDateOnly()
   week_start: string;
 }

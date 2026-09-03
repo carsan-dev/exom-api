@@ -6,7 +6,6 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
-  IsDateString,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -16,12 +15,14 @@ import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
 } from 'class-validator';
+import { AssignmentTrainingInputDto } from './assignment-training-input.dto';
+import { IsDateOnly } from '../../../common/date-only';
 
 @ValidatorConstraint({ name: 'assignmentDaySelection', async: false })
 class AssignmentDaySelectionValidator implements ValidatorConstraintInterface {
   validate(_: boolean | undefined, args: ValidationArguments) {
     const day = args.object as BatchAssignmentDayDto;
-    return Boolean(day.is_rest_day || day.training_ids?.length || day.training_id || day.diet_id);
+    return Boolean(day.is_rest_day || day.trainings?.length || day.training_ids?.length || day.training_id || day.diet_id);
   }
 
   defaultMessage() {
@@ -31,7 +32,7 @@ class AssignmentDaySelectionValidator implements ValidatorConstraintInterface {
 
 export class BatchAssignmentDayDto {
   @ApiProperty({ description: 'ISO date string YYYY-MM-DD' })
-  @IsDateString()
+  @IsDateOnly()
   date: string;
 
   @ApiPropertyOptional({ nullable: true })
@@ -48,6 +49,14 @@ export class BatchAssignmentDayDto {
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   training_ids?: string[];
+
+  @ApiPropertyOptional({ type: [AssignmentTrainingInputDto], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ValidateNested({ each: true })
+  @Type(() => AssignmentTrainingInputDto)
+  trainings?: AssignmentTrainingInputDto[];
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
@@ -71,6 +80,7 @@ export class BatchAssignDaysDto {
   @ApiProperty({ type: [BatchAssignmentDayDto] })
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(93)
   @ValidateNested({ each: true })
   @Type(() => BatchAssignmentDayDto)
   days: BatchAssignmentDayDto[];

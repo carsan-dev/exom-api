@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { LastSetVideoPolicy, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateAutoAssignmentRuleDto,
@@ -20,6 +20,8 @@ import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
+import { formatDateOnly, parseDateOnly } from '../../common/date-only';
+import { LastSetVideoPolicyService } from './last-set-video-policy.service';
 
 type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
@@ -138,7 +140,12 @@ export interface AssignmentRecord {
   date: Date;
   is_rest_day: boolean;
   training_id?: string | null;
-  trainings?: Array<{ position: number; training: AssignmentTrainingSummary }>;
+  trainings?: Array<{
+    position: number;
+    last_set_video_policy: LastSetVideoPolicy;
+    requires_last_set_video: boolean;
+    training: AssignmentTrainingSummary;
+  }>;
   diet_id?: string | null;
   training: AssignmentTrainingSummary | null;
   diet: AssignmentDietSummary | null;
@@ -159,7 +166,12 @@ interface AutoAssignmentRuleDayRecord {
   id: string;
   weekday: number;
   training_id: string | null;
-  trainings?: Array<{ position: number; training: AssignmentTrainingSummary }>;
+  trainings?: Array<{
+    position: number;
+    last_set_video_policy: LastSetVideoPolicy;
+    requires_last_set_video: boolean;
+    training: AssignmentTrainingSummary;
+  }>;
   diet_id: string | null;
   is_rest_day: boolean;
   training: AssignmentTrainingSummary | null;
@@ -186,6 +198,7 @@ export class AssignmentsService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
+    private readonly lastSetVideoPolicy: LastSetVideoPolicyService,
   ) {}
 
   async getClientOptions(user: AuthenticatedUser) {
@@ -399,24 +412,11 @@ export class AssignmentsService {
   }
 
   private parseDate(dateStr: string): Date {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-
-    if (!match) {
-      throw new BadRequestException('Fecha inválida');
-    }
-
-    const [, year, month, day] = match;
-    const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-
-    if (this.formatDate(date) !== dateStr) {
-      throw new BadRequestException('Fecha inválida');
-    }
-
-    return date;
+    return parseDateOnly(dateStr);
   }
 
   private formatDate(date: Date): string {
-    return date.toISOString().split('T')[0];
+    return formatDateOnly(date);
   }
 
   private addDays(date: Date, days: number): Date {
@@ -457,11 +457,30 @@ export class AssignmentsService {
   private normalizeAssignmentInput(input: {
     training_id?: string | null;
     training_ids?: string[];
+    trainings?: Array<{
+      training_id: string;
+      last_set_video_policy?: LastSetVideoPolicy;
+      requires_last_set_video?: boolean;
+    }>;
     diet_id?: string | null;
     is_rest_day?: boolean;
   }) {
     const is_rest_day = input.is_rest_day ?? false;
-    const requestedIds = input.training_ids !== undefined
+    const requestedTrainings = input.trainings !== undefined
+      ? input.trainings.map((item) => ({
+          training_id: item.training_id,
+          last_set_video_policy:
+            item.last_set_video_policy ??
+            (item.requires_last_set_video === true
+              ? LastSetVideoPolicy.ALWAYS
+              : item.requires_last_set_video === false
+                ? LastSetVideoPolicy.NEVER
+                : LastSetVideoPolicy.AUTO),
+        }))
+      : null;
+    const requestedIds = requestedTrainings
+      ? requestedTrainings.map((item) => item.training_id)
+      : input.training_ids !== undefined
       ? input.training_ids
       : input.training_id
         ? [input.training_id]
@@ -485,6 +504,10 @@ export class AssignmentsService {
     return {
       training_id,
       training_ids,
+      trainings: training_ids.map((id) => requestedTrainings?.find((item) => item.training_id === id) ?? ({
+        training_id: id,
+        last_set_video_policy: LastSetVideoPolicy.AUTO,
+      })),
       diet_id,
       is_rest_day,
     };
@@ -586,6 +609,10 @@ export class AssignmentsService {
     ]);
     if (!progress) return;
 
+    // Assignments may change after a client has trained. Completed progress is
+    // historical evidence: never rewrite it to match the latest assignment.
+    if (progress.training_completed) return;
+
     const trainings = assignment?.trainings.length
       ? assignment.trainings.map((link) => link.training)
       : assignment?.training ? [assignment.training] : [];
@@ -598,27 +625,32 @@ export class AssignmentsService {
     const entries = Array.isArray(progress.exercises_completed)
       ? progress.exercises_completed as Array<{ training_exercise_id?: string; exercise_id?: string }>
       : [];
-    const filtered = entries.filter((entry) => entry.training_exercise_id
+    const matchingEntries = entries.filter((entry) => entry.training_exercise_id
       ? validTrainingExerciseIds.has(entry.training_exercise_id)
       : Boolean(entry.exercise_id && validExerciseIds.has(entry.exercise_id)));
     const completedTrainingExerciseIds = new Set(
-      filtered.map((entry) => entry.training_exercise_id).filter((id): id is string => Boolean(id)),
+      matchingEntries.map((entry) => entry.training_exercise_id).filter((id): id is string => Boolean(id)),
     );
     const completedExerciseIds = new Set(
-      filtered.map((entry) => entry.exercise_id).filter((id): id is string => Boolean(id)),
+      matchingEntries.map((entry) => entry.exercise_id).filter((id): id is string => Boolean(id)),
     );
-    const trainingsCompleted = trainings
+    const newlyCompletedTrainingIds = trainings
       .filter((training) => training.exercises.length > 0 && training.exercises.every((exercise) =>
         completedTrainingExerciseIds.has(exercise.id) || completedExerciseIds.has(exercise.exercise_id),
       ))
       .map((training) => training.id);
+    const trainingsCompleted = [...new Set([
+      ...progress.trainings_completed,
+      ...newlyCompletedTrainingIds,
+    ])];
 
     await this.prisma.dayProgress.update({
       where: { id: progress.id },
       data: {
-        exercises_completed: filtered as never,
         trainings_completed: trainingsCompleted,
-        training_completed: trainings.length > 0 && trainingsCompleted.length === trainings.length,
+        training_completed: trainings.length > 0 && trainings.every((training) =>
+          trainingsCompleted.includes(training.id),
+        ),
       },
     });
   }
@@ -626,7 +658,11 @@ export class AssignmentsService {
   private serializeAssignment(assignment: AssignmentRecord) {
     const links = assignment.trainings ?? [];
     const trainings = links.length
-      ? links.map((link) => this.serializeAssignmentTraining(link.training)!)
+      ? links.map((link) => ({
+          ...this.serializeAssignmentTraining(link.training)!,
+          last_set_video_policy: link.last_set_video_policy,
+          requires_last_set_video: link.requires_last_set_video,
+        }))
       : assignment.training
         ? [this.serializeAssignmentTraining(assignment.training)!]
         : [];
@@ -650,7 +686,6 @@ export class AssignmentsService {
     const assignmentMap = new Map(
       assignments.map((assignment) => [this.formatDate(assignment.date), assignment]),
     );
-
     return range.dates.map((date) => {
       const dateKey = this.formatDate(date);
       const assignment = assignmentMap.get(dateKey);
@@ -664,11 +699,15 @@ export class AssignmentsService {
           training: null,
           trainings: [],
           training_ids: [],
+          default_last_set_video_policy: LastSetVideoPolicy.AUTO,
           diet: null,
         };
       }
 
-      return this.serializeAssignment(assignment);
+      return {
+        ...this.serializeAssignment(assignment),
+        default_last_set_video_policy: LastSetVideoPolicy.AUTO,
+      };
     });
   }
 
@@ -743,7 +782,11 @@ export class AssignmentsService {
         diet_id: day.diet_id,
         is_rest_day: day.is_rest_day,
         trainings: ((day.trainings ?? []).length
-          ? day.trainings!.map((link) => this.serializeAssignmentTraining(link.training)!)
+          ? day.trainings!.map((link) => ({
+              ...this.serializeAssignmentTraining(link.training)!,
+              last_set_video_policy: link.last_set_video_policy,
+              requires_last_set_video: link.requires_last_set_video,
+            }))
           : day.training ? [this.serializeAssignmentTraining(day.training)!] : []),
         training: day.trainings?.[0]
           ? this.serializeAssignmentTraining(day.trainings[0].training)
@@ -825,7 +868,13 @@ export class AssignmentsService {
               diet_id: day.diet_id,
               is_rest_day: day.is_rest_day,
               trainings: {
-                create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+                create: day.trainings.map((training, position) => ({
+                  training_id: training.training_id,
+                  position,
+                  last_set_video_policy: training.last_set_video_policy,
+                  requires_last_set_video:
+                    training.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+                })),
               },
             })),
           },
@@ -906,7 +955,13 @@ export class AssignmentsService {
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
             trainings: {
-              create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+              create: day.trainings.map((training, position) => ({
+                training_id: training.training_id,
+                position,
+                last_set_video_policy: training.last_set_video_policy,
+                requires_last_set_video:
+                  training.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+              })),
             },
           })),
         },
@@ -956,11 +1011,12 @@ export class AssignmentsService {
     const uniqueDates = Array.from(
       new Set(dto.dates.map((dateStr) => this.formatDate(this.parseDate(dateStr)))),
     );
+    const parsedDates = uniqueDates.map((date) => this.parseDate(date));
+    const affectedMonths = this.lastSetVideoPolicy.monthsForDates(parsedDates);
 
-    const results = await this.prisma.$transaction(
-      uniqueDates.map((dateStr) => {
-        const date = this.parseDate(dateStr);
-        return this.prisma.planAssignment.upsert({
+    const results = await this.prisma.$transaction(async (tx) => {
+      for (const date of parsedDates) {
+        await tx.planAssignment.upsert({
           where: {
             client_id_date: {
               client_id: dto.client_id,
@@ -975,7 +1031,13 @@ export class AssignmentsService {
             diet_id: normalizedInput.diet_id,
             is_rest_day: normalizedInput.is_rest_day,
             trainings: {
-              create: normalizedInput.training_ids.map((training_id, position) => ({ training_id, position })),
+              create: normalizedInput.trainings.map((item, position) => ({
+                training_id: item.training_id,
+                position,
+                last_set_video_policy: item.last_set_video_policy,
+                requires_last_set_video:
+                  item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+              })),
             },
           },
           update: {
@@ -985,13 +1047,24 @@ export class AssignmentsService {
             is_rest_day: normalizedInput.is_rest_day,
             trainings: {
               deleteMany: {},
-              create: normalizedInput.training_ids.map((training_id, position) => ({ training_id, position })),
+              create: normalizedInput.trainings.map((item, position) => ({
+                training_id: item.training_id,
+                position,
+                last_set_video_policy: item.last_set_video_policy,
+                requires_last_set_video:
+                  item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+              })),
             },
           },
-          include: assignmentInclude,
         });
-      }),
-    );
+      }
+      await this.lastSetVideoPolicy.reconcile(dto.client_id, affectedMonths, tx);
+      return tx.planAssignment.findMany({
+        where: { client_id: dto.client_id, date: { in: parsedDates } },
+        include: assignmentInclude,
+        orderBy: { date: 'asc' },
+      });
+    });
 
     await Promise.all(uniqueDates.map((dateStr) =>
       this.reconcileProgressForDate(dto.client_id, this.parseDate(dateStr)),
@@ -1036,6 +1109,10 @@ export class AssignmentsService {
             date: Date;
             training_id: string | null;
             training_ids: string[];
+            trainings: Array<{
+              training_id: string;
+              last_set_video_policy: LastSetVideoPolicy;
+            }>;
             diet_id: string | null;
             is_rest_day: boolean;
           }
@@ -1048,10 +1125,13 @@ export class AssignmentsService {
         this.validatePlanReferences(day.training_ids, day.diet_id),
       ),
     );
+    const affectedMonths = this.lastSetVideoPolicy.monthsForDates(
+      uniqueDays.map((day) => day.date),
+    );
 
-    const results = await this.prisma.$transaction(
-      uniqueDays.map((day) =>
-        this.prisma.planAssignment.upsert({
+    const results = await this.prisma.$transaction(async (tx) => {
+      for (const day of uniqueDays) {
+        await tx.planAssignment.upsert({
           where: {
             client_id_date: {
               client_id: dto.client_id,
@@ -1066,7 +1146,13 @@ export class AssignmentsService {
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
             trainings: {
-              create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+              create: day.trainings.map((item, position) => ({
+                training_id: item.training_id,
+                position,
+                last_set_video_policy: item.last_set_video_policy,
+                requires_last_set_video:
+                  item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+              })),
             },
           },
           update: {
@@ -1076,13 +1162,24 @@ export class AssignmentsService {
             is_rest_day: day.is_rest_day,
             trainings: {
               deleteMany: {},
-              create: day.training_ids.map((training_id, position) => ({ training_id, position })),
+              create: day.trainings.map((item, position) => ({
+                training_id: item.training_id,
+                position,
+                last_set_video_policy: item.last_set_video_policy,
+                requires_last_set_video:
+                  item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+              })),
             },
           },
-          include: assignmentInclude,
-        }),
-      ),
-    );
+        });
+      }
+      await this.lastSetVideoPolicy.reconcile(dto.client_id, affectedMonths, tx);
+      return tx.planAssignment.findMany({
+        where: { client_id: dto.client_id, date: { in: uniqueDays.map((day) => day.date) } },
+        include: assignmentInclude,
+        orderBy: { date: 'asc' },
+      });
+    });
 
     await Promise.all(uniqueDays.map((day) =>
       this.reconcileProgressForDate(dto.client_id, day.date),
@@ -1132,19 +1229,19 @@ export class AssignmentsService {
         a,
       ]),
     );
+    const affectedMonths = this.lastSetVideoPolicy.monthsForDates(targetWeek.dates);
 
-    const results = await this.prisma.$transaction(
-      sourceWeek.dates.map((sourceDate, index) => {
-        const sourceDateKey = sourceDate.toISOString().split('T')[0];
+    await this.prisma.$transaction(async (tx) => {
+      for (const [index, sourceDate] of sourceWeek.dates.entries()) {
+        const sourceDateKey = this.formatDate(sourceDate);
         const source = sourceMap.get(sourceDateKey);
         const targetDate = targetWeek.dates[index];
 
         if (!source) {
-          // Skip days without source assignment — preserve existing target assignments
-          return this.prisma.$queryRaw`SELECT 1`;
+          continue;
         }
 
-        return this.prisma.planAssignment.upsert({
+        await tx.planAssignment.upsert({
           where: {
             client_id_date: {
               client_id: dto.client_id,
@@ -1159,9 +1256,15 @@ export class AssignmentsService {
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
             trainings: {
-              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
+                last_set_video_policy: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy
+                  : LastSetVideoPolicy.AUTO,
+                requires_last_set_video: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                  : false,
               })),
             },
           },
@@ -1172,22 +1275,26 @@ export class AssignmentsService {
             is_rest_day: source.is_rest_day,
             trainings: {
               deleteMany: {},
-              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
+                last_set_video_policy: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy
+                  : LastSetVideoPolicy.AUTO,
+                requires_last_set_video: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                  : false,
               })),
             },
           },
-          include: assignmentInclude,
         });
-      }),
-    );
-
-    void results;
+      }
+      await this.lastSetVideoPolicy.reconcile(dto.client_id, affectedMonths, tx);
+    });
 
     const copiedDays = sourceWeek.dates
       .map((sourceDate) => {
-        const sourceDateKey = sourceDate.toISOString().split('T')[0];
+        const sourceDateKey = this.formatDate(sourceDate);
         const source = sourceMap.get(sourceDateKey);
         if (!source) return null;
         const offsetDays = Math.round(
@@ -1197,7 +1304,7 @@ export class AssignmentsService {
         return {
           date: this.addDays(targetWeek.start, offsetDays),
           training_id: source.training_id,
-          training_ids: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
+          training_ids: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
           diet_id: source.diet_id,
           is_rest_day: source.is_rest_day,
         };
@@ -1250,16 +1357,20 @@ export class AssignmentsService {
         Math.round((sourceDate.getTime() - sourceStart.getTime()) / (1000 * 60 * 60 * 24)),
       ),
     }));
+    const affectedMonths = this.lastSetVideoPolicy.monthsForDates(
+      targets.map(({ targetDate }) => targetDate),
+    );
 
-    await this.prisma.$transaction(
-      targets.map(({ sourceDate, targetDate }) => {
+    await this.prisma.$transaction(async (tx) => {
+      for (const { sourceDate, targetDate } of targets) {
         const source = sourceMap.get(this.formatDate(sourceDate));
         if (!source) {
-          return this.prisma.planAssignment.deleteMany({
+          await tx.planAssignment.deleteMany({
             where: { client_id: dto.client_id, date: targetDate },
           });
+          continue;
         }
-        return this.prisma.planAssignment.upsert({
+        await tx.planAssignment.upsert({
           where: { client_id_date: { client_id: dto.client_id, date: targetDate } },
           create: {
             client_id: dto.client_id,
@@ -1269,9 +1380,15 @@ export class AssignmentsService {
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
             trainings: {
-              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
+                last_set_video_policy: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy
+                  : LastSetVideoPolicy.AUTO,
+                requires_last_set_video: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                  : false,
               })),
             },
           },
@@ -1282,22 +1399,29 @@ export class AssignmentsService {
             is_rest_day: source.is_rest_day,
             trainings: {
               deleteMany: {},
-              create: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
+              create: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
+                last_set_video_policy: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy
+                  : LastSetVideoPolicy.AUTO,
+                requires_last_set_video: 'last_set_video_policy' in link
+                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                  : false,
               })),
             },
           },
         });
-      }),
-    );
+      }
+      await this.lastSetVideoPolicy.reconcile(dto.client_id, affectedMonths, tx);
+    });
 
     const copiedDays = targets.flatMap(({ sourceDate, targetDate }) => {
       const source = sourceMap.get(this.formatDate(sourceDate));
       return source ? [{
         date: targetDate,
         training_id: source.training_id,
-        training_ids: (source.trainings ?? (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
+        training_ids: (source.trainings?.length ? source.trainings : (source.training ? [{ training: source.training, position: 0 }] : [])).map((link) => link.training.id),
         diet_id: source.diet_id,
         is_rest_day: source.is_rest_day,
       }] : [];
@@ -1328,7 +1452,21 @@ export class AssignmentsService {
 
     const weekRange = this.buildWeekRange(query.week_start);
     await this.materializeAutoAssignmentsForRange(query.client_id, weekRange);
-    const assignments = await this.getAssignmentsForRange(query.client_id, weekRange);
+    const lookupStart = new Date(Date.UTC(
+      weekRange.start.getUTCFullYear(),
+      weekRange.start.getUTCMonth(),
+      1,
+    ));
+    const lookupEnd = new Date(Date.UTC(
+      weekRange.end.getUTCFullYear(),
+      weekRange.end.getUTCMonth() + 1,
+      0,
+    ));
+    const assignments = await this.getAssignmentsForRange(query.client_id, {
+      start: lookupStart,
+      end: lookupEnd,
+      dates: weekRange.dates,
+    });
 
     return this.serializeWeekAssignments(query.client_id, weekRange, assignments);
   }
@@ -1379,14 +1517,25 @@ export class AssignmentsService {
       }
     }
 
+    const existingTrainings = (assignment.trainings ?? []).length
+      ? assignment.trainings!.map((link) => ({
+          training_id: link.training.id,
+          last_set_video_policy: link.last_set_video_policy,
+        }))
+      : assignment.training
+        ? [{
+            training_id: assignment.training.id,
+            last_set_video_policy: LastSetVideoPolicy.AUTO,
+          }]
+        : [];
     const normalizedInput = this.normalizeAssignmentInput({
-      training_ids: dto.training_ids !== undefined
-        ? dto.training_ids
-        : (assignment.trainings ?? []).length
-          ? assignment.trainings!.map((link) => link.training.id)
-          : undefined,
-      training_id:
-        dto.training_id !== undefined ? dto.training_id : assignment.training_id,
+      ...(dto.trainings !== undefined
+        ? { trainings: dto.trainings }
+        : dto.training_ids !== undefined
+          ? { training_ids: dto.training_ids }
+          : dto.training_id !== undefined
+            ? { training_id: dto.training_id }
+            : { trainings: existingTrainings }),
       diet_id: dto.diet_id !== undefined ? dto.diet_id : assignment.diet_id,
       is_rest_day: dto.is_rest_day ?? assignment.is_rest_day,
     });
@@ -1395,21 +1544,40 @@ export class AssignmentsService {
       normalizedInput.training_ids,
       normalizedInput.diet_id,
     );
-
-    const updatedAssignment = await this.prisma.planAssignment.update({
-      where: { id: assignmentId },
-      data: {
-        admin_id: user.id,
-        date: nextDate,
-        training_id: normalizedInput.training_id,
-        diet_id: normalizedInput.diet_id,
-        is_rest_day: normalizedInput.is_rest_day,
-        trainings: {
-          deleteMany: {},
-          create: normalizedInput.training_ids.map((training_id, position) => ({ training_id, position })),
+    const affectedMonths = this.lastSetVideoPolicy.monthsForDates([
+      assignment.date,
+      nextDate,
+    ]);
+    const updatedAssignment = await this.prisma.$transaction(async (tx) => {
+      await tx.planAssignment.update({
+        where: { id: assignmentId },
+        data: {
+          admin_id: user.id,
+          date: nextDate,
+          training_id: normalizedInput.training_id,
+          diet_id: normalizedInput.diet_id,
+          is_rest_day: normalizedInput.is_rest_day,
+          trainings: {
+            deleteMany: {},
+            create: normalizedInput.trainings.map((item, position) => ({
+              training_id: item.training_id,
+              position,
+              last_set_video_policy: item.last_set_video_policy,
+              requires_last_set_video:
+                item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+            })),
+          },
         },
-      },
-      include: assignmentInclude,
+      });
+      await this.lastSetVideoPolicy.reconcile(
+        assignment.client_id,
+        affectedMonths,
+        tx,
+      );
+      return tx.planAssignment.findUniqueOrThrow({
+        where: { id: assignmentId },
+        include: assignmentInclude,
+      });
     });
 
     await this.reconcileProgressForDate(assignment.client_id, nextDate);
@@ -1434,6 +1602,7 @@ export class AssignmentsService {
       select: {
         id: true,
         client_id: true,
+        date: true,
       },
     });
 
@@ -1443,8 +1612,13 @@ export class AssignmentsService {
 
     await this.assertClientAccess(user, assignment.client_id);
 
-    await this.prisma.planAssignment.delete({
-      where: { id: assignmentId },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.planAssignment.delete({ where: { id: assignmentId } });
+      await this.lastSetVideoPolicy.reconcile(
+        assignment.client_id,
+        this.lastSetVideoPolicy.monthsForDates([assignment.date]),
+        tx,
+      );
     });
 
     return {
@@ -1453,9 +1627,12 @@ export class AssignmentsService {
   }
 
   async deleteAssignments(user: AuthenticatedUser, assignmentIds: string[]) {
+    if (assignmentIds.length > 93) {
+      throw new BadRequestException('No puedes eliminar más de 93 fechas por petición');
+    }
     const assignments = await this.prisma.planAssignment.findMany({
       where: { id: { in: assignmentIds } },
-      select: { id: true, client_id: true },
+      select: { id: true, client_id: true, date: true },
     });
 
     if (assignments.length !== assignmentIds.length) {
@@ -1465,8 +1642,19 @@ export class AssignmentsService {
     const clientIds = [...new Set(assignments.map((assignment) => assignment.client_id))];
     await Promise.all(clientIds.map((clientId) => this.assertClientAccess(user, clientId)));
 
-    const result = await this.prisma.planAssignment.deleteMany({
-      where: { id: { in: assignmentIds } },
+    const result = await this.prisma.$transaction(async (tx) => {
+      const deleted = await tx.planAssignment.deleteMany({
+        where: { id: { in: assignmentIds } },
+      });
+      for (const clientId of clientIds) {
+        const months = this.lastSetVideoPolicy.monthsForDates(
+          assignments
+            .filter((assignment) => assignment.client_id === clientId)
+            .map((assignment) => assignment.date),
+        );
+        await this.lastSetVideoPolicy.reconcile(clientId, months, tx);
+      }
+      return deleted;
     });
 
     return { deleted_count: result.count };
