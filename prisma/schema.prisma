@@ -83,6 +83,35 @@ enum FeedbackStatus {
   REVIEWED
 }
 
+enum FeedbackKind {
+  GENERAL
+  LAST_SET
+}
+
+enum LastSetVideoPolicy {
+  AUTO
+  ALWAYS
+  NEVER
+}
+
+enum ManagedUploadPurpose {
+  AVATAR
+  FEEDBACK_IMAGE
+  FEEDBACK_VIDEO
+  EXERCISE_VIDEO
+  EXERCISE_THUMBNAIL
+  MEAL_IMAGE
+}
+
+enum ManagedUploadStatus {
+  PENDING
+  VERIFIED
+  RESERVED
+  CONSUMED
+  EXPIRED
+  FAILED
+}
+
 enum MediaType {
   VIDEO
   IMAGE
@@ -135,6 +164,7 @@ model User {
   clientChallenges ChallengeClient[]
   userAchievements UserAchievement[]
   feedbackMedia    FeedbackMedia[]
+  managedUploads   ManagedUpload[]
   sentNotifications     Notification[] @relation("SentNotifications")
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   approvalRequestsMade     ApprovalRequest[] @relation("ApprovalRequester")
@@ -269,6 +299,7 @@ model ApprovalRequest {
 
   requester User  @relation("ApprovalRequester", fields: [requester_id], references: [id], onDelete: Cascade)
   reviewer  User? @relation("ApprovalReviewer", fields: [reviewer_id], references: [id], onDelete: SetNull)
+  managedUploads ManagedUpload[]
 
   @@index([requester_id, status, created_at])
   @@index([status, created_at])
@@ -305,6 +336,7 @@ model Training {
   autoAssignmentRuleDays AutoAssignmentRuleDay[]
   autoAssignmentRuleDayLinks AutoAssignmentRuleDayTraining[]
   blocks                 TrainingBlock[]
+  feedbackMedia          FeedbackMedia[]
 
   @@index([group_id])
   @@map("trainings")
@@ -380,6 +412,7 @@ model TrainingExercise {
   training Training @relation(fields: [training_id], references: [id], onDelete: Cascade)
   block    TrainingBlock? @relation(fields: [block_id], references: [id], onDelete: Cascade)
   exercise Exercise @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
+  feedbackMedia FeedbackMedia[]
 
   @@unique([training_id, order])
   @@index([block_id, position_in_block])
@@ -524,6 +557,8 @@ model PlanAssignmentTraining {
   assignment_id String
   training_id   String
   position      Int
+  last_set_video_policy LastSetVideoPolicy @default(AUTO)
+  requires_last_set_video Boolean @default(false)
 
   assignment PlanAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
   training   Training       @relation(fields: [training_id], references: [id], onDelete: Cascade)
@@ -575,6 +610,8 @@ model AutoAssignmentRuleDayTraining {
   rule_day_id String
   training_id String
   position    Int
+  last_set_video_policy LastSetVideoPolicy @default(AUTO)
+  requires_last_set_video Boolean @default(false)
 
   ruleDay  AutoAssignmentRuleDay @relation(fields: [rule_day_id], references: [id], onDelete: Cascade)
   training Training              @relation(fields: [training_id], references: [id], onDelete: Cascade)
@@ -795,6 +832,10 @@ model FeedbackMedia {
   client_id      String
   client_upload_id String?
   exercise_id    String?
+  training_id    String?
+  training_exercise_id String?
+  assignment_date DateTime?      @db.Date
+  feedback_kind  FeedbackKind    @default(GENERAL)
   media_type     MediaType
   media_url      String?
   notes          String?
@@ -808,8 +849,36 @@ model FeedbackMedia {
 
   client   User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
   exercise Exercise? @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
+  training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  trainingExercise TrainingExercise? @relation(fields: [training_exercise_id], references: [id], onDelete: SetNull)
 
   @@index([status, reviewed_at, media_deleted_at])
+  @@index([client_id, assignment_date, training_id, training_exercise_id])
   @@unique([client_id, client_upload_id])
   @@map("feedback_media")
+}
+
+model ManagedUpload {
+  id             String              @id @default(uuid())
+  owner_id       String
+  approval_request_id String?
+  purpose        ManagedUploadPurpose
+  object_key     String              @unique
+  mime_type      String
+  expected_bytes Int
+  actual_bytes   Int?
+  status         ManagedUploadStatus @default(PENDING)
+  expires_at     DateTime
+  verified_at    DateTime?
+  consumed_at    DateTime?
+  created_at     DateTime            @default(now())
+  updated_at     DateTime            @updatedAt
+
+  owner User @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  approvalRequest ApprovalRequest? @relation(fields: [approval_request_id], references: [id], onDelete: SetNull)
+
+  @@index([owner_id, status, expires_at])
+  @@index([status, expires_at])
+  @@index([approval_request_id, status])
+  @@map("managed_uploads")
 }
