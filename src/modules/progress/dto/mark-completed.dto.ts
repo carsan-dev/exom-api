@@ -9,6 +9,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { IsDateOnly } from '../../../common/date-only';
 
 export class CompletedSetDto {
   @ApiProperty()
@@ -37,7 +38,7 @@ export class CompletedSetDto {
 
 export class MarkExerciseDto {
   @ApiProperty()
-  @IsString()
+  @IsDateOnly()
   date: string;
 
   @ApiProperty()
@@ -48,6 +49,11 @@ export class MarkExerciseDto {
   @IsOptional()
   @IsString()
   training_exercise_id?: string;
+
+  @ApiPropertyOptional({ description: 'Client upload ID for the required final-set video' })
+  @IsOptional()
+  @IsString()
+  last_set_feedback_client_upload_id?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -64,7 +70,7 @@ export class MarkExerciseDto {
 
 export class MarkMealDto {
   @ApiProperty()
-  @IsString()
+  @IsDateOnly()
   date: string;
 
   @ApiProperty()
@@ -74,7 +80,7 @@ export class MarkMealDto {
 
 export class CompleteTrainingDto {
   @ApiProperty()
-  @IsString()
+  @IsDateOnly()
   date: string;
 
   @ApiPropertyOptional({ description: 'Assigned training to complete; defaults to the first one' })

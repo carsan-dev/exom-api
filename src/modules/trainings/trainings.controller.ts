@@ -42,6 +42,7 @@ import type { AuthenticatedUser } from '../../common/decorators/current-user.dec
 import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
 import { UpdateTrainingGroupMembershipDto } from '../../common/catalog-groups/dto/catalog-group.dto';
+import { parseDateOnly } from '../../common/date-only';
 
 @ApiTags('Trainings')
 @ApiBearerAuth()
@@ -66,7 +67,7 @@ export class TrainingsController {
     @CurrentUser() user: AuthenticatedUser,
     @Query('date') dateStr?: string,
   ) {
-    const date = dateStr ? new Date(dateStr) : undefined;
+    const date = dateStr ? parseDateOnly(dateStr) : undefined;
     return this.trainingsService.findToday(user.id, date);
   }
 
@@ -77,7 +78,7 @@ export class TrainingsController {
     @CurrentUser() user: AuthenticatedUser,
     @Query('date') dateStr?: string,
   ) {
-    const date = dateStr ? new Date(dateStr) : undefined;
+    const date = dateStr ? parseDateOnly(dateStr) : undefined;
     return this.trainingsService.findDay(user.id, date);
   }
 
@@ -164,8 +165,16 @@ export class TrainingsController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a single training by ID' })
-  findOne(@Param('id') id: string) {
-    return this.trainingsService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('date') dateStr?: string,
+  ) {
+    return this.trainingsService.findOne(
+      id,
+      user.role === Role.CLIENT ? user.id : undefined,
+      dateStr ? parseDateOnly(dateStr) : undefined,
+    );
   }
 
   @Post()

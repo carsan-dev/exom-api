@@ -1131,22 +1131,34 @@ export class TrainingsService {
       where: { client_id_date: { client_id: clientId, date: target } },
       select: { training_completed: true, trainings_completed: true },
     });
-    const assignedTrainings = assignment?.trainings.length
-      ? assignment.trainings.map((link) => link.training)
-      : assignment?.training ? [assignment.training] : [];
+    const assignedTrainingLinks = assignment?.trainings.length
+      ? assignment.trainings.map((link) => ({
+          training: link.training,
+          assignmentTrainingId: link.id,
+          requiresLastSetVideo: link.requires_last_set_video,
+        }))
+      : assignment?.training ? [{
+          training: assignment.training,
+          assignmentTrainingId: null,
+          requiresLastSetVideo: false,
+        }] : [];
+    const assignedTrainings = assignedTrainingLinks.map((link) => link.training);
     const completedIds = new Set(progress?.trainings_completed ?? []);
     return {
       date: target.toISOString().split('T')[0],
       training_completed: progress?.training_completed ?? false,
-      trainings: assignedTrainings.map((training) => ({
+      trainings: assignedTrainingLinks.map(({ training, assignmentTrainingId, requiresLastSetVideo }) => ({
         ...this.serializeTraining(training),
+        assignment_training_id: assignmentTrainingId,
+        assignment_date: target.toISOString().split('T')[0],
+        requires_last_set_video: requiresLastSetVideo,
         completed: completedIds.has(training.id) ||
           Boolean(progress?.training_completed && assignedTrainings.length === 1),
       })),
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, clientId?: string, date?: Date) {
     const training = await this.prisma.training.findFirst({
       where: { id, is_active: true },
       include: trainingExercisesInclude,
@@ -1156,7 +1168,25 @@ export class TrainingsService {
       throw new NotFoundException('Entrenamiento no encontrado');
     }
 
-    return this.serializeTraining(training);
+    const serialized = this.serializeTraining(training);
+    if (!clientId || !date) return serialized;
+    const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const assignment = await this.prisma.planAssignment.findUnique({
+      where: { client_id_date: { client_id: clientId, date: target } },
+      select: {
+        trainings: {
+          where: { training_id: id },
+          select: { id: true, requires_last_set_video: true },
+        },
+      },
+    });
+    const link = assignment?.trainings[0];
+    return {
+      ...serialized,
+      assignment_training_id: link?.id ?? null,
+      assignment_date: target.toISOString().split('T')[0],
+      requires_last_set_video: link?.requires_last_set_video ?? false,
+    };
   }
 
   async create(adminId: string, dto: CreateTrainingDto) {

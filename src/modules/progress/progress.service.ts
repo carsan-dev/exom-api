@@ -1,10 +1,18 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
+  UnprocessableEntityException,
 } from '@nestjs/common';
-import { Prisma, PrismaClient } from '@prisma/client';
+import {
+  FeedbackKind,
+  ManagedUploadPurpose,
+  MediaType,
+  Prisma,
+  PrismaClient,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type TransactionClient = Omit<
@@ -20,6 +28,8 @@ import {
   MarkExerciseDto,
   MarkMealDto,
 } from './dto/mark-completed.dto';
+import { parseDateOnly } from '../../common/date-only';
+import { UploadsService } from '../uploads/uploads.service';
 
 interface ExerciseCompletedEntry {
   training_exercise_id?: string;
@@ -32,6 +42,7 @@ interface ExerciseCompletedEntry {
     weight_kg?: number;
   }>;
   completed_at: string;
+  last_set_feedback_client_upload_id?: string;
 }
 
 interface AssignmentContext {
@@ -40,8 +51,10 @@ interface AssignmentContext {
   trainingExerciseIds: Set<string>;
   exerciseIds: Set<string>;
   exerciseIdByTrainingExerciseId: Map<string, string>;
+  trainingIdByTrainingExerciseId: Map<string, string>;
   trainingExerciseIdsByTrainingId: Map<string, Set<string>>;
   exerciseIdsByTrainingId: Map<string, Set<string>>;
+  requiredTrainingExerciseIds: Set<string>;
   mealIds: Set<string>;
   mealGroupById: Map<string, string>;
 }
@@ -56,6 +69,7 @@ export class ProgressService {
     private readonly achievementsService: AchievementsService,
     private readonly notifications: NotificationsService,
     private readonly streakCalculator: StreakCalculatorService,
+    private readonly uploadsService: UploadsService,
   ) {}
 
   private parseExercisesCompleted(
@@ -73,10 +87,7 @@ export class ProgressService {
   }
 
   private parseDate(dateStr: string): Date {
-    const d = new Date(dateStr);
-    return new Date(
-      Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-    );
+    return parseDateOnly(dateStr);
   }
 
   private async getAssignmentContext(
@@ -113,14 +124,21 @@ export class ProgressService {
     });
 
     const dietMeals = assignment?.diet?.meals ?? [];
-    const assignedTrainings = (assignment?.trainings ?? []).length
-      ? assignment!.trainings!.map((link) => link.training)
+    const assignedTrainingLinks = (assignment?.trainings ?? []).length
+      ? assignment!.trainings!.map((link) => ({
+          training: link.training,
+          requiresLastSetVideo: link.requires_last_set_video,
+        }))
       : assignment?.training
         ? [{
-            ...assignment.training,
-            id: assignment.training.id ?? assignment.training_id ?? '__legacy_training__',
+            training: {
+              ...assignment.training,
+              id: assignment.training.id ?? assignment.training_id ?? '__legacy_training__',
+            },
+            requiresLastSetVideo: false,
           }]
         : [];
+    const assignedTrainings = assignedTrainingLinks.map((link) => link.training);
     const allExercises = assignedTrainings.flatMap((training) => training.exercises);
 
     return {
@@ -138,6 +156,11 @@ export class ProgressService {
           exercise.exercise_id,
         ]),
       ),
+      trainingIdByTrainingExerciseId: new Map(
+        assignedTrainings.flatMap((training) =>
+          training.exercises.map((exercise) => [exercise.id, training.id] as const),
+        ),
+      ),
       trainingExerciseIdsByTrainingId: new Map(
         assignedTrainings.map((training) => [
           training.id,
@@ -149,6 +172,11 @@ export class ProgressService {
           training.id,
           new Set(training.exercises.map((exercise) => exercise.exercise_id)),
         ]),
+      ),
+      requiredTrainingExerciseIds: new Set(
+        assignedTrainingLinks
+          .filter((link) => link.requiresLastSetVideo)
+          .flatMap((link) => link.training.exercises.map((exercise) => exercise.id)),
       ),
       mealIds: new Set(dietMeals.map((meal) => meal.id)),
       mealGroupById: new Map(
@@ -294,6 +322,61 @@ export class ProgressService {
     return result;
   }
 
+  private async validateLastSetFeedback(
+    clientId: string,
+    date: Date,
+    trainingId: string,
+    trainingExerciseId: string,
+    clientUploadId?: string,
+  ): Promise<void> {
+    if (!clientUploadId) {
+      throw new UnprocessableEntityException({
+        code: 'LAST_SET_VIDEO_REQUIRED',
+        message: 'Debes adjuntar el vídeo de la última serie',
+      });
+    }
+    const feedback = await this.prisma.feedbackMedia.findUnique({
+      where: {
+        client_id_client_upload_id: {
+          client_id: clientId,
+          client_upload_id: clientUploadId,
+        },
+      },
+      select: {
+        feedback_kind: true,
+        assignment_date: true,
+        training_id: true,
+        training_exercise_id: true,
+        media_type: true,
+        media_url: true,
+      },
+    });
+    if (!feedback) {
+      throw new ConflictException({
+        code: 'LAST_SET_FEEDBACK_PENDING',
+        message: 'El vídeo de la última serie todavía se está sincronizando',
+      });
+    }
+    const matches =
+      feedback.feedback_kind === FeedbackKind.LAST_SET &&
+      feedback.media_type === MediaType.VIDEO &&
+      feedback.training_id === trainingId &&
+      feedback.training_exercise_id === trainingExerciseId &&
+      feedback.assignment_date?.getTime() === date.getTime() &&
+      Boolean(feedback.media_url) &&
+      (await this.uploadsService.isConsumedManagedUrl(
+        clientId,
+        feedback.media_url,
+        [ManagedUploadPurpose.FEEDBACK_VIDEO],
+      ));
+    if (!matches) {
+      throw new UnprocessableEntityException({
+        code: 'LAST_SET_FEEDBACK_INVALID',
+        message: 'El vídeo no corresponde a este cliente, fecha, entrenamiento y ejercicio',
+      });
+    }
+  }
+
   async markExerciseCompleted(clientId: string, dto: MarkExerciseDto) {
     if (dto.sets) {
       if (
@@ -326,29 +409,32 @@ export class ProgressService {
     ]
       .filter(([, exerciseId]) => exerciseId === dto.exercise_id)
       .map(([trainingExerciseId]) => trainingExerciseId);
-    const trainingExerciseId = requestedTrainingExerciseId
-      ? assignment.trainingExerciseIds.has(requestedTrainingExerciseId)
-        ? requestedTrainingExerciseId
-        : currentIdsForExercise.length === 1
-          ? currentIdsForExercise[0]
-          : undefined
-      : undefined;
-    // Training edits may recreate TrainingExercise rows while a client is
-    // already executing the workout. Keep the started result valid when the
-    // underlying exercise is still part of today's assigned training.
-    const exerciseId = requestedTrainingExerciseId
-      ? trainingExerciseId
-        ? assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)
-        : undefined
-      : dto.exercise_id;
-
-    if (
-      (requestedTrainingExerciseId && !exerciseId) ||
-      (!requestedTrainingExerciseId &&
-        !assignment.exerciseIds.has(dto.exercise_id))
-    ) {
+    if (!currentIdsForExercise.length) {
       throw new ForbiddenException(
         'Ese ejercicio no pertenece al entrenamiento asignado',
+      );
+    }
+    if (!requestedTrainingExerciseId && currentIdsForExercise.length !== 1) {
+      throw new UnprocessableEntityException({
+        code: 'TRAINING_EXERCISE_AMBIGUOUS',
+        message: 'training_exercise_id es obligatorio cuando un ejercicio se repite',
+      });
+    }
+    const trainingExerciseId = requestedTrainingExerciseId ?? currentIdsForExercise[0];
+    if (!currentIdsForExercise.includes(trainingExerciseId)) {
+      throw new ForbiddenException(
+        'La ocurrencia indicada no corresponde a ese ejercicio asignado',
+      );
+    }
+    const exerciseId = assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
+
+    if (assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
+      await this.validateLastSetFeedback(
+        clientId,
+        date,
+        assignment.trainingIdByTrainingExerciseId.get(trainingExerciseId)!,
+        trainingExerciseId,
+        dto.last_set_feedback_client_upload_id,
       );
     }
 
@@ -361,18 +447,19 @@ export class ProgressService {
       : [];
 
     const filtered = currentExercises.filter((entry) =>
-      trainingExerciseId
-        ? entry.training_exercise_id !== trainingExerciseId &&
-          !(!entry.training_exercise_id && entry.exercise_id === exerciseId)
-        : entry.exercise_id !== dto.exercise_id,
+      entry.training_exercise_id !== trainingExerciseId &&
+      !(!entry.training_exercise_id && entry.exercise_id === exerciseId),
     );
 
     filtered.push({
-      ...(trainingExerciseId && { training_exercise_id: trainingExerciseId }),
-      exercise_id: exerciseId!,
+      training_exercise_id: trainingExerciseId,
+      exercise_id: exerciseId,
       completed_at: new Date().toISOString(),
       ...(dto.weight_used !== undefined && { weight_used: dto.weight_used }),
       ...(dto.sets !== undefined && { sets: dto.sets }),
+      ...(dto.last_set_feedback_client_upload_id && {
+        last_set_feedback_client_upload_id: dto.last_set_feedback_client_upload_id,
+      }),
     });
 
     const trainingsCompleted = this.getCompletedTrainingIds(assignment, filtered);
@@ -443,6 +530,19 @@ export class ProgressService {
       throw new ForbiddenException('Ese entrenamiento no está asignado para esa fecha');
     }
     const targetExerciseIds = assignment.trainingExerciseIdsByTrainingId.get(targetTrainingId) ?? new Set<string>();
+    for (const trainingExerciseId of targetExerciseIds) {
+      if (!assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
+        continue;
+      }
+      const entry = currentByTrainingExercise.get(trainingExerciseId);
+      await this.validateLastSetFeedback(
+        clientId,
+        date,
+        targetTrainingId,
+        trainingExerciseId,
+        entry?.last_set_feedback_client_upload_id,
+      );
+    }
     const completedTargetExercises = [...targetExerciseIds].map(
       (trainingExerciseId) => {
         const exerciseId =
