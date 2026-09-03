@@ -34,12 +34,22 @@ export class CreateExerciseDto {
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
+  video_upload_id?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
   video_stream_id?: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @IsString()
   thumbnail_url?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsString()
+  thumbnail_upload_id?: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

@@ -161,9 +161,9 @@ export class ExercisesController {
   update(
     @Param('id') id: string,
     @Body() dto: UpdateExerciseDto,
-    @CurrentUser() _user: AuthenticatedUser,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.exercisesService.update(id, dto);
+    return this.exercisesService.update(id, dto, user.id);
   }
 
   @Delete(':id')

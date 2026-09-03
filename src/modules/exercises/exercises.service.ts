@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ManagedUploadPurpose, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
@@ -11,6 +11,7 @@ import {
   UpdateExerciseDto,
 } from './dto/create-exercise.dto';
 import { ExercisesQueryDto } from './dto/exercises-query.dto';
+import { UploadsService } from '../uploads/uploads.service';
 
 type ExerciseCatalogField = 'muscle_groups' | 'equipment';
 type ExerciseSortField =
@@ -31,7 +32,10 @@ function normalizeSearchText(value: string) {
 
 @Injectable()
 export class ExercisesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploadsService: UploadsService,
+  ) {}
 
   private collectUnique(values: string[][]): string[] {
     const unique = new Map<string, string>();
@@ -482,29 +486,83 @@ export class ExercisesService {
   }
 
   async create(dto: CreateExerciseDto, userId: string) {
-    return this.prisma.exercise.create({
-      data: {
+    const video = dto.video_upload_id || dto.video_url
+      ? await this.uploadsService.prepareForConsumption({
+          ownerId: userId,
+          uploadId: dto.video_upload_id,
+          legacyUrl: dto.video_url,
+          purposes: [ManagedUploadPurpose.EXERCISE_VIDEO],
+        })
+      : null;
+    const thumbnail = dto.thumbnail_upload_id || dto.thumbnail_url
+      ? await this.uploadsService.prepareForConsumption({
+          ownerId: userId,
+          uploadId: dto.thumbnail_upload_id,
+          legacyUrl: dto.thumbnail_url,
+          purposes: [ManagedUploadPurpose.EXERCISE_THUMBNAIL],
+        })
+      : null;
+    return this.prisma.$transaction(async (tx) => {
+      const exercise = await tx.exercise.create({
+        data: {
         name: dto.name,
         muscle_groups: this.normalizeCatalogValues(dto.muscle_groups),
         equipment: this.normalizeCatalogValues(dto.equipment),
         level: dto.level,
-        video_url: dto.video_url ?? null,
+        video_url: video?.file_url ?? null,
         video_stream_id: dto.video_stream_id ?? null,
-        thumbnail_url: dto.thumbnail_url ?? null,
+        thumbnail_url: thumbnail?.file_url ?? null,
         technique_text: dto.technique_text ?? null,
         common_errors_text: dto.common_errors_text ?? null,
         explanation_text: dto.explanation_text ?? null,
         created_by: userId,
-      },
+        },
+      });
+      if (video) {
+        await this.uploadsService.consumePrepared(tx, userId, video.id, [ManagedUploadPurpose.EXERCISE_VIDEO]);
+      }
+      if (thumbnail) {
+        await this.uploadsService.consumePrepared(tx, userId, thumbnail.id, [ManagedUploadPurpose.EXERCISE_THUMBNAIL]);
+      }
+      return exercise;
     });
   }
 
-  async update(id: string, dto: UpdateExerciseDto) {
-    await this.findOne(id);
+  async update(
+    id: string,
+    dto: UpdateExerciseDto,
+    userId?: string,
+    approvalRequestId?: string,
+  ) {
+    const existing = await this.findOne(id);
+    const shouldReplaceVideo = dto.video_upload_id ||
+      (dto.video_url !== undefined && dto.video_url !== null &&
+        !this.uploadsService.referencesSame(dto.video_url, existing.video_url));
+    const shouldReplaceThumbnail = dto.thumbnail_upload_id ||
+      (dto.thumbnail_url !== undefined && dto.thumbnail_url !== null &&
+        !this.uploadsService.referencesSame(dto.thumbnail_url, existing.thumbnail_url));
+    if ((shouldReplaceVideo || shouldReplaceThumbnail) && !userId) {
+      throw new BadRequestException('Falta el propietario de la subida gestionada');
+    }
+    const video = shouldReplaceVideo
+      ? await this.uploadsService.prepareForConsumption({
+          ownerId: userId!, uploadId: dto.video_upload_id, legacyUrl: dto.video_url,
+          purposes: [ManagedUploadPurpose.EXERCISE_VIDEO],
+          approvalRequestId,
+        })
+      : null;
+    const thumbnail = shouldReplaceThumbnail
+      ? await this.uploadsService.prepareForConsumption({
+          ownerId: userId!, uploadId: dto.thumbnail_upload_id, legacyUrl: dto.thumbnail_url,
+          purposes: [ManagedUploadPurpose.EXERCISE_THUMBNAIL],
+          approvalRequestId,
+        })
+      : null;
 
-    return this.prisma.exercise.update({
-      where: { id },
-      data: {
+    return this.prisma.$transaction(async (tx) => {
+      const exercise = await tx.exercise.update({
+        where: { id },
+        data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.muscle_groups !== undefined && {
           muscle_groups: this.normalizeCatalogValues(dto.muscle_groups),
@@ -513,13 +571,13 @@ export class ExercisesService {
           equipment: this.normalizeCatalogValues(dto.equipment),
         }),
         ...(dto.level !== undefined && { level: dto.level }),
-        ...(dto.video_url !== undefined && { video_url: dto.video_url }),
+        ...(dto.video_url === null && { video_url: null }),
+        ...(video && { video_url: video.file_url }),
         ...(dto.video_stream_id !== undefined && {
           video_stream_id: dto.video_stream_id,
         }),
-        ...(dto.thumbnail_url !== undefined && {
-          thumbnail_url: dto.thumbnail_url,
-        }),
+        ...(dto.thumbnail_url === null && { thumbnail_url: null }),
+        ...(thumbnail && { thumbnail_url: thumbnail.file_url }),
         ...(dto.technique_text !== undefined && {
           technique_text: dto.technique_text,
         }),
@@ -529,7 +587,11 @@ export class ExercisesService {
         ...(dto.explanation_text !== undefined && {
           explanation_text: dto.explanation_text,
         }),
-      },
+        },
+      });
+      if (video) await this.uploadsService.consumePrepared(tx, userId!, video.id, [ManagedUploadPurpose.EXERCISE_VIDEO], approvalRequestId);
+      if (thumbnail) await this.uploadsService.consumePrepared(tx, userId!, thumbnail.id, [ManagedUploadPurpose.EXERCISE_THUMBNAIL], approvalRequestId);
+      return exercise;
     });
   }
 
