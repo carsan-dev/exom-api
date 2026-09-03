@@ -3,9 +3,10 @@ import { ApprovalInterceptor } from '../../common/interceptors/approval.intercep
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ApprovalRequestsController } from './approval-requests.controller';
 import { ApprovalRequestsService } from './approval-requests.service';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, UploadsModule],
   controllers: [ApprovalRequestsController],
   providers: [ApprovalRequestsService, ApprovalInterceptor],
   exports: [ApprovalRequestsService, ApprovalInterceptor],

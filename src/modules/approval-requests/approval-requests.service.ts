@@ -25,6 +25,7 @@ import { IngredientsService } from '../ingredients/ingredients.service';
 import { MealsService } from '../meals/meals.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TrainingsService } from '../trainings/trainings.service';
+import { UploadsService } from '../uploads/uploads.service';
 import {
   APPROVAL_ACTION_LABELS,
   APPROVAL_RULES,
@@ -79,6 +80,7 @@ export class ApprovalRequestsService {
     private readonly prisma: PrismaService,
     private readonly moduleRef: ModuleRef,
     private readonly notificationsService: NotificationsService,
+    private readonly uploadsService: UploadsService,
   ) {}
 
   async requiresApproval(
@@ -144,15 +146,24 @@ export class ApprovalRequestsService {
     }
 
     try {
-      const approvalRequest = await this.prisma.approvalRequest.create({
-        data: {
-          requester_id: requesterId,
-          action_type: actionType,
-          resource_type: resourceType,
-          resource_id: resourceId ?? null,
-          payload: normalizedPayload,
-          request_reason: requestReason ?? null,
-        },
+      const approvalRequest = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.approvalRequest.create({
+          data: {
+            requester_id: requesterId,
+            action_type: actionType,
+            resource_type: resourceType,
+            resource_id: resourceId ?? null,
+            payload: normalizedPayload,
+            request_reason: requestReason ?? null,
+          },
+        });
+        await this.uploadsService.reserveForApproval(
+          tx,
+          requesterId,
+          created.id,
+          this.collectUploadIds(normalizedPayload),
+        );
+        return created;
       });
 
       await this.notifySuperAdminsOfNewRequest(approvalRequest);
@@ -356,6 +367,7 @@ export class ApprovalRequestsService {
     }
 
     if (dto.action === 'reject') {
+      await this.uploadsService.releaseApprovalUploads(id);
       const rejectedRequest = await this.getRequestOrThrow(id);
 
       await this.notificationsService.sendInternalNotifications(
@@ -441,6 +453,8 @@ export class ApprovalRequestsService {
         'La solicitud ya fue resuelta por otro administrador',
       );
     }
+
+    await this.uploadsService.releaseApprovalUploads(id);
 
     return { message: 'Solicitud cancelada correctamente' };
   }
@@ -659,6 +673,30 @@ export class ApprovalRequestsService {
   private normalizePayload(payload: unknown): Prisma.InputJsonValue {
     const safePayload = payload ?? {};
     return JSON.parse(JSON.stringify(safePayload)) as Prisma.InputJsonValue;
+  }
+
+  private collectUploadIds(payload: unknown): string[] {
+    const ids = new Set<string>();
+    const visit = (value: unknown) => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      for (const [key, item] of Object.entries(value)) {
+        if (
+          (key === 'upload_id' || key.endsWith('_upload_id')) &&
+          typeof item === 'string' &&
+          item.trim()
+        ) {
+          ids.add(item);
+        } else {
+          visit(item);
+        }
+      }
+    };
+    visit(payload);
+    return [...ids];
   }
 
   private getActionLabel(actionType: string) {
@@ -1085,6 +1123,8 @@ export class ApprovalRequestsService {
         return this.getService(DietsService).update(
           approvalRequest.resource_id!,
           payload,
+          approvalRequest.requester_id,
+          approvalRequest.id,
         );
       case 'diet.delete':
         return this.getService(DietsService).remove(approvalRequest.resource_id!);
@@ -1092,6 +1132,8 @@ export class ApprovalRequestsService {
         return this.getService(ExercisesService).update(
           approvalRequest.resource_id!,
           payload,
+          approvalRequest.requester_id,
+          approvalRequest.id,
         );
       case 'exercise.delete':
         return this.getService(ExercisesService).remove(approvalRequest.resource_id!);
@@ -1107,11 +1149,15 @@ export class ApprovalRequestsService {
       case 'meal.create':
         return this.getService(MealsService).createFromApproval(
           payload as unknown as Parameters<MealsService['createFromBody']>[0],
+          approvalRequest.requester_id,
+          approvalRequest.id,
         );
       case 'meal.update':
         return this.getService(MealsService).updateFromApproval(
           approvalRequest.resource_id!,
           payload as unknown as Parameters<MealsService['updateFromDto']>[1],
+          approvalRequest.requester_id,
+          approvalRequest.id,
         );
       case 'meal.delete':
         return this.getService(MealsService).removeFromApproval(

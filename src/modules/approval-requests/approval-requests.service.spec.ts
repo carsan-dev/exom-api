@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MealsService } from '../meals/meals.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TrainingsService } from '../trainings/trainings.service';
+import { UploadsService } from '../uploads/uploads.service';
 import { ApprovalRequestsService } from './approval-requests.service';
 import { ApprovalRequestsQueryDto } from './dto/approval-requests-query.dto';
 
@@ -52,11 +53,16 @@ describe('ApprovalRequestsService', () => {
       count: jest.Mock;
     };
     $queryRaw: jest.Mock;
+    $transaction: jest.Mock;
     user: { findMany: jest.Mock };
     adminClientAssignment: { findMany: jest.Mock };
   };
   let moduleRef: { get: jest.Mock };
   let notificationsService: { sendInternalNotifications: jest.Mock };
+  let uploadsService: {
+    reserveForApproval: jest.Mock;
+    releaseApprovalUploads: jest.Mock;
+  };
 
   const adminUser = {
     id: 'admin-1',
@@ -78,17 +84,24 @@ describe('ApprovalRequestsService', () => {
         count: jest.fn(),
       },
       $queryRaw: jest.fn(),
+      $transaction: jest.fn(),
       user: { findMany: jest.fn() },
       adminClientAssignment: { findMany: jest.fn() },
     };
 
     moduleRef = { get: jest.fn() };
     notificationsService = { sendInternalNotifications: jest.fn() };
+    uploadsService = {
+      reserveForApproval: jest.fn(),
+      releaseApprovalUploads: jest.fn(),
+    };
+    prisma.$transaction.mockImplementation((callback) => callback(prisma));
 
     service = new ApprovalRequestsService(
       prisma as unknown as PrismaService,
       moduleRef as unknown as ModuleRef,
       notificationsService as unknown as NotificationsService,
+      uploadsService as unknown as UploadsService,
     );
   });
 
@@ -319,6 +332,39 @@ describe('ApprovalRequestsService', () => {
     );
   });
 
+  it('reserves every nested managed upload in the creation transaction', async () => {
+    const createdRequest = createApprovalRequest({
+      requester: undefined,
+      reviewer: undefined,
+    });
+    prisma.approvalRequest.findFirst.mockResolvedValue(null);
+    prisma.approvalRequest.create.mockResolvedValue(createdRequest);
+    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest());
+    prisma.user.findMany.mockResolvedValue([]);
+
+    await service.createRequest(
+      'admin-1',
+      'diet.update',
+      'diet',
+      'diet-1',
+      {
+        image_upload_id: 'upload-1',
+        meals: [
+          { upload_id: 'upload-2' },
+          { variants: [{ image_upload_id: 'upload-1' }] },
+        ],
+      },
+    );
+
+    expect(uploadsService.reserveForApproval).toHaveBeenCalledWith(
+      prisma,
+      'admin-1',
+      'approval-1',
+      ['upload-1', 'upload-2'],
+    );
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it('returns a business-safe detail for admins', async () => {
     prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest({
       payload: { name: 'Entrenamiento ajustado', notes: 'solo visible en payload tecnico' },
@@ -468,6 +514,9 @@ describe('ApprovalRequestsService', () => {
       'Tu solicitud para eliminar entrenamiento fue rechazada: No cumple con la política interna',
       { route: '/approval-requests', type: 'approval_rejected' },
     );
+    expect(uploadsService.releaseApprovalUploads).toHaveBeenCalledWith(
+      'approval-1',
+    );
   });
 
   it('prevents concurrent resolutions with an atomic update', async () => {
@@ -518,6 +567,7 @@ describe('ApprovalRequestsService', () => {
       'La acción aprobada para eliminar entrenamiento no pudo ejecutarse: Training not found',
       { route: '/approval-requests', type: 'approval_failed' },
     );
+    expect(uploadsService.releaseApprovalUploads).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -526,14 +576,23 @@ describe('ApprovalRequestsService', () => {
       resourceId: null,
       payload: { diet_id: 'diet-1', name: 'Nueva comida', ingredients: [] },
       methodName: 'createFromApproval',
-      expectedArgs: [{ diet_id: 'diet-1', name: 'Nueva comida', ingredients: [] }],
+      expectedArgs: [
+        { diet_id: 'diet-1', name: 'Nueva comida', ingredients: [] },
+        'admin-1',
+        'approval-1',
+      ],
     },
     {
       actionType: 'meal.update',
       resourceId: 'meal-1',
       payload: { name: 'Comida ajustada' },
       methodName: 'updateFromApproval',
-      expectedArgs: ['meal-1', { name: 'Comida ajustada' }],
+      expectedArgs: [
+        'meal-1',
+        { name: 'Comida ajustada' },
+        'admin-1',
+        'approval-1',
+      ],
     },
     {
       actionType: 'meal.delete',
