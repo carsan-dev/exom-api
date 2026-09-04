@@ -453,4 +453,80 @@ describe('TrainingsService', () => {
       },
     );
   });
+
+  it('does not mark replacement trainings complete from historical progress', async () => {
+    const createTraining = (
+      id: string,
+      trainingExerciseId: string,
+      exerciseId: string,
+    ) => ({
+      id,
+      name: id,
+      type: 'FUERZA',
+      types: ['FUERZA'],
+      accentColor: null,
+      is_active: true,
+      blocks: [],
+      exercises: [
+        {
+          id: trainingExerciseId,
+          exercise_id: exerciseId,
+          order: 0,
+          block_id: null,
+          exercise: { id: exerciseId },
+        },
+      ],
+    });
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      trainings: [
+        {
+          id: 'assignment-training-new-1',
+          requires_last_set_video: false,
+          training: createTraining(
+            'training-new-1',
+            'training-exercise-new-1',
+            'exercise-new-1',
+          ),
+        },
+        {
+          id: 'assignment-training-new-2',
+          requires_last_set_video: false,
+          training: createTraining(
+            'training-new-2',
+            'training-exercise-new-2',
+            'exercise-new-2',
+          ),
+        },
+      ],
+      training: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      training_completed: true,
+      trainings_completed: ['training-old'],
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-old',
+          exercise_id: 'exercise-old',
+        },
+      ],
+    });
+
+    const result = await service.findDay(
+      'client-1',
+      new Date('2026-09-03T00:00:00.000Z'),
+    );
+
+    expect(result).toMatchObject({
+      training_completed: false,
+      trainings: [
+        { id: 'training-new-1', completed: false },
+        { id: 'training-new-2', completed: false },
+      ],
+    });
+    expect(prisma.dayProgress.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ exercises_completed: true }),
+      }),
+    );
+  });
 });

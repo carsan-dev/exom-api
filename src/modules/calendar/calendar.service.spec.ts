@@ -61,4 +61,64 @@ describe('CalendarService', () => {
     );
     expect(summary).toMatchObject({ total_meals: 1, meals_completed: 1 });
   });
+
+  it('does not show replacement trainings as completed from historical ids', async () => {
+    prisma.planAssignment.findMany.mockResolvedValue([
+      {
+        client_id: 'client-1',
+        date: new Date('2026-06-10T00:00:00.000Z'),
+        training_id: null,
+        diet_id: null,
+        is_rest_day: false,
+        trainings: [
+          { training_id: 'training-new-1' },
+          { training_id: 'training-new-2' },
+        ],
+        diet: null,
+      },
+    ]);
+    prisma.dayProgress.findMany.mockResolvedValue([
+      {
+        client_id: 'client-1',
+        date: new Date('2026-06-10T00:00:00.000Z'),
+        training_completed: true,
+        trainings_completed: ['training-old-1', 'training-old-2'],
+        meals_completed: [],
+      },
+    ]);
+
+    const days = await service.getMonthCalendar('client-1', 2026, 6);
+
+    expect(days[9]).toMatchObject({
+      has_training: true,
+      training_completed: false,
+    });
+  });
+
+  it('keeps legacy single-training completion compatibility', async () => {
+    prisma.planAssignment.findMany.mockResolvedValue([
+      {
+        client_id: 'client-1',
+        date: new Date('2026-06-10T00:00:00.000Z'),
+        training_id: null,
+        diet_id: null,
+        is_rest_day: false,
+        trainings: [{ training_id: 'training-1' }],
+        diet: null,
+      },
+    ]);
+    prisma.dayProgress.findMany.mockResolvedValue([
+      {
+        client_id: 'client-1',
+        date: new Date('2026-06-10T00:00:00.000Z'),
+        training_completed: true,
+        trainings_completed: [],
+        meals_completed: [],
+      },
+    ]);
+
+    const days = await service.getMonthCalendar('client-1', 2026, 6);
+
+    expect(days[9].training_completed).toBe(true);
+  });
 });

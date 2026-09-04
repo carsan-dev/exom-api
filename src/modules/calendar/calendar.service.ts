@@ -87,13 +87,26 @@ export class CalendarService {
       const assignedMealsCount = assignedMeals.filter(
         (meal) => meal.parent_meal_id === null,
       ).length;
+      const assignedTrainingIds = assignment?.trainings?.map(
+        (link) => link.training_id,
+      ) ?? [];
+      const currentTrainingCompleted = assignedTrainingIds.length > 0
+        ? assignedTrainingIds.every((id) =>
+              progress?.trainings_completed.includes(id),
+            ) ||
+            Boolean(
+              assignedTrainingIds.length === 1 &&
+                progress?.training_completed &&
+                progress.trainings_completed.length === 0,
+            )
+        : Boolean(assignment?.training_id && progress?.training_completed);
 
       days.push({
         date: dateStr,
         has_training: Boolean(assignment && ((assignment.trainings?.length ?? 0) > 0 || assignment.training_id)),
         has_diet: !!assignment?.diet_id,
         is_rest_day: assignment?.is_rest_day ?? false,
-        training_completed: progress?.training_completed ?? false,
+        training_completed: currentTrainingCompleted,
         diet_completed:
           assignedMealsCount > 0 && mealsCompletedCount >= assignedMealsCount,
       });

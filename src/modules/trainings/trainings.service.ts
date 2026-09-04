@@ -1148,7 +1148,11 @@ export class TrainingsService {
 
     const progress = await this.prisma.dayProgress.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },
-      select: { training_completed: true, trainings_completed: true },
+      select: {
+        training_completed: true,
+        trainings_completed: true,
+        exercises_completed: true,
+      },
     });
     const assignedTrainingLinks = assignment?.trainings.length
       ? assignment.trainings.map((link) => ({
@@ -1156,24 +1160,80 @@ export class TrainingsService {
           assignmentTrainingId: link.id,
           requiresLastSetVideo: link.requires_last_set_video,
         }))
-      : assignment?.training?.is_active ? [{
-          training: assignment.training,
-          assignmentTrainingId: null,
-          requiresLastSetVideo: false,
-        }] : [];
-    const assignedTrainings = assignedTrainingLinks.map((link) => link.training);
+      : assignment?.training?.is_active
+        ? [
+            {
+              training: assignment.training,
+              assignmentTrainingId: null,
+              requiresLastSetVideo: false,
+            },
+          ]
+        : [];
+    const assignedTrainings = assignedTrainingLinks.map(
+      (link) => link.training,
+    );
     const completedIds = new Set(progress?.trainings_completed ?? []);
-    return {
-      date: target.toISOString().split('T')[0],
-      training_completed: progress?.training_completed ?? false,
-      trainings: assignedTrainingLinks.map(({ training, assignmentTrainingId, requiresLastSetVideo }) => ({
+    const completedEntries = Array.isArray(progress?.exercises_completed)
+      ? (progress.exercises_completed as Array<{
+          training_exercise_id?: string;
+          exercise_id?: string;
+        }>)
+      : [];
+    const completedTrainingExerciseIds = new Set(
+      completedEntries
+        .map((entry) => entry.training_exercise_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const legacyExerciseCounts = new Map<string, number>();
+    for (const entry of completedEntries) {
+      if (entry.training_exercise_id || !entry.exercise_id) continue;
+      legacyExerciseCounts.set(
+        entry.exercise_id,
+        (legacyExerciseCounts.get(entry.exercise_id) ?? 0) + 1,
+      );
+    }
+    const currentCompletedTrainingExerciseIds = new Set<string>();
+    for (const training of assignedTrainings) {
+      for (const exercise of training.exercises) {
+        if (completedTrainingExerciseIds.has(exercise.id)) {
+          currentCompletedTrainingExerciseIds.add(exercise.id);
+          continue;
+        }
+        const legacyCount = legacyExerciseCounts.get(exercise.exercise_id) ?? 0;
+        if (legacyCount === 0) continue;
+        currentCompletedTrainingExerciseIds.add(exercise.id);
+        if (legacyCount === 1)
+          legacyExerciseCounts.delete(exercise.exercise_id);
+        else legacyExerciseCounts.set(exercise.exercise_id, legacyCount - 1);
+      }
+    }
+    const legacyDayCompletion = Boolean(
+      assignedTrainings.length === 1 &&
+      progress?.training_completed &&
+      completedIds.size === 0 &&
+      completedEntries.length === 0,
+    );
+    const serializedTrainings = assignedTrainingLinks.map(
+      ({ training, assignmentTrainingId, requiresLastSetVideo }) => ({
         ...this.serializeTraining(training),
         assignment_training_id: assignmentTrainingId,
         assignment_date: target.toISOString().split('T')[0],
         requires_last_set_video: requiresLastSetVideo,
-        completed: completedIds.has(training.id) ||
-          Boolean(progress?.training_completed && assignedTrainings.length === 1),
-      })),
+        completed:
+          completedIds.has(training.id) ||
+          (training.exercises.length > 0 &&
+            training.exercises.every((exercise) =>
+              currentCompletedTrainingExerciseIds.has(exercise.id),
+            )) ||
+          legacyDayCompletion,
+      }),
+    );
+    return {
+      date: target.toISOString().split('T')[0],
+      training_completed:
+        serializedTrainings.length > 0 &&
+        serializedTrainings.every((training) => training.completed),
+      trainings: serializedTrainings,
     };
   }
 
