@@ -1,5 +1,6 @@
 import { LastSetVideoPolicy } from '@prisma/client';
 import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
+import { ASSIGNMENT_TRANSACTION_OPTIONS } from './assignment-planning-lock';
 
 describe('AutoAssignmentMaterializerService', () => {
   const prisma = {
@@ -34,7 +35,7 @@ describe('AutoAssignmentMaterializerService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.setSystemTime(new Date('2026-07-01T12:00:00.000Z'));
-    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([{ id: 'client-1' }]);
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => unknown) => callback(prisma),
     );
@@ -86,6 +87,10 @@ describe('AutoAssignmentMaterializerService', () => {
       dates,
     });
 
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      ASSIGNMENT_TRANSACTION_OPTIONS,
+    );
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.autoAssignmentRule.findMany.mock.invocationCallOrder[0],
@@ -320,6 +325,92 @@ describe('AutoAssignmentMaterializerService', () => {
       data: { training_id: 'training-new' },
     });
   });
+
+  it.each([
+    {
+      kind: 'one completed training',
+      progress: {
+        training_completed: false,
+        trainings_completed: ['training-old'],
+        exercises_completed: [],
+        meals_completed: [],
+        notes: null,
+      },
+    },
+    {
+      kind: 'one completed exercise',
+      progress: {
+        training_completed: false,
+        trainings_completed: [],
+        exercises_completed: [{ exercise_id: 'exercise-1' }],
+        meals_completed: [],
+        notes: null,
+      },
+    },
+    {
+      kind: 'one completed meal',
+      progress: {
+        training_completed: false,
+        trainings_completed: [],
+        exercises_completed: [],
+        meals_completed: ['meal-1'],
+        notes: null,
+      },
+    },
+    {
+      kind: 'a client note',
+      progress: {
+        training_completed: false,
+        trainings_completed: [],
+        exercises_completed: [],
+        meals_completed: [],
+        notes: 'Sesión iniciada',
+      },
+    },
+  ])(
+    'preserves an automatic assignment today after $kind',
+    async ({ progress }) => {
+      prisma.autoAssignmentRule.findMany.mockResolvedValue([
+        {
+          id: 'rule-1',
+          admin_id: 'admin-1',
+          starts_on: new Date('2026-07-01T00:00:00.000Z'),
+          ends_on: null,
+          days: [
+            {
+              weekday: 3,
+              training_id: 'training-new',
+              diet_id: null,
+              is_rest_day: false,
+              trainings: [],
+            },
+          ],
+        },
+      ]);
+      prisma.planAssignment.findMany.mockResolvedValue([
+        {
+          id: 'today-auto',
+          admin_id: 'admin-1',
+          date: new Date('2026-07-01T00:00:00.000Z'),
+          training_id: 'training-old',
+          diet_id: null,
+          is_rest_day: false,
+          auto_assignment_rule_id: 'rule-1',
+          trainings: [],
+        },
+      ]);
+      prisma.dayProgress.findUnique.mockResolvedValue(progress);
+
+      await service.reconcile('client-1', {
+        start: new Date('2026-07-01T00:00:00.000Z'),
+        end: new Date('2026-07-01T00:00:00.000Z'),
+        dates: [new Date('2026-07-01T00:00:00.000Z')],
+      });
+
+      expect(prisma.planAssignment.update).not.toHaveBeenCalled();
+      expect(prisma.planAssignment.delete).not.toHaveBeenCalled();
+    },
+  );
 
   it('removes future automatic assignments after their rule is deactivated', async () => {
     prisma.autoAssignmentRule.findMany.mockResolvedValue([]);

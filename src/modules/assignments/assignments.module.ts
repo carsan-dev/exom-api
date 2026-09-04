@@ -2,13 +2,11 @@ import { Module } from '@nestjs/common';
 import { AssignmentsController } from './assignments.controller';
 import { AssignmentsService } from './assignments.service';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { AutoAssignmentMaterializerService } from './auto-assignment-materializer.service';
-import { LastSetVideoPolicyService } from './last-set-video-policy.service';
+import { AssignmentReconciliationModule } from './assignment-reconciliation.module';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, AssignmentReconciliationModule],
   controllers: [AssignmentsController],
-  providers: [AssignmentsService, AutoAssignmentMaterializerService, LastSetVideoPolicyService],
-  exports: [AutoAssignmentMaterializerService, LastSetVideoPolicyService],
+  providers: [AssignmentsService],
 })
 export class AssignmentsModule {}

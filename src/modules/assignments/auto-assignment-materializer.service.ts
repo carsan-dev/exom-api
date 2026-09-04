@@ -6,7 +6,10 @@ import {
   LastSetVideoPolicyService,
   type AssignmentTransaction,
 } from './last-set-video-policy.service';
-import { lockAssignmentPlanning } from './assignment-planning-lock';
+import {
+  ASSIGNMENT_TRANSACTION_OPTIONS,
+  lockAssignmentPlanning,
+} from './assignment-planning-lock';
 
 export interface AutoAssignmentRange {
   start: Date;
@@ -40,7 +43,7 @@ export class AutoAssignmentMaterializerService {
     await this.prisma.$transaction(async (tx) => {
       await lockAssignmentPlanning(tx, clientId);
       await this.reconcileRange(tx, clientId, range);
-    });
+    }, ASSIGNMENT_TRANSACTION_OPTIONS);
   }
 
   async reconcileMaterialized(
@@ -129,7 +132,13 @@ export class AutoAssignmentMaterializerService {
         mutableDates.some((date) => date.getTime() === today.getTime())
           ? db.dayProgress.findUnique({
               where: { client_id_date: { client_id: clientId, date: today } },
-              select: { training_completed: true },
+              select: {
+                training_completed: true,
+                trainings_completed: true,
+                exercises_completed: true,
+                meals_completed: true,
+                notes: true,
+              },
             })
           : Promise.resolve(null),
       ],
@@ -145,7 +154,7 @@ export class AutoAssignmentMaterializerService {
     for (const date of mutableDates) {
       if (
         date.getTime() === today.getTime() &&
-        todayProgress?.training_completed
+        this.hasRecordedProgress(todayProgress)
       ) {
         continue;
       }
@@ -299,6 +308,26 @@ export class AutoAssignmentMaterializerService {
     const now = new Date();
     return new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+  }
+
+  private hasRecordedProgress(
+    progress: {
+      training_completed: boolean;
+      trainings_completed?: string[];
+      exercises_completed?: unknown;
+      meals_completed?: string[];
+      notes?: string | null;
+    } | null,
+  ): boolean {
+    if (!progress) return false;
+    return (
+      progress.training_completed ||
+      (progress.trainings_completed?.length ?? 0) > 0 ||
+      (Array.isArray(progress.exercises_completed) &&
+        progress.exercises_completed.length > 0) ||
+      (progress.meals_completed?.length ?? 0) > 0 ||
+      Boolean(progress.notes?.trim())
     );
   }
 
