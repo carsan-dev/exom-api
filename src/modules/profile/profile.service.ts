@@ -156,14 +156,7 @@ export class ProfileService {
       ...user.managedUploads.map((upload) => `r2://${upload.object_key}`),
     ].filter((url): url is string => !!url);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.planAssignment.deleteMany({ where: { client_id: userId } });
-      await tx.planAssignment.updateMany({
-        where: { admin_id: userId },
-        data: { admin_id: null },
-      });
-      await tx.user.delete({ where: { id: userId } });
-    });
+    await this.prisma.user.delete({ where: { id: userId } });
 
     await Promise.allSettled(
       mediaUrls.map((url) =>

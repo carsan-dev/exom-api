@@ -169,6 +169,10 @@ model User {
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   approvalRequestsMade     ApprovalRequest[] @relation("ApprovalRequester")
   approvalRequestsReviewed ApprovalRequest[] @relation("ApprovalReviewer")
+  planAssignmentsAsClient PlanAssignment[] @relation("PlanAssignmentClient")
+  planAssignmentsAsAdmin  PlanAssignment[] @relation("PlanAssignmentAdmin")
+  autoAssignmentRulesAsClient AutoAssignmentRule[] @relation("AutoAssignmentRuleClient")
+  autoAssignmentRulesAsAdmin  AutoAssignmentRule[] @relation("AutoAssignmentRuleAdmin")
 
   @@map("users")
 }
@@ -546,8 +550,11 @@ model PlanAssignment {
   trainings PlanAssignmentTraining[]
   diet     Diet?     @relation(fields: [diet_id], references: [id], onDelete: SetNull)
   autoAssignmentRule AutoAssignmentRule? @relation(fields: [auto_assignment_rule_id], references: [id], onDelete: SetNull)
+  client   User @relation("PlanAssignmentClient", fields: [client_id], references: [id], onDelete: Cascade)
+  admin    User? @relation("PlanAssignmentAdmin", fields: [admin_id], references: [id], onDelete: SetNull)
 
   @@unique([client_id, date])
+  @@index([admin_id])
   @@index([auto_assignment_rule_id])
   @@map("plan_assignments")
 }
@@ -583,8 +590,11 @@ model AutoAssignmentRule {
 
   days        AutoAssignmentRuleDay[]
   assignments PlanAssignment[]
+  client      User  @relation("AutoAssignmentRuleClient", fields: [client_id], references: [id], onDelete: Cascade)
+  admin       User? @relation("AutoAssignmentRuleAdmin", fields: [admin_id], references: [id], onDelete: SetNull)
 
   @@index([client_id, is_active, starts_on, ends_on])
+  @@index([admin_id])
   @@map("auto_assignment_rules")
 }
 
