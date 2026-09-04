@@ -20,6 +20,7 @@ import { DietsQueryDto } from './dto/diets-query.dto';
 import { reconcileMealProgress } from '../../common/progress/plan-progress-reconciliation';
 import { UploadsService } from '../uploads/uploads.service';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
+import { lockClientsDayProgress } from '../../common/progress/day-progress-lock';
 
 type DietSortField = 'name' | 'updated_at' | 'created_at';
 const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
@@ -1049,6 +1050,11 @@ export class DietsService {
       }),
     ]);
     if (!assignments.length) return;
+
+    await lockClientsDayProgress(
+      tx,
+      assignments.map((assignment) => assignment.client_id),
+    );
 
     const progresses = await tx.dayProgress.findMany({
       where: { OR: assignments.map(({ client_id, date }) => ({ client_id, date })) },

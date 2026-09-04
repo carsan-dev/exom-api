@@ -15,6 +15,7 @@ import {
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
+import { lockClientsDayProgress } from '../../common/progress/day-progress-lock';
 
 type TrainingSortField =
   | 'name'
@@ -578,6 +579,11 @@ export class TrainingsService {
       }),
     ]);
     if (!assignments.length) return;
+
+    await lockClientsDayProgress(
+      tx,
+      assignments.map((assignment) => assignment.client_id),
+    );
 
     const progresses = await tx.dayProgress.findMany({
       where: {

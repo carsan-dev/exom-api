@@ -29,6 +29,7 @@ import {
   ASSIGNMENT_TRANSACTION_OPTIONS,
   lockAssignmentPlanning,
 } from './assignment-planning-lock';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 
 type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
@@ -601,72 +602,113 @@ export class AssignmentsService {
   }
 
   private async reconcileProgressForDate(clientId: string, date: Date) {
-    if (!(this.prisma as unknown as { dayProgress?: { findUnique?: unknown } }).dayProgress?.findUnique) {
+    if (
+      !(this.prisma as unknown as { dayProgress?: { findUnique?: unknown } })
+        .dayProgress?.findUnique
+    ) {
       return;
     }
-    const [assignment, progress] = await Promise.all([
-      this.prisma.planAssignment.findUnique({
+    return this.prisma.$transaction(async (tx) => {
+      await lockClientDayProgress(tx, clientId);
+      const assignment = await tx.planAssignment.findUnique({
         where: { client_id_date: { client_id: clientId, date } },
         include: {
           trainings: {
             orderBy: { position: 'asc' },
             include: {
-              training: { select: { id: true, exercises: { select: { id: true, exercise_id: true } } } },
+              training: {
+                select: {
+                  id: true,
+                  exercises: { select: { id: true, exercise_id: true } },
+                },
+              },
             },
           },
-          training: { select: { id: true, exercises: { select: { id: true, exercise_id: true } } } },
+          training: {
+            select: {
+              id: true,
+              exercises: { select: { id: true, exercise_id: true } },
+            },
+          },
         },
-      }),
-      this.prisma.dayProgress.findUnique({
+      });
+      const progress = await tx.dayProgress.findUnique({
         where: { client_id_date: { client_id: clientId, date } },
-      }),
-    ]);
-    if (!progress) return;
+      });
+      if (!progress) return;
 
-    // Assignments may change after a client has trained. Completed progress is
-    // historical evidence: never rewrite it to match the latest assignment.
-    if (progress.training_completed) return;
+      // Assignments may change after a client has trained. Completed progress is
+      // historical evidence: never rewrite it to match the latest assignment.
+      if (progress.training_completed) return;
 
-    const trainings = assignment?.trainings.length
-      ? assignment.trainings.map((link) => link.training)
-      : assignment?.training ? [assignment.training] : [];
-    const validTrainingExerciseIds = new Set(
-      trainings.flatMap((training) => training.exercises.map((exercise) => exercise.id)),
-    );
-    const validExerciseIds = new Set(
-      trainings.flatMap((training) => training.exercises.map((exercise) => exercise.exercise_id)),
-    );
-    const entries = Array.isArray(progress.exercises_completed)
-      ? progress.exercises_completed as Array<{ training_exercise_id?: string; exercise_id?: string }>
-      : [];
-    const matchingEntries = entries.filter((entry) => entry.training_exercise_id
-      ? validTrainingExerciseIds.has(entry.training_exercise_id)
-      : Boolean(entry.exercise_id && validExerciseIds.has(entry.exercise_id)));
-    const completedTrainingExerciseIds = new Set(
-      matchingEntries.map((entry) => entry.training_exercise_id).filter((id): id is string => Boolean(id)),
-    );
-    const completedExerciseIds = new Set(
-      matchingEntries.map((entry) => entry.exercise_id).filter((id): id is string => Boolean(id)),
-    );
-    const newlyCompletedTrainingIds = trainings
-      .filter((training) => training.exercises.length > 0 && training.exercises.every((exercise) =>
-        completedTrainingExerciseIds.has(exercise.id) || completedExerciseIds.has(exercise.exercise_id),
-      ))
-      .map((training) => training.id);
-    const trainingsCompleted = [...new Set([
-      ...progress.trainings_completed,
-      ...newlyCompletedTrainingIds,
-    ])];
-
-    await this.prisma.dayProgress.update({
-      where: { id: progress.id },
-      data: {
-        trainings_completed: trainingsCompleted,
-        training_completed: trainings.length > 0 && trainings.every((training) =>
-          trainingsCompleted.includes(training.id),
+      const trainings = assignment?.trainings.length
+        ? assignment.trainings.map((link) => link.training)
+        : assignment?.training
+          ? [assignment.training]
+          : [];
+      const validTrainingExerciseIds = new Set(
+        trainings.flatMap((training) =>
+          training.exercises.map((exercise) => exercise.id),
         ),
-      },
-    });
+      );
+      const validExerciseIds = new Set(
+        trainings.flatMap((training) =>
+          training.exercises.map((exercise) => exercise.exercise_id),
+        ),
+      );
+      const entries = Array.isArray(progress.exercises_completed)
+        ? (progress.exercises_completed as Array<{
+            training_exercise_id?: string;
+            exercise_id?: string;
+          }>)
+        : [];
+      const matchingEntries = entries.filter((entry) =>
+        entry.training_exercise_id
+          ? validTrainingExerciseIds.has(entry.training_exercise_id)
+          : Boolean(
+              entry.exercise_id && validExerciseIds.has(entry.exercise_id),
+            ),
+      );
+      const completedTrainingExerciseIds = new Set(
+        matchingEntries
+          .map((entry) => entry.training_exercise_id)
+          .filter((id): id is string => Boolean(id)),
+      );
+      const completedExerciseIds = new Set(
+        matchingEntries
+          .map((entry) => entry.exercise_id)
+          .filter((id): id is string => Boolean(id)),
+      );
+      const newlyCompletedTrainingIds = trainings
+        .filter(
+          (training) =>
+            training.exercises.length > 0 &&
+            training.exercises.every(
+              (exercise) =>
+                completedTrainingExerciseIds.has(exercise.id) ||
+                completedExerciseIds.has(exercise.exercise_id),
+            ),
+        )
+        .map((training) => training.id);
+      const trainingsCompleted = [
+        ...new Set([
+          ...progress.trainings_completed,
+          ...newlyCompletedTrainingIds,
+        ]),
+      ];
+
+      await tx.dayProgress.update({
+        where: { id: progress.id },
+        data: {
+          trainings_completed: trainingsCompleted,
+          training_completed:
+            trainings.length > 0 &&
+            trainings.every((training) =>
+              trainingsCompleted.includes(training.id),
+            ),
+        },
+      });
+    }, ASSIGNMENT_TRANSACTION_OPTIONS);
   }
 
   private serializeAssignment(assignment: AssignmentRecord) {
