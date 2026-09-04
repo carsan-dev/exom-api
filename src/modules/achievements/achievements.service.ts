@@ -457,9 +457,15 @@ export class AchievementsService {
       where: {
         client_id: userId,
         date: { in: completedTrainingDates },
-        training_id: { not: null },
+        OR: [{ trainings: { some: {} } }, { training_id: { not: null } }],
       },
       select: {
+        trainings: {
+          orderBy: { position: 'asc' },
+          select: {
+            training: { select: { type: true, types: true } },
+          },
+        },
         training: {
           select: { type: true, types: true },
         },
@@ -468,9 +474,18 @@ export class AchievementsService {
 
     return assignments.reduce<Record<string, number>>(
       (accumulator, assignment) => {
-        const trainingTypes = assignment.training
-          ? this.resolveTrainingTypes(assignment.training)
-          : [];
+        const assignedTrainings = assignment.trainings?.length
+          ? assignment.trainings.map((link) => link.training)
+          : assignment.training
+            ? [assignment.training]
+            : [];
+        const trainingTypes = [
+          ...new Set(
+            assignedTrainings.flatMap((training) =>
+              this.resolveTrainingTypes(training),
+            ),
+          ),
+        ];
 
         if (trainingTypes.length === 0) {
           return accumulator;

@@ -7,6 +7,7 @@ import {
   NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY,
   type NotificationTemplateKey,
 } from './notification-templates.constants';
+import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 const TZ = 'Europe/Madrid';
 const mealReminderSlots = [
@@ -24,7 +25,36 @@ export class NotificationsSchedulerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
   ) {}
+
+  private async reconcileDateForClients(
+    clientIds: Iterable<string>,
+    date: Date,
+  ): Promise<void> {
+    const pending = [...new Set(clientIds)];
+    let index = 0;
+    const workers = Array.from(
+      { length: Math.min(8, pending.length) },
+      async () => {
+        while (index < pending.length) {
+          const clientId = pending[index++];
+          try {
+            await this.autoAssignmentMaterializer.reconcile(clientId, {
+              start: date,
+              end: date,
+              dates: [date],
+            });
+          } catch (error: unknown) {
+            this.logger.warn(
+              `No se pudo reconciliar planificación de ${clientId}: ${String(error)}`,
+            );
+          }
+        }
+      },
+    );
+    await Promise.all(workers);
+  }
 
   private todayUtcDate(): Date {
     const now = new Date();
@@ -200,11 +230,12 @@ export class NotificationsSchedulerService {
     const todayKey = this.formatDate(today);
     const active = await this.activeClientIds();
     if (active.size === 0) return;
+    await this.reconcileDateForClients(active, today);
 
     const assignments = await this.prisma.planAssignment.findMany({
       where: {
         date: today,
-        training_id: { not: null },
+        OR: [{ trainings: { some: {} } }, { training_id: { not: null } }],
         is_rest_day: false,
         client_id: { in: [...active] },
       },
@@ -251,6 +282,7 @@ export class NotificationsSchedulerService {
     const todayKey = this.formatDate(today);
     const active = await this.activeClientIds();
     if (active.size === 0) return;
+    await this.reconcileDateForClients(active, today);
 
     const assignments = await this.prisma.planAssignment.findMany({
       where: {
@@ -387,13 +419,21 @@ export class NotificationsSchedulerService {
     });
 
     if (streaks.length === 0) return;
+    await this.reconcileDateForClients(
+      streaks.map((streak) => streak.client_id),
+      today,
+    );
 
     const activeAssignments = await this.prisma.planAssignment.findMany({
       where: {
         date: today,
         client_id: { in: streaks.map((streak) => streak.client_id) },
         is_rest_day: false,
-        OR: [{ training_id: { not: null } }, { diet_id: { not: null } }],
+        OR: [
+          { trainings: { some: {} } },
+          { training_id: { not: null } },
+          { diet_id: { not: null } },
+        ],
       },
       select: { client_id: true },
     });
@@ -499,12 +539,20 @@ export class NotificationsSchedulerService {
           client_id: { in: clientIds },
           date: { gte: start, lte: end },
           is_rest_day: false,
-          OR: [{ training_id: { not: null } }, { diet_id: { not: null } }],
+          OR: [
+            { trainings: { some: {} } },
+            { training_id: { not: null } },
+            { diet_id: { not: null } },
+          ],
         },
         select: {
           client_id: true,
           date: true,
           training_id: true,
+          trainings: {
+            orderBy: { position: 'asc' },
+            select: { training_id: true },
+          },
           diet: {
             select: {
               meals: {
@@ -523,6 +571,7 @@ export class NotificationsSchedulerService {
           client_id: true,
           date: true,
           training_completed: true,
+          trainings_completed: true,
           meals_completed: true,
         },
       }),
@@ -535,7 +584,7 @@ export class NotificationsSchedulerService {
         trainingsCompleted: number;
         mealsAssigned: number;
         mealsCompleted: number;
-        trainingDates: Set<string>;
+        trainingIdsByDate: Map<string, Set<string>>;
         mealIdsByDate: Map<string, Set<string>>;
       }
     >();
@@ -547,7 +596,7 @@ export class NotificationsSchedulerService {
           trainingsCompleted: 0,
           mealsAssigned: 0,
           mealsCompleted: 0,
-          trainingDates: new Set(),
+          trainingIdsByDate: new Map(),
           mealIdsByDate: new Map(),
         };
         summaryByClient.set(clientId, summary);
@@ -557,9 +606,17 @@ export class NotificationsSchedulerService {
 
     for (const plan of plans) {
       const summary = ensureSummary(plan.client_id);
-      if (plan.training_id) {
-        summary.trainingsAssigned += 1;
-        summary.trainingDates.add(this.formatDate(plan.date));
+      const trainingIds = plan.trainings.length
+        ? plan.trainings.map((link) => link.training_id)
+        : plan.training_id
+          ? [plan.training_id]
+          : [];
+      if (trainingIds.length > 0) {
+        summary.trainingsAssigned += trainingIds.length;
+        summary.trainingIdsByDate.set(
+          this.formatDate(plan.date),
+          new Set(trainingIds),
+        );
       }
 
       const meals = plan.diet?.meals ?? [];
@@ -574,11 +631,19 @@ export class NotificationsSchedulerService {
 
     for (const entry of progress) {
       const summary = ensureSummary(entry.client_id);
-      if (
-        entry.training_completed &&
-        summary.trainingDates.has(this.formatDate(entry.date))
-      ) {
-        summary.trainingsCompleted += 1;
+      const trainingIds = summary.trainingIdsByDate.get(
+        this.formatDate(entry.date),
+      );
+      if (trainingIds) {
+        const completedIds = entry.trainings_completed.filter((trainingId) =>
+          trainingIds.has(trainingId),
+        );
+        summary.trainingsCompleted +=
+          completedIds.length > 0
+            ? completedIds.length
+            : entry.training_completed
+              ? 1
+              : 0;
       }
 
       const mealIds = summary.mealIdsByDate.get(this.formatDate(entry.date));

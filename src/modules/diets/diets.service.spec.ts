@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { DietsService } from './diets.service';
 import type { UploadsService } from '../uploads/uploads.service';
+import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 describe('DietsService', () => {
   let service: DietsService;
@@ -26,6 +27,7 @@ describe('DietsService', () => {
     referencesSame: jest.Mock;
     prepareForConsumption: jest.Mock;
   };
+  let autoAssignmentMaterializer: { reconcile: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -49,10 +51,14 @@ describe('DietsService', () => {
       referencesSame: jest.fn(),
       prepareForConsumption: jest.fn(),
     };
+    autoAssignmentMaterializer = {
+      reconcile: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new DietsService(
       prisma as unknown as PrismaService,
       uploadsService as unknown as UploadsService,
+      autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
     );
   });
 

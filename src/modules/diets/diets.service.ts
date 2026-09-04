@@ -19,6 +19,7 @@ import {
 import { DietsQueryDto } from './dto/diets-query.dto';
 import { reconcileMealProgress } from '../../common/progress/plan-progress-reconciliation';
 import { UploadsService } from '../uploads/uploads.service';
+import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 type DietSortField = 'name' | 'updated_at' | 'created_at';
 const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
@@ -117,6 +118,7 @@ export class DietsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly uploadsService: UploadsService,
+    private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
   ) {}
 
   private collectUnique(values: string[][]): string[] {
@@ -645,6 +647,12 @@ export class DietsService {
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
 
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start: target,
+      end: target,
+      dates: [target],
+    });
+
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },
       include: {
@@ -672,6 +680,16 @@ export class DietsService {
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 6);
 
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start,
+      end,
+      dates: Array.from({ length: 7 }, (_, offset) => {
+        const current = new Date(start);
+        current.setUTCDate(current.getUTCDate() + offset);
+        return current;
+      }),
+    });
+
     const days = await this.findDietRange(clientId, start, end);
 
     return {
@@ -684,6 +702,16 @@ export class DietsService {
   async findMonth(clientId: string, year: number, month: number) {
     const start = new Date(Date.UTC(year, month - 1, 1));
     const end = new Date(Date.UTC(year, month, 0));
+    const dayCount = end.getUTCDate();
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start,
+      end,
+      dates: Array.from({ length: dayCount }, (_, offset) => {
+        const current = new Date(start);
+        current.setUTCDate(current.getUTCDate() + offset);
+        return current;
+      }),
+    });
     const days = await this.findDietRange(clientId, start, end);
 
     return {

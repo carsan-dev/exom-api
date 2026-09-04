@@ -295,10 +295,21 @@ describe('AchievementsService', () => {
     ]);
     prisma.planAssignment.findMany.mockResolvedValue([
       {
-        training: {
-          type: 'FUERZA',
-          types: ['FUERZA', 'CARDIO'],
-        },
+        trainings: [
+          {
+            training: {
+              type: 'FUERZA',
+              types: ['FUERZA'],
+            },
+          },
+          {
+            training: {
+              type: 'CARDIO',
+              types: ['CARDIO'],
+            },
+          },
+        ],
+        training: null,
       },
     ]);
     prisma.challengeClient.count.mockResolvedValue(0);
@@ -332,6 +343,13 @@ describe('AchievementsService', () => {
       ],
       skipDuplicates: true,
     });
+    const assignmentCalls = prisma.planAssignment.findMany.mock
+      .calls as unknown as Array<[{ where: { OR: unknown[] } }]>;
+    const assignmentQuery = assignmentCalls[0][0];
+    expect(assignmentQuery.where.OR).toEqual([
+      { trainings: { some: {} } },
+      { training_id: { not: null } },
+    ]);
   });
 
   it('keeps manually granted automatic achievements during recomputation', async () => {

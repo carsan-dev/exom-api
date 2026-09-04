@@ -63,7 +63,11 @@ export class StreakCalculatorService {
           lte: asOf,
         },
         is_rest_day: false,
-        OR: [{ training_id: { not: null } }, { diet_id: { not: null } }],
+        OR: [
+          { trainings: { some: {} } },
+          { training_id: { not: null } },
+          { diet_id: { not: null } },
+        ],
       },
       select: { date: true },
       orderBy: { date: 'asc' },
@@ -148,7 +152,11 @@ export class StreakCalculatorService {
       this.prisma.planAssignment.findMany({
         where: {
           is_rest_day: false,
-          OR: [{ training_id: { not: null } }, { diet_id: { not: null } }],
+          OR: [
+            { trainings: { some: {} } },
+            { training_id: { not: null } },
+            { diet_id: { not: null } },
+          ],
         },
         select: { client_id: true },
         distinct: ['client_id'],

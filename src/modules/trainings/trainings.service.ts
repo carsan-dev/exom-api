@@ -14,6 +14,7 @@ import {
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
+import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 type TrainingSortField =
   | 'name'
@@ -111,7 +112,10 @@ function normalizeSearchText(value: string) {
 
 @Injectable()
 export class TrainingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
+  ) {}
 
   private collectUniqueCatalogValues(values: string[]): string[] {
     const unique = new Map<string, string>();
@@ -1114,6 +1118,14 @@ export class TrainingsService {
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
 
+    // Rules are indefinite. Reconcile this independently requested day before
+    // resolving its actionable trainings.
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start: target,
+      end: target,
+      dates: [target],
+    });
+
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },
       include: {
@@ -1172,6 +1184,11 @@ export class TrainingsService {
     const serialized = this.serializeTraining(training);
     if (!clientId || !date) return serialized;
     const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start: target,
+      end: target,
+      dates: [target],
+    });
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date: target } },
       select: {

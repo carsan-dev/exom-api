@@ -39,6 +39,7 @@ import type {
   UpdateAdminClientMetricDto,
 } from './dto/admin-client-metric.dto';
 import { MetricsService } from '../metrics/metrics.service';
+import { CalendarService } from '../calendar/calendar.service';
 
 type ClientAssignmentRecord = {
   client_id: string;
@@ -124,6 +125,7 @@ export class UsersService {
     private readonly challengesService: ChallengesService,
     private readonly notifications: NotificationsService,
     private readonly metricsService: MetricsService,
+    private readonly calendarService: CalendarService,
     @Optional() private readonly emailService?: EmailService,
   ) {}
 
@@ -1329,65 +1331,7 @@ export class UsersService {
   ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
-    const startDate = new Date(Date.UTC(year, month - 1, 1));
-    const endDate = new Date(Date.UTC(year, month, 0));
-
-    const [assignments, progress] = await Promise.all([
-      this.prisma.planAssignment.findMany({
-        where: {
-          client_id: clientId,
-          date: { gte: startDate, lte: endDate },
-        },
-        include: { trainings: { select: { training_id: true } } },
-      }),
-      this.prisma.dayProgress.findMany({
-        where: {
-          client_id: clientId,
-          date: { gte: startDate, lte: endDate },
-        },
-      }),
-    ]);
-
-    const assignmentByDate = new Map(
-      assignments.map((a) => [a.date.toISOString().split('T')[0], a]),
-    );
-    const progressByDate = new Map(
-      progress.map((p) => [p.date.toISOString().split('T')[0], p]),
-    );
-
-    const days: Array<{
-      date: string;
-      has_training: boolean;
-      has_diet: boolean;
-      is_rest_day: boolean;
-      training_completed: boolean;
-      diet_completed: boolean;
-    }> = [];
-
-    for (
-      let d = new Date(startDate);
-      d <= endDate;
-      d.setUTCDate(d.getUTCDate() + 1)
-    ) {
-      const dateStr = d.toISOString().split('T')[0];
-      const assignment = assignmentByDate.get(dateStr);
-      const dayProgress = progressByDate.get(dateStr);
-
-      days.push({
-        date: dateStr,
-        has_training: Boolean(
-          assignment && (assignment.trainings.length || assignment.training_id),
-        ),
-        has_diet: Boolean(assignment?.diet_id),
-        is_rest_day: assignment ? assignment.is_rest_day : true,
-        training_completed: dayProgress?.training_completed ?? false,
-        diet_completed: dayProgress
-          ? dayProgress.meals_completed.length > 0
-          : false,
-      });
-    }
-
-    return days;
+    return this.calendarService.getMonthCalendar(clientId, year, month);
   }
 
   async getClientWeekSummary(
@@ -1398,72 +1342,7 @@ export class UsersService {
   ) {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
-    const [wy, wm, wd] = weekStart.split('-').map(Number);
-    const start = new Date(Date.UTC(wy, wm - 1, wd));
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 6);
-
-    const [assignments, progress] = await Promise.all([
-      this.prisma.planAssignment.findMany({
-        where: {
-          client_id: clientId,
-          date: { gte: start, lte: end },
-        },
-        include: {
-          trainings: { select: { training_id: true } },
-          diet: { include: { meals: true } },
-        },
-      }),
-      this.prisma.dayProgress.findMany({
-        where: {
-          client_id: clientId,
-          date: { gte: start, lte: end },
-        },
-      }),
-    ]);
-
-    const progressByDate = new Map(
-      progress.map((p) => [p.date.toISOString().split('T')[0], p]),
-    );
-
-    let trainingsAssigned = 0;
-    let trainingsCompleted = 0;
-    let totalMeals = 0;
-    let mealsCompleted = 0;
-
-    for (const assignment of assignments) {
-      if (assignment.is_rest_day) continue;
-
-      const dateStr = assignment.date.toISOString().split('T')[0];
-      const dayProgress = progressByDate.get(dateStr);
-
-      const assignedTrainingIds = assignment.trainings.length
-        ? assignment.trainings.map((link) => link.training_id)
-        : assignment.training_id
-          ? [assignment.training_id]
-          : [];
-      if (assignedTrainingIds.length) {
-        trainingsAssigned += assignedTrainingIds.length;
-        trainingsCompleted +=
-          dayProgress?.trainings_completed.filter((id) =>
-            assignedTrainingIds.includes(id),
-          ).length ?? (dayProgress?.training_completed ? 1 : 0);
-      }
-
-      if (assignment.diet_id) {
-        const mealCount = assignment.diet?.meals?.length ?? 0;
-        totalMeals += mealCount;
-        mealsCompleted += dayProgress?.meals_completed?.length ?? 0;
-      }
-    }
-
-    return {
-      week_start: weekStart,
-      trainings_assigned: trainingsAssigned,
-      trainings_completed: trainingsCompleted,
-      total_meals: totalMeals,
-      meals_completed: mealsCompleted,
-    };
+    return this.calendarService.getWeekSummary(clientId, weekStart);
   }
 
   async getClientMetrics(

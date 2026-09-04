@@ -30,6 +30,7 @@ import {
 } from './dto/mark-completed.dto';
 import { parseDateOnly } from '../../common/date-only';
 import { UploadsService } from '../uploads/uploads.service';
+import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 interface ExerciseCompletedEntry {
   training_exercise_id?: string;
@@ -70,6 +71,7 @@ export class ProgressService {
     private readonly notifications: NotificationsService,
     private readonly streakCalculator: StreakCalculatorService,
     private readonly uploadsService: UploadsService,
+    private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
   ) {}
 
   private parseExercisesCompleted(
@@ -94,6 +96,12 @@ export class ProgressService {
     clientId: string,
     date: Date,
   ): Promise<AssignmentContext> {
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start: date,
+      end: date,
+      dates: [date],
+    });
+
     const assignment = await this.prisma.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date } },
       include: {

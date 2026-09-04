@@ -6,6 +6,7 @@ import { StreaksModule } from '../streaks/streaks.module';
 import { ProgressController } from './progress.controller';
 import { ProgressService } from './progress.service';
 import { UploadsModule } from '../uploads/uploads.module';
+import { AssignmentReconciliationModule } from '../assignments/assignment-reconciliation.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { UploadsModule } from '../uploads/uploads.module';
     NotificationsModule,
     StreaksModule,
     UploadsModule,
+    AssignmentReconciliationModule,
   ],
   controllers: [ProgressController],
   providers: [ProgressService],

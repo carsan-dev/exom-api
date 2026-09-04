@@ -5,6 +5,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import { UsersService } from './users.service';
+import type { CalendarService } from '../calendar/calendar.service';
 
 describe('UsersService listing filters', () => {
   let service: UsersService;
@@ -47,6 +48,8 @@ describe('UsersService listing filters', () => {
       prisma as unknown as PrismaService,
       challenges as unknown as ChallengesService,
       notifications as unknown as NotificationsService,
+      undefined as never,
+      {} as CalendarService,
     );
   });
 

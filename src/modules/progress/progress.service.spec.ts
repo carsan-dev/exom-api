@@ -6,6 +6,7 @@ import type { StreakCalculatorService } from '../streaks/streak-calculator.servi
 import { ProgressService } from './progress.service';
 import type { UploadsService } from '../uploads/uploads.service';
 import { FeedbackKind, MediaType } from '@prisma/client';
+import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 describe('ProgressService', () => {
   let service: ProgressService;
@@ -41,6 +42,7 @@ describe('ProgressService', () => {
   };
   let updateStreakSpy: jest.SpyInstance;
   let uploadsService: { isConsumedManagedUrl: jest.Mock };
+  let autoAssignmentMaterializer: { reconcile: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -85,6 +87,9 @@ describe('ProgressService', () => {
     uploadsService = {
       isConsumedManagedUrl: jest.fn().mockResolvedValue(true),
     };
+    autoAssignmentMaterializer = {
+      reconcile: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new ProgressService(
       prisma as unknown as PrismaService,
@@ -93,6 +98,7 @@ describe('ProgressService', () => {
       notifications as unknown as NotificationsService,
       streakCalculator as unknown as StreakCalculatorService,
       uploadsService as unknown as UploadsService,
+      autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
     );
 
     prisma.$transaction.mockImplementation(
@@ -120,6 +126,15 @@ describe('ProgressService', () => {
     await expect(
       service.completeTraining('client-1', { date: '2026-04-04' }),
     ).resolves.toEqual({ id: 'progress-1' });
+
+    expect(autoAssignmentMaterializer.reconcile).toHaveBeenCalledWith(
+      'client-1',
+      {
+        start: new Date('2026-04-04T00:00:00.000Z'),
+        end: new Date('2026-04-04T00:00:00.000Z'),
+        dates: [new Date('2026-04-04T00:00:00.000Z')],
+      },
+    );
 
     expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
       'client-1',

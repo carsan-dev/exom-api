@@ -9,8 +9,26 @@ const prisma = new PrismaService();
 async function main() {
   await prisma.$connect();
   const assignments = await prisma.planAssignment.findMany({
-    where: { OR: [{ training_id: { not: null } }, { diet_id: { not: null } }] },
+    where: {
+      OR: [
+        { trainings: { some: {} } },
+        { training_id: { not: null } },
+        { diet_id: { not: null } },
+      ],
+    },
     include: {
+      trainings: {
+        orderBy: { position: 'asc' },
+        include: {
+          training: {
+            select: {
+              id: true,
+              name: true,
+              exercises: { select: { id: true, exercise_id: true } },
+            },
+          },
+        },
+      },
       training: {
         select: {
           id: true,
@@ -60,18 +78,26 @@ async function main() {
     });
     if (!progress) continue;
 
-    if (assignment.training) {
+    const assignedTrainings = assignment.trainings.length
+      ? assignment.trainings.map((link) => link.training)
+      : assignment.training
+        ? [assignment.training]
+        : [];
+    if (assignedTrainings.length > 0) {
+      const assignedExercises = assignedTrainings.flatMap(
+        (training) => training.exercises,
+      );
       const original = Array.isArray(progress.exercises_completed)
         ? (progress.exercises_completed as Array<{ training_exercise_id?: string }>)
         : [];
-      const currentIds = new Set(assignment.training.exercises.map((item) => item.id));
+      const currentIds = new Set(assignedExercises.map((item) => item.id));
       const staleCount = original.filter(
         (entry) => entry.training_exercise_id && !currentIds.has(entry.training_exercise_id),
       ).length;
       if (staleCount) {
         const reconciled = reconcileTrainingProgress(
           progress.exercises_completed,
-          assignment.training.exercises,
+          assignedExercises,
         );
         const remainingStale = reconciled.entries.filter(
           (entry) =>
@@ -80,17 +106,32 @@ async function main() {
         if (remainingStale) {
           ambiguousTrainings++;
           console.warn(
-            `AMBIGUOUS training="${assignment.training.name}" training_id=${assignment.training.id} client="${clientLabel(assignment.client_id)}" client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_entries=${remainingStale}`,
+            `AMBIGUOUS trainings="${assignedTrainings.map((training) => training.name).join(', ')}" training_ids=${assignedTrainings.map((training) => training.id).join(',')} client="${clientLabel(assignment.client_id)}" client_id=${assignment.client_id} date=${assignment.date.toISOString().slice(0, 10)} stale_entries=${remainingStale}`,
           );
         } else {
           repairedTrainings++;
           if (apply) {
+            const completedExerciseIds = new Set(
+              reconciled.entries
+                .map((entry) => entry.training_exercise_id)
+                .filter((id): id is string => Boolean(id)),
+            );
+            const completedTrainingIds = assignedTrainings
+              .filter(
+                (training) =>
+                  training.exercises.length > 0 &&
+                  training.exercises.every((exercise) =>
+                    completedExerciseIds.has(exercise.id),
+                  ),
+              )
+              .map((training) => training.id);
             await prisma.dayProgress.update({
               where: { id: progress.id },
               data: {
                 exercises_completed:
                   reconciled.entries as unknown as Prisma.InputJsonValue,
                 training_completed: reconciled.trainingCompleted,
+                trainings_completed: completedTrainingIds,
               },
             });
           }

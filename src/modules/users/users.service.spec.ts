@@ -11,6 +11,7 @@ import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto'
 import { ChallengesService } from '../challenges/challenges.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { MetricsService } from '../metrics/metrics.service';
+import type { CalendarService } from '../calendar/calendar.service';
 
 const createUserMock = jest.fn();
 
@@ -62,6 +63,10 @@ describe('UsersService', () => {
     createForClient: jest.Mock;
     updateForClient: jest.Mock;
   };
+  let calendarService: {
+    getMonthCalendar: jest.Mock;
+    getWeekSummary: jest.Mock;
+  };
 
   beforeEach(() => {
     createUserMock.mockReset();
@@ -112,12 +117,17 @@ describe('UsersService', () => {
       createForClient: jest.fn(),
       updateForClient: jest.fn(),
     };
+    calendarService = {
+      getMonthCalendar: jest.fn(),
+      getWeekSummary: jest.fn(),
+    };
 
     service = new UsersService(
       prisma as unknown as PrismaService,
       challengesService as unknown as ChallengesService,
       notifications as unknown as NotificationsService,
       metricsService as unknown as MetricsService,
+      calendarService as unknown as CalendarService,
     );
   });
 
@@ -1031,5 +1041,40 @@ describe('UsersService', () => {
       },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     });
+  });
+
+  it('delegates admin calendar reads to the reconciled calendar service', async () => {
+    const month = [{ date: '2026-07-01', has_training: true }];
+    const week = { week_start: '2026-06-29', trainings_assigned: 2 };
+    calendarService.getMonthCalendar.mockResolvedValue(month);
+    calendarService.getWeekSummary.mockResolvedValue(week);
+
+    await expect(
+      service.getClientCalendarMonth(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        2026,
+        7,
+      ),
+    ).resolves.toBe(month);
+    await expect(
+      service.getClientWeekSummary(
+        'super-admin-1',
+        Role.SUPER_ADMIN,
+        'client-1',
+        '2026-06-29',
+      ),
+    ).resolves.toBe(week);
+
+    expect(calendarService.getMonthCalendar).toHaveBeenCalledWith(
+      'client-1',
+      2026,
+      7,
+    );
+    expect(calendarService.getWeekSummary).toHaveBeenCalledWith(
+      'client-1',
+      '2026-06-29',
+    );
   });
 });

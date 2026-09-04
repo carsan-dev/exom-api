@@ -2,6 +2,7 @@ import { MealType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsSchedulerService } from './notifications-scheduler.service';
 import type { NotificationsService } from './notifications.service';
+import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 describe('NotificationsSchedulerService', () => {
   let service: NotificationsSchedulerService;
@@ -18,6 +19,7 @@ describe('NotificationsSchedulerService', () => {
     findSystemSenderId: jest.Mock;
     sendInternalTemplate: jest.Mock;
   };
+  let autoAssignmentMaterializer: { reconcile: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -38,10 +40,14 @@ describe('NotificationsSchedulerService', () => {
         failed: 0,
       }),
     };
+    autoAssignmentMaterializer = {
+      reconcile: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new NotificationsSchedulerService(
       prisma as unknown as PrismaService,
       notifications as unknown as NotificationsService,
+      autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
     );
     (service as any).todayUtcDate = jest
       .fn()
@@ -60,6 +66,23 @@ describe('NotificationsSchedulerService', () => {
     prisma.dayProgress.findMany.mockResolvedValue([]);
 
     await (service as any).remindDailyTraining();
+
+    expect(autoAssignmentMaterializer.reconcile).toHaveBeenCalledWith(
+      'client-1',
+      {
+        start: new Date('2026-04-23T00:00:00.000Z'),
+        end: new Date('2026-04-23T00:00:00.000Z'),
+        dates: [new Date('2026-04-23T00:00:00.000Z')],
+      },
+    );
+
+    const assignmentCalls = prisma.planAssignment.findMany.mock
+      .calls as unknown as Array<[{ where: { OR: unknown[] } }]>;
+    const assignmentQuery = assignmentCalls[0][0];
+    expect(assignmentQuery.where.OR).toEqual([
+      { trainings: { some: {} } },
+      { training_id: { not: null } },
+    ]);
 
     expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'system-admin',
@@ -130,6 +153,57 @@ describe('NotificationsSchedulerService', () => {
       { days: 4 },
       expect.any(Object),
       { type: 'streak_at_risk' },
+    );
+  });
+
+  it('counts every linked training in the weekly admin summary', async () => {
+    const date = new Date('2026-04-15T00:00:00.000Z');
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      {
+        admin_id: 'admin-1',
+        client_id: 'client-1',
+        client: {
+          email: 'client@example.com',
+          profile: { first_name: 'Ada', last_name: 'Lovelace' },
+        },
+      },
+    ]);
+    prisma.planAssignment.findMany.mockResolvedValue([
+      {
+        client_id: 'client-1',
+        date,
+        training_id: 'training-1',
+        trainings: [
+          { training_id: 'training-1' },
+          { training_id: 'training-2' },
+        ],
+        diet: null,
+      },
+    ]);
+    prisma.dayProgress.findMany.mockResolvedValue([
+      {
+        client_id: 'client-1',
+        date,
+        training_completed: true,
+        trainings_completed: ['training-1', 'training-2'],
+        meals_completed: [],
+      },
+    ]);
+
+    await (
+      service as unknown as { weeklyClientSummaryToAdmin(): Promise<void> }
+    ).weeklyClientSummaryToAdmin();
+
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+      'system-admin',
+      ['admin-1'],
+      'admin_weekly_summary',
+      expect.objectContaining({
+        trainingsAssigned: 2,
+        trainingsCompleted: 2,
+      }),
+      expect.any(Object),
+      expect.any(Object),
     );
   });
 });

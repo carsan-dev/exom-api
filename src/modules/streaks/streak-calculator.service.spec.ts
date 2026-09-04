@@ -49,6 +49,12 @@ describe('StreakCalculatorService', () => {
     });
 
     expect(result.currentDays).toBe(2);
+    const assignmentCalls = prisma.planAssignment.findMany.mock
+      .calls as unknown as Array<[{ where: { OR: unknown[] } }]>;
+    const assignmentQuery = assignmentCalls[0][0];
+    expect(assignmentQuery.where.OR).toContainEqual({
+      trainings: { some: {} },
+    });
     expect(prisma.streak.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({ current_days: 2, longest_days: 2 }),

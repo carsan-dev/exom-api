@@ -2,6 +2,7 @@ import { Level } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { TrainingsService } from './trainings.service';
+import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 describe('TrainingsService', () => {
   let service: TrainingsService;
@@ -9,6 +10,7 @@ describe('TrainingsService', () => {
     $transaction: jest.Mock;
     training: {
       findMany: jest.Mock;
+      findFirst: jest.Mock;
       count: jest.Mock;
       update: jest.Mock;
     };
@@ -23,12 +25,14 @@ describe('TrainingsService', () => {
     planAssignment: { findUnique: jest.Mock };
     dayProgress: { findUnique: jest.Mock };
   };
+  let autoAssignmentMaterializer: { reconcile: jest.Mock };
 
   beforeEach(() => {
     prisma = {
       $transaction: jest.fn().mockResolvedValue([]),
       training: {
         findMany: jest.fn(),
+        findFirst: jest.fn(),
         count: jest.fn(),
         update: jest.fn(),
       },
@@ -44,7 +48,13 @@ describe('TrainingsService', () => {
       dayProgress: { findUnique: jest.fn() },
     };
 
-    service = new TrainingsService(prisma as unknown as PrismaService);
+    autoAssignmentMaterializer = {
+      reconcile: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new TrainingsService(
+      prisma as unknown as PrismaService,
+      autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
+    );
   });
 
   it('builds prisma filters for list mode', async () => {
@@ -364,6 +374,44 @@ describe('TrainingsService', () => {
     );
   });
 
+  it('reconciles before resolving assignment metadata for training detail', async () => {
+    const target = new Date('2026-09-03T00:00:00.000Z');
+    prisma.training.findFirst.mockResolvedValue({
+      id: 'training-1',
+      name: 'Fuerza',
+      type: 'FUERZA',
+      types: ['FUERZA'],
+      accentColor: null,
+      blocks: [],
+      exercises: [],
+    });
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      trainings: [
+        { id: 'assignment-training-1', requires_last_set_video: true },
+      ],
+    });
+
+    await expect(
+      service.findOne('training-1', 'client-1', target),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        assignment_training_id: 'assignment-training-1',
+        assignment_date: '2026-09-03',
+        requires_last_set_video: true,
+      }),
+    );
+
+    expect(autoAssignmentMaterializer.reconcile).toHaveBeenCalledWith(
+      'client-1',
+      { start: target, end: target, dates: [target] },
+    );
+    expect(
+      autoAssignmentMaterializer.reconcile.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      prisma.planAssignment.findUnique.mock.invocationCallOrder[0],
+    );
+  });
+
   it('does not return inactive assigned trainings as the current training', async () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
       trainings: [],
@@ -395,6 +443,14 @@ describe('TrainingsService', () => {
           }),
         }),
       }),
+    );
+    expect(autoAssignmentMaterializer.reconcile).toHaveBeenCalledWith(
+      'client-1',
+      {
+        start: new Date('2026-09-03T00:00:00.000Z'),
+        end: new Date('2026-09-03T00:00:00.000Z'),
+        dates: [new Date('2026-09-03T00:00:00.000Z')],
+      },
     );
   });
 });

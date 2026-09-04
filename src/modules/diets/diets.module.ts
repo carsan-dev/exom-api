@@ -4,9 +4,10 @@ import { DietsService } from './diets.service';
 import { DietGroupsController } from './diet-groups.controller';
 import { DietGroupsService } from './diet-groups.service';
 import { UploadsModule } from '../uploads/uploads.module';
+import { AssignmentReconciliationModule } from '../assignments/assignment-reconciliation.module';
 
 @Module({
-  imports: [UploadsModule],
+  imports: [UploadsModule, AssignmentReconciliationModule],
   controllers: [DietsController, DietGroupsController],
   providers: [DietsService, DietGroupsService],
 })
