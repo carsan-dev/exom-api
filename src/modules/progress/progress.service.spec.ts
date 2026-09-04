@@ -12,6 +12,7 @@ describe('ProgressService', () => {
   let service: ProgressService;
   let prisma: {
     $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
     planAssignment: {
       findUnique: jest.Mock;
     };
@@ -47,6 +48,7 @@ describe('ProgressService', () => {
   beforeEach(() => {
     prisma = {
       $transaction: jest.fn(),
+      $queryRaw: jest.fn().mockResolvedValue([{ pg_advisory_xact_lock: null }]),
       planAssignment: {
         findUnique: jest.fn(),
       },
@@ -507,6 +509,52 @@ describe('ProgressService', () => {
         completed_at: '2026-06-22T10:00:00.000Z',
       }),
     ]);
+  });
+
+  it('deduplicates a training occurrence when completing legacy progress', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-1',
+          exercise_id: 'exercise-1',
+          completed_at: '2026-06-22T10:00:00.000Z',
+        },
+        {
+          training_exercise_id: 'training-exercise-1',
+          exercise_id: 'exercise-1',
+          completed_at: '2026-06-22T10:01:00.000Z',
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+      training_completed: true,
+      trainings_completed: [],
+    });
+    prisma.dayProgress.upsert.mockImplementation((input: unknown) =>
+      Promise.resolve(input),
+    );
+
+    const result: unknown = await service.completeTraining('client-1', {
+      date: '2026-06-22',
+    });
+
+    expect(result).toMatchObject({
+      update: {
+        exercises_completed: [
+          {
+            training_exercise_id: 'training-exercise-1',
+            exercise_id: 'exercise-1',
+            completed_at: '2026-06-22T10:01:00.000Z',
+          },
+        ],
+      },
+    });
   });
 
   it('rejects duplicate set numbers', async () => {

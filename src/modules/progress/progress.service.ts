@@ -13,6 +13,7 @@ import {
   Prisma,
   PrismaClient,
 } from '@prisma/client';
+import { isDeepStrictEqual } from 'node:util';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type TransactionClient = Omit<
@@ -31,6 +32,10 @@ import {
 import { parseDateOnly } from '../../common/date-only';
 import { UploadsService } from '../uploads/uploads.service';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
+import {
+  DAY_PROGRESS_TRANSACTION_OPTIONS,
+  lockClientDayProgress,
+} from '../../common/progress/day-progress-lock';
 
 interface ExerciseCompletedEntry {
   training_exercise_id?: string;
@@ -50,7 +55,6 @@ interface AssignmentContext {
   date: Date;
   trainingIds: string[];
   trainingExerciseIds: Set<string>;
-  exerciseIds: Set<string>;
   exerciseIdByTrainingExerciseId: Map<string, string>;
   trainingIdByTrainingExerciseId: Map<string, string>;
   trainingExerciseIdsByTrainingId: Map<string, Set<string>>;
@@ -93,16 +97,11 @@ export class ProgressService {
   }
 
   private async getAssignmentContext(
+    db: TransactionClient,
     clientId: string,
     date: Date,
   ): Promise<AssignmentContext> {
-    await this.autoAssignmentMaterializer.reconcile(clientId, {
-      start: date,
-      end: date,
-      dates: [date],
-    });
-
-    const assignment = await this.prisma.planAssignment.findUnique({
+    const assignment = await db.planAssignment.findUnique({
       where: { client_id_date: { client_id: clientId, date } },
       include: {
         trainings: {
@@ -155,9 +154,6 @@ export class ProgressService {
       trainingExerciseIds: new Set(
         allExercises.map((exercise) => exercise.id),
       ),
-      exerciseIds: new Set(
-        allExercises.map((exercise) => exercise.exercise_id),
-      ),
       exerciseIdByTrainingExerciseId: new Map(
         allExercises.map((exercise) => [
           exercise.id,
@@ -191,6 +187,41 @@ export class ProgressService {
         dietMeals.map((meal) => [meal.id, meal.parent_meal_id ?? meal.id]),
       ),
     };
+  }
+
+  private async withLockedDayProgress<T>(
+    clientId: string,
+    date: Date,
+    operation: (
+      tx: TransactionClient,
+      assignment: AssignmentContext,
+    ) => Promise<T>,
+  ): Promise<T> {
+    await this.autoAssignmentMaterializer.reconcile(clientId, {
+      start: date,
+      end: date,
+      dates: [date],
+    });
+
+    return this.prisma.$transaction(async (tx) => {
+      await lockClientDayProgress(tx, clientId);
+      const assignment = await this.getAssignmentContext(tx, clientId, date);
+      return operation(tx, assignment);
+    }, DAY_PROGRESS_TRANSACTION_OPTIONS);
+  }
+
+  private sameStringArray(left: string[], right: string[]): boolean {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    );
+  }
+
+  private sameExerciseEntries(
+    left: ExerciseCompletedEntry[],
+    right: ExerciseCompletedEntry[],
+  ): boolean {
+    return isDeepStrictEqual(left, right);
   }
 
   private getTrainingCompletedStatus(
@@ -403,101 +434,141 @@ export class ProgressService {
       }
     }
     const date = this.parseDate(dto.date);
-    const assignment = await this.getAssignmentContext(clientId, date);
+    const progress = await this.withLockedDayProgress(
+      clientId,
+      date,
+      async (tx, assignment) => {
+        if (!assignment.trainingExerciseIds.size) {
+          throw new ForbiddenException(
+            'No tienes entrenamiento asignado para esa fecha',
+          );
+        }
 
-    if (!assignment.trainingExerciseIds.size) {
-      throw new ForbiddenException(
-        'No tienes entrenamiento asignado para esa fecha',
-      );
-    }
+        const requestedTrainingExerciseId = dto.training_exercise_id;
+        const currentIdsForExercise = [
+          ...assignment.exerciseIdByTrainingExerciseId.entries(),
+        ]
+          .filter(([, exerciseId]) => exerciseId === dto.exercise_id)
+          .map(([trainingExerciseId]) => trainingExerciseId);
+        if (!currentIdsForExercise.length) {
+          throw new ForbiddenException(
+            'Ese ejercicio no pertenece al entrenamiento asignado',
+          );
+        }
+        if (
+          !requestedTrainingExerciseId &&
+          currentIdsForExercise.length !== 1
+        ) {
+          throw new UnprocessableEntityException({
+            code: 'TRAINING_EXERCISE_AMBIGUOUS',
+            message:
+              'training_exercise_id es obligatorio cuando un ejercicio se repite',
+          });
+        }
+        const trainingExerciseId =
+          requestedTrainingExerciseId ?? currentIdsForExercise[0];
+        if (!currentIdsForExercise.includes(trainingExerciseId)) {
+          throw new ForbiddenException(
+            'La ocurrencia indicada no corresponde a ese ejercicio asignado',
+          );
+        }
+        const exerciseId =
+          assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
 
-    const requestedTrainingExerciseId = dto.training_exercise_id;
-    const currentIdsForExercise = [
-      ...assignment.exerciseIdByTrainingExerciseId.entries(),
-    ]
-      .filter(([, exerciseId]) => exerciseId === dto.exercise_id)
-      .map(([trainingExerciseId]) => trainingExerciseId);
-    if (!currentIdsForExercise.length) {
-      throw new ForbiddenException(
-        'Ese ejercicio no pertenece al entrenamiento asignado',
-      );
-    }
-    if (!requestedTrainingExerciseId && currentIdsForExercise.length !== 1) {
-      throw new UnprocessableEntityException({
-        code: 'TRAINING_EXERCISE_AMBIGUOUS',
-        message: 'training_exercise_id es obligatorio cuando un ejercicio se repite',
-      });
-    }
-    const trainingExerciseId = requestedTrainingExerciseId ?? currentIdsForExercise[0];
-    if (!currentIdsForExercise.includes(trainingExerciseId)) {
-      throw new ForbiddenException(
-        'La ocurrencia indicada no corresponde a ese ejercicio asignado',
-      );
-    }
-    const exerciseId = assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
+        if (assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
+          await this.validateLastSetFeedback(
+            clientId,
+            date,
+            assignment.trainingIdByTrainingExerciseId.get(trainingExerciseId)!,
+            trainingExerciseId,
+            dto.last_set_feedback_client_upload_id,
+          );
+        }
 
-    if (assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
-      await this.validateLastSetFeedback(
-        clientId,
-        date,
-        assignment.trainingIdByTrainingExerciseId.get(trainingExerciseId)!,
-        trainingExerciseId,
-        dto.last_set_feedback_client_upload_id,
-      );
-    }
+        const existing = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+        });
 
-    const existing = await this.prisma.dayProgress.findUnique({
-      where: { client_id_date: { client_id: clientId, date } },
-    });
+        const currentExercises = existing
+          ? this.parseExercisesCompleted(existing.exercises_completed)
+          : [];
 
-    const currentExercises = existing
-      ? this.parseExercisesCompleted(existing.exercises_completed)
-      : [];
+        const matchingEntry = currentExercises.find(
+          (entry) =>
+            entry.training_exercise_id === trainingExerciseId ||
+            (!entry.training_exercise_id && entry.exercise_id === exerciseId),
+        );
+        const replacement: ExerciseCompletedEntry = {
+          ...matchingEntry,
+          training_exercise_id: trainingExerciseId,
+          exercise_id: exerciseId,
+          completed_at: matchingEntry?.completed_at ?? new Date().toISOString(),
+          ...(dto.weight_used !== undefined && {
+            weight_used: dto.weight_used,
+          }),
+          ...(dto.sets !== undefined && { sets: dto.sets }),
+          ...(dto.last_set_feedback_client_upload_id && {
+            last_set_feedback_client_upload_id:
+              dto.last_set_feedback_client_upload_id,
+          }),
+        };
+        let replaced = false;
+        const completedExercises: ExerciseCompletedEntry[] = [];
+        for (const entry of currentExercises) {
+          const matches =
+            entry.training_exercise_id === trainingExerciseId ||
+            (!entry.training_exercise_id && entry.exercise_id === exerciseId);
+          if (!matches) {
+            completedExercises.push(entry);
+          } else if (!replaced) {
+            completedExercises.push(replacement);
+            replaced = true;
+          }
+        }
+        if (!replaced) completedExercises.push(replacement);
 
-    const filtered = currentExercises.filter((entry) =>
-      entry.training_exercise_id !== trainingExerciseId &&
-      !(!entry.training_exercise_id && entry.exercise_id === exerciseId),
+        const trainingsCompleted = this.getCompletedTrainingIds(
+          assignment,
+          completedExercises,
+        );
+        const allTrainingsCompleted =
+          assignment.trainingIds.length > 0 &&
+          trainingsCompleted.length === assignment.trainingIds.length;
+
+        const unchanged =
+          existing &&
+          this.sameExerciseEntries(currentExercises, completedExercises) &&
+          existing.training_completed === allTrainingsCompleted &&
+          this.sameStringArray(
+            existing.trainings_completed ?? [],
+            trainingsCompleted,
+          );
+        if (unchanged) return existing;
+
+        const result = await tx.dayProgress.upsert({
+          where: { client_id_date: { client_id: clientId, date } },
+          create: {
+            client_id: clientId,
+            date,
+            exercises_completed:
+              this.serializeExercisesCompleted(completedExercises),
+            meals_completed: existing?.meals_completed ?? [],
+            notes: existing?.notes ?? null,
+            training_completed: allTrainingsCompleted,
+            trainings_completed: trainingsCompleted,
+          },
+          update: {
+            exercises_completed:
+              this.serializeExercisesCompleted(completedExercises),
+            training_completed: allTrainingsCompleted,
+            trainings_completed: trainingsCompleted,
+          },
+        });
+
+        await this.updateStreak(clientId, date, tx);
+        return result;
+      },
     );
-
-    filtered.push({
-      training_exercise_id: trainingExerciseId,
-      exercise_id: exerciseId,
-      completed_at: new Date().toISOString(),
-      ...(dto.weight_used !== undefined && { weight_used: dto.weight_used }),
-      ...(dto.sets !== undefined && { sets: dto.sets }),
-      ...(dto.last_set_feedback_client_upload_id && {
-        last_set_feedback_client_upload_id: dto.last_set_feedback_client_upload_id,
-      }),
-    });
-
-    const trainingsCompleted = this.getCompletedTrainingIds(assignment, filtered);
-    const allTrainingsCompleted = assignment.trainingIds.length > 0 &&
-      trainingsCompleted.length === assignment.trainingIds.length;
-
-    const progress = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.dayProgress.upsert({
-        where: { client_id_date: { client_id: clientId, date } },
-        create: {
-          client_id: clientId,
-          date,
-          exercises_completed: this.serializeExercisesCompleted(filtered),
-          meals_completed: existing?.meals_completed ?? [],
-          notes: existing?.notes ?? null,
-          training_completed: this.getTrainingCompletedStatus(
-            assignment.trainingExerciseIds, assignment.exerciseIds, filtered,
-          ) && allTrainingsCompleted,
-          trainings_completed: trainingsCompleted,
-        },
-        update: {
-          exercises_completed: this.serializeExercisesCompleted(filtered),
-          training_completed: allTrainingsCompleted,
-          trainings_completed: trainingsCompleted,
-        },
-      });
-
-      await this.updateStreak(clientId, date, tx);
-      return result;
-    });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(
@@ -509,100 +580,149 @@ export class ProgressService {
 
   async completeTraining(clientId: string, dto: CompleteTrainingDto) {
     const date = this.parseDate(dto.date);
-    const assignment = await this.getAssignmentContext(clientId, date);
+    const progress = await this.withLockedDayProgress(
+      clientId,
+      date,
+      async (tx, assignment) => {
+        if (!assignment.trainingIds.length) {
+          throw new ForbiddenException(
+            'No tienes entrenamiento asignado para esa fecha',
+          );
+        }
 
-    if (!assignment.trainingIds.length) {
-      throw new ForbiddenException(
-        'No tienes entrenamiento asignado para esa fecha',
-      );
-    }
+        const existing = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+        });
 
-    const existing = await this.prisma.dayProgress.findUnique({
-      where: { client_id_date: { client_id: clientId, date } },
-    });
+        const currentExercises = existing
+          ? this.parseExercisesCompleted(existing.exercises_completed)
+          : [];
+        const currentByTrainingExercise = new Map(
+          currentExercises
+            .filter((entry) => entry.training_exercise_id)
+            .map((entry) => [entry.training_exercise_id!, entry]),
+        );
+        const currentByExercise = new Map(
+          currentExercises.map((entry) => [entry.exercise_id, entry]),
+        );
 
-    const currentExercises = existing
-      ? this.parseExercisesCompleted(existing.exercises_completed)
-      : [];
-    const currentByTrainingExercise = new Map(
-      currentExercises
-        .filter((entry) => entry.training_exercise_id)
-        .map((entry) => [entry.training_exercise_id!, entry]),
-    );
-    const currentByExercise = new Map(
-      currentExercises.map((entry) => [entry.exercise_id, entry]),
-    );
+        const targetTrainingId = dto.training_id ?? assignment.trainingIds[0];
+        if (!assignment.trainingIds.includes(targetTrainingId)) {
+          throw new ForbiddenException(
+            'Ese entrenamiento no está asignado para esa fecha',
+          );
+        }
+        const targetExerciseIds =
+          assignment.trainingExerciseIdsByTrainingId.get(targetTrainingId) ??
+          new Set<string>();
+        for (const trainingExerciseId of targetExerciseIds) {
+          if (!assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
+            continue;
+          }
+          const entry = currentByTrainingExercise.get(trainingExerciseId);
+          await this.validateLastSetFeedback(
+            clientId,
+            date,
+            targetTrainingId,
+            trainingExerciseId,
+            entry?.last_set_feedback_client_upload_id,
+          );
+        }
+        const completedTargetExercises = [...targetExerciseIds].map(
+          (trainingExerciseId) => {
+            const exerciseId =
+              assignment.exerciseIdByTrainingExerciseId.get(
+                trainingExerciseId,
+              )!;
+            const existingEntry =
+              currentByTrainingExercise.get(trainingExerciseId) ??
+              currentByExercise.get(exerciseId);
 
-    const targetTrainingId = dto.training_id ?? assignment.trainingIds[0];
-    if (!assignment.trainingIds.includes(targetTrainingId)) {
-      throw new ForbiddenException('Ese entrenamiento no está asignado para esa fecha');
-    }
-    const targetExerciseIds = assignment.trainingExerciseIdsByTrainingId.get(targetTrainingId) ?? new Set<string>();
-    for (const trainingExerciseId of targetExerciseIds) {
-      if (!assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
-        continue;
-      }
-      const entry = currentByTrainingExercise.get(trainingExerciseId);
-      await this.validateLastSetFeedback(
-        clientId,
-        date,
-        targetTrainingId,
-        trainingExerciseId,
-        entry?.last_set_feedback_client_upload_id,
-      );
-    }
-    const completedTargetExercises = [...targetExerciseIds].map(
-      (trainingExerciseId) => {
-        const exerciseId =
-          assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
-        const existingEntry =
-          currentByTrainingExercise.get(trainingExerciseId) ??
-          currentByExercise.get(exerciseId);
+            return {
+              ...existingEntry,
+              training_exercise_id: trainingExerciseId,
+              exercise_id: exerciseId,
+              completed_at:
+                existingEntry?.completed_at ?? new Date().toISOString(),
+            };
+          },
+        );
+        const completedTargetById = new Map(
+          completedTargetExercises.map((entry) => [
+            entry.training_exercise_id,
+            entry,
+          ]),
+        );
+        const targetCatalogExerciseIds =
+          assignment.exerciseIdsByTrainingId.get(targetTrainingId) ?? new Set();
+        const consumedTargetIds = new Set<string>();
+        const completedExercises: ExerciseCompletedEntry[] = [];
+        for (const entry of currentExercises) {
+          const trainingExerciseId = entry.training_exercise_id;
+          if (trainingExerciseId && targetExerciseIds.has(trainingExerciseId)) {
+            if (!consumedTargetIds.has(trainingExerciseId)) {
+              completedExercises.push(
+                completedTargetById.get(trainingExerciseId) ?? entry,
+              );
+              consumedTargetIds.add(trainingExerciseId);
+            }
+          } else if (
+            !trainingExerciseId &&
+            targetCatalogExerciseIds.has(entry.exercise_id)
+          ) {
+            continue;
+          } else {
+            completedExercises.push(entry);
+          }
+        }
+        completedExercises.push(
+          ...completedTargetExercises.filter(
+            (entry) => !consumedTargetIds.has(entry.training_exercise_id),
+          ),
+        );
+        const trainingsCompleted = this.getCompletedTrainingIds(
+          assignment,
+          completedExercises,
+        );
+        const allTrainingsCompleted =
+          trainingsCompleted.length === assignment.trainingIds.length;
+        const notes = dto.notes?.trim() || existing?.notes || null;
+        const unchanged =
+          existing &&
+          this.sameExerciseEntries(currentExercises, completedExercises) &&
+          existing.notes === notes &&
+          existing.training_completed === allTrainingsCompleted &&
+          this.sameStringArray(
+            existing.trainings_completed ?? [],
+            trainingsCompleted,
+          );
+        if (unchanged) return existing;
 
-        return {
-          ...existingEntry,
-          training_exercise_id: trainingExerciseId,
-          exercise_id: exerciseId,
-          completed_at: existingEntry?.completed_at ?? new Date().toISOString(),
-        };
+        const result = await tx.dayProgress.upsert({
+          where: { client_id_date: { client_id: clientId, date } },
+          create: {
+            client_id: clientId,
+            date,
+            exercises_completed:
+              this.serializeExercisesCompleted(completedExercises),
+            meals_completed: existing?.meals_completed ?? [],
+            notes,
+            training_completed: allTrainingsCompleted,
+            trainings_completed: trainingsCompleted,
+          },
+          update: {
+            exercises_completed:
+              this.serializeExercisesCompleted(completedExercises),
+            notes,
+            training_completed: allTrainingsCompleted,
+            trainings_completed: trainingsCompleted,
+          },
+        });
+
+        await this.updateStreak(clientId, date, tx);
+        return result;
       },
     );
-    const completedExercises = [
-      ...currentExercises.filter((entry) =>
-        entry.training_exercise_id
-          ? !targetExerciseIds.has(entry.training_exercise_id)
-          : ![...(assignment.exerciseIdsByTrainingId.get(targetTrainingId) ?? new Set())].includes(entry.exercise_id),
-      ),
-      ...completedTargetExercises,
-    ];
-    const trainingsCompleted = this.getCompletedTrainingIds(assignment, completedExercises);
-    const allTrainingsCompleted = trainingsCompleted.length === assignment.trainingIds.length;
-
-    const progress = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.dayProgress.upsert({
-        where: { client_id_date: { client_id: clientId, date } },
-        create: {
-          client_id: clientId,
-          date,
-          exercises_completed:
-            this.serializeExercisesCompleted(completedExercises),
-          meals_completed: existing?.meals_completed ?? [],
-          notes: dto.notes?.trim() || existing?.notes || null,
-          training_completed: allTrainingsCompleted,
-          trainings_completed: trainingsCompleted,
-        },
-        update: {
-          exercises_completed:
-            this.serializeExercisesCompleted(completedExercises),
-          notes: dto.notes?.trim() || existing?.notes || null,
-          training_completed: allTrainingsCompleted,
-          trainings_completed: trainingsCompleted,
-        },
-      });
-
-      await this.updateStreak(clientId, date, tx);
-      return result;
-    });
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(
@@ -614,53 +734,65 @@ export class ProgressService {
 
   async markMealCompleted(clientId: string, dto: MarkMealDto) {
     const date = this.parseDate(dto.date);
-    const assignment = await this.getAssignmentContext(clientId, date);
+    const progress = await this.withLockedDayProgress(
+      clientId,
+      date,
+      async (tx, assignment) => {
+        if (!assignment.mealIds.size) {
+          throw new ForbiddenException(
+            'No tienes dieta asignada para esa fecha',
+          );
+        }
 
-    if (!assignment.mealIds.size) {
-      throw new ForbiddenException('No tienes dieta asignada para esa fecha');
-    }
+        if (!assignment.mealIds.has(dto.meal_id)) {
+          throw new ForbiddenException(
+            'Esa comida no pertenece a la dieta asignada',
+          );
+        }
 
-    if (!assignment.mealIds.has(dto.meal_id)) {
-      throw new ForbiddenException(
-        'Esa comida no pertenece a la dieta asignada',
-      );
-    }
+        const existing = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+        });
 
-    const existing = await this.prisma.dayProgress.findUnique({
-      where: { client_id_date: { client_id: clientId, date } },
-    });
+        const currentMeals: string[] = existing ? existing.meals_completed : [];
+        const targetGroupId =
+          assignment.mealGroupById.get(dto.meal_id) ?? dto.meal_id;
+        const updatedMeals: string[] = [];
+        let targetGroupReplaced = false;
+        for (const mealId of currentMeals) {
+          const groupId = assignment.mealGroupById.get(mealId) ?? mealId;
+          if (groupId !== targetGroupId) {
+            updatedMeals.push(mealId);
+          } else if (!targetGroupReplaced) {
+            updatedMeals.push(dto.meal_id);
+            targetGroupReplaced = true;
+          }
+        }
+        if (!targetGroupReplaced) updatedMeals.push(dto.meal_id);
+        if (existing && this.sameStringArray(currentMeals, updatedMeals)) {
+          return existing;
+        }
 
-    const currentMeals: string[] = existing ? existing.meals_completed : [];
-    const targetGroupId =
-      assignment.mealGroupById.get(dto.meal_id) ?? dto.meal_id;
-    const updatedMeals = [
-      ...currentMeals.filter(
-        (mealId) =>
-          (assignment.mealGroupById.get(mealId) ?? mealId) !== targetGroupId,
-      ),
-      dto.meal_id,
-    ];
+        const result = await tx.dayProgress.upsert({
+          where: { client_id_date: { client_id: clientId, date } },
+          create: {
+            client_id: clientId,
+            date,
+            exercises_completed: existing?.exercises_completed ?? [],
+            meals_completed: updatedMeals,
+            notes: existing?.notes ?? null,
+            training_completed: existing?.training_completed ?? false,
+            trainings_completed: existing?.trainings_completed ?? [],
+          },
+          update: {
+            meals_completed: updatedMeals,
+          },
+        });
 
-    const progress = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.dayProgress.upsert({
-        where: { client_id_date: { client_id: clientId, date } },
-        create: {
-          client_id: clientId,
-          date,
-          exercises_completed: existing?.exercises_completed ?? [],
-          meals_completed: updatedMeals,
-          notes: existing?.notes ?? null,
-          training_completed: existing?.training_completed ?? false,
-          trainings_completed: existing?.trainings_completed ?? [],
-        },
-        update: {
-          meals_completed: updatedMeals,
-        },
-      });
-
-      await this.updateStreak(clientId, date, tx);
-      return result;
-    });
+        await this.updateStreak(clientId, date, tx);
+        return result;
+      },
+    );
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(
@@ -672,43 +804,53 @@ export class ProgressService {
 
   async unmarkExercise(clientId: string, dateStr: string, exerciseId: string) {
     const date = this.parseDate(dateStr);
-    const assignment = await this.getAssignmentContext(clientId, date);
+    const progress = await this.withLockedDayProgress(
+      clientId,
+      date,
+      async (tx, assignment) => {
+        if (!assignment.trainingExerciseIds.size) {
+          throw new ForbiddenException(
+            'No tienes entrenamiento asignado para esa fecha',
+          );
+        }
 
-    if (!assignment.trainingExerciseIds.size) {
-      throw new ForbiddenException(
-        'No tienes entrenamiento asignado para esa fecha',
-      );
-    }
+        const existing = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+        });
 
-    const existing = await this.prisma.dayProgress.findUnique({
-      where: { client_id_date: { client_id: clientId, date } },
-    });
+        if (!existing) {
+          return { message: 'No progress record found' };
+        }
 
-    if (!existing) {
-      return { message: 'No progress record found' };
-    }
+        const currentExercises = this.parseExercisesCompleted(
+          existing.exercises_completed,
+        );
+        const filtered = currentExercises.filter(
+          (entry) =>
+            entry.training_exercise_id !== exerciseId &&
+            entry.exercise_id !== exerciseId,
+        );
+        if (filtered.length === currentExercises.length) return existing;
+        const trainingsCompleted = this.getCompletedTrainingIds(
+          assignment,
+          filtered,
+        );
 
-    const currentExercises = this.parseExercisesCompleted(
-      existing.exercises_completed,
-    );
-    const filtered = currentExercises.filter(
-      (entry) =>
-        entry.training_exercise_id !== exerciseId &&
-        entry.exercise_id !== exerciseId,
-    );
-    const trainingsCompleted = this.getCompletedTrainingIds(assignment, filtered);
+        const result = await tx.dayProgress.update({
+          where: { client_id_date: { client_id: clientId, date } },
+          data: {
+            exercises_completed: this.serializeExercisesCompleted(filtered),
+            training_completed:
+              assignment.trainingIds.length > 0 &&
+              trainingsCompleted.length === assignment.trainingIds.length,
+            trainings_completed: trainingsCompleted,
+          },
+        });
 
-    const progress = await this.prisma.dayProgress.update({
-      where: { client_id_date: { client_id: clientId, date } },
-      data: {
-        exercises_completed: this.serializeExercisesCompleted(filtered),
-        training_completed: assignment.trainingIds.length > 0 &&
-          trainingsCompleted.length === assignment.trainingIds.length,
-        trainings_completed: trainingsCompleted,
+        await this.updateStreak(clientId, date, tx);
+        return result;
       },
-    });
-
-    await this.updateStreak(clientId, date);
+    );
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(
@@ -720,34 +862,43 @@ export class ProgressService {
 
   async unmarkMeal(clientId: string, dateStr: string, mealId: string) {
     const date = this.parseDate(dateStr);
-    const assignment = await this.getAssignmentContext(clientId, date);
+    const progress = await this.withLockedDayProgress(
+      clientId,
+      date,
+      async (tx, assignment) => {
+        if (!assignment.mealIds.size) {
+          throw new ForbiddenException(
+            'No tienes dieta asignada para esa fecha',
+          );
+        }
 
-    if (!assignment.mealIds.size) {
-      throw new ForbiddenException('No tienes dieta asignada para esa fecha');
-    }
+        if (!assignment.mealIds.has(mealId)) {
+          throw new ForbiddenException(
+            'Esa comida no pertenece a la dieta asignada',
+          );
+        }
 
-    if (!assignment.mealIds.has(mealId)) {
-      throw new ForbiddenException(
-        'Esa comida no pertenece a la dieta asignada',
-      );
-    }
+        const existing = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+        });
 
-    const existing = await this.prisma.dayProgress.findUnique({
-      where: { client_id_date: { client_id: clientId, date } },
-    });
+        if (!existing) {
+          return { message: 'No progress record found' };
+        }
 
-    if (!existing) {
-      return { message: 'No progress record found' };
-    }
+        const filtered = existing.meals_completed.filter((id) => id !== mealId);
+        if (filtered.length === existing.meals_completed.length)
+          return existing;
 
-    const filtered = existing.meals_completed.filter((id) => id !== mealId);
+        const result = await tx.dayProgress.update({
+          where: { client_id_date: { client_id: clientId, date } },
+          data: { meals_completed: filtered },
+        });
 
-    const progress = await this.prisma.dayProgress.update({
-      where: { client_id_date: { client_id: clientId, date } },
-      data: { meals_completed: filtered },
-    });
-
-    await this.updateStreak(clientId, date);
+        await this.updateStreak(clientId, date, tx);
+        return result;
+      },
+    );
 
     await this.challengesService.recalculateAutomaticProgress(clientId);
     await this.achievementsService.evaluateAutomaticAchievementsForUser(
