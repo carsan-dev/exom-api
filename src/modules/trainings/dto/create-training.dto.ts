@@ -79,6 +79,20 @@ export class TrainingExerciseDto {
   @Max(2147483647)
   target_value?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 2147483647 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  target_value_min?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2147483647 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  target_value_max?: number;
+
   @ApiPropertyOptional({ minimum: 0, maximum: 10, nullable: true })
   @IsOptional()
   @IsInt()
@@ -130,6 +144,20 @@ export class TrainingCircuitExerciseDto {
   @Min(1)
   @Max(2147483647)
   target_value?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2147483647 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  target_value_min?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2147483647 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  target_value_max?: number;
 
   @ApiPropertyOptional({ minimum: 0, maximum: 10, nullable: true })
   @IsOptional()

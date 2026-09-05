@@ -416,6 +416,8 @@ model TrainingExercise {
   reps_or_duration String
   measure_type     TrainingMeasureType?
   target_value     Int?
+  target_value_min Int?
+  target_value_max Int?
   target_rir       Int?
   request_set_tracking Boolean @default(false)
   /// Descanso entre series, en segundos.

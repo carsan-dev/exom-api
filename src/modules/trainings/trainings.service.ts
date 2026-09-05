@@ -73,6 +73,8 @@ type TrainingPrescriptionInput = {
   reps_or_duration: string;
   measure_type?: TrainingMeasureType;
   target_value?: number;
+  target_value_min?: number;
+  target_value_max?: number;
   target_rir?: number | null;
 };
 
@@ -80,6 +82,8 @@ type ExistingExercisePrescription = {
   reps_or_duration: string;
   measure_type: TrainingMeasureType | null;
   target_value: number | null;
+  target_value_min: number | null;
+  target_value_max: number | null;
   target_rir: number | null;
 };
 
@@ -467,23 +471,27 @@ export class TrainingsService {
 
   private parseLegacyPrescription(value: string): {
     measure_type: TrainingMeasureType;
-    target_value: number;
+    target_value: number | null;
+    target_value_min: number | null;
+    target_value_max: number | null;
   } | null {
+    const parseTarget = (raw: string, multiplier = 1) => {
+      const parsed = Number(raw) * multiplier;
+      return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 2147483647
+        ? parsed
+        : null;
+    };
     const seconds = value.match(
       /^\s*(\d+)\s*(?:s|seg|sec|segundo(?:s)?|second(?:s)?)\s*$/i,
     );
     if (seconds) {
-      const targetValue = Number(seconds[1]);
-      if (
-        !Number.isSafeInteger(targetValue) ||
-        targetValue < 1 ||
-        targetValue > 2147483647
-      ) {
-        return null;
-      }
+      const targetValue = parseTarget(seconds[1]);
+      if (targetValue == null) return null;
       return {
         measure_type: TrainingMeasureType.SECONDS,
         target_value: targetValue,
+        target_value_min: null,
+        target_value_max: null,
       };
     }
 
@@ -491,33 +499,46 @@ export class TrainingsService {
       /^\s*(\d+)\s*(?:min|mins|minute(?:s)?|minuto(?:s)?)\s*$/i,
     );
     if (minutes) {
-      const targetValue = Number(minutes[1]) * 60;
-      if (
-        !Number.isSafeInteger(targetValue) ||
-        targetValue < 1 ||
-        targetValue > 2147483647
-      ) {
-        return null;
-      }
+      const targetValue = parseTarget(minutes[1], 60);
+      if (targetValue == null) return null;
       return {
         measure_type: TrainingMeasureType.SECONDS,
         target_value: targetValue,
+        target_value_min: null,
+        target_value_max: null,
       };
     }
 
     const reps = value.match(/^\s*(\d+)\s*(?:rep(?:s|eticiones?)?)?\s*$/i);
     if (reps) {
-      const targetValue = Number(reps[1]);
-      if (
-        !Number.isSafeInteger(targetValue) ||
-        targetValue < 1 ||
-        targetValue > 2147483647
-      ) {
-        return null;
-      }
+      const targetValue = parseTarget(reps[1]);
+      if (targetValue == null) return null;
       return {
         measure_type: TrainingMeasureType.REPS,
         target_value: targetValue,
+        target_value_min: null,
+        target_value_max: null,
+      };
+    }
+
+    const secondsRange = value.match(
+      /^\s*(\d+)\s*-\s*(\d+)\s*(?:s|seg|sec|segundo(?:s)?|second(?:s)?)\s*$/i,
+    );
+    const repsRange = value.match(
+      /^\s*(\d+)\s*-\s*(\d+)\s*(?:rep(?:s|eticiones?)?)?\s*$/i,
+    );
+    const range = secondsRange ?? repsRange;
+    if (range) {
+      const min = parseTarget(range[1]);
+      const max = parseTarget(range[2]);
+      if (min == null || max == null || min > max) return null;
+      return {
+        measure_type: secondsRange
+          ? TrainingMeasureType.SECONDS
+          : TrainingMeasureType.REPS,
+        target_value: null,
+        target_value_min: min,
+        target_value_max: max,
       };
     }
 
@@ -528,11 +549,18 @@ export class TrainingsService {
     exercise: TrainingPrescriptionInput,
     existing?: ExistingExercisePrescription,
   ) {
-    const hasMeasureType = exercise.measure_type !== undefined;
-    const hasTargetValue = exercise.target_value !== undefined;
-    if (hasMeasureType !== hasTargetValue) {
+    const hasMeasureType = exercise.measure_type != null;
+    const hasTargetValue = exercise.target_value != null;
+    const hasTargetMin = exercise.target_value_min != null;
+    const hasTargetMax = exercise.target_value_max != null;
+    const hasTargetRange = hasTargetMin && hasTargetMax;
+    if (
+      hasTargetMin !== hasTargetMax ||
+      (hasTargetValue && hasTargetRange) ||
+      hasMeasureType !== (hasTargetValue || hasTargetRange)
+    ) {
       throw new BadRequestException(
-        'measure_type y target_value deben indicarse juntos',
+        'Indica measure_type y un objetivo exacto o un rango completo',
       );
     }
 
@@ -550,6 +578,29 @@ export class TrainingsService {
             : `${targetValue}`,
         measure_type: measureType,
         target_value: targetValue,
+        target_value_min: null,
+        target_value_max: null,
+        target_rir: targetRir,
+      };
+    }
+
+    if (hasMeasureType && hasTargetRange) {
+      const measureType = exercise.measure_type!;
+      const targetMin = exercise.target_value_min!;
+      const targetMax = exercise.target_value_max!;
+      if (targetMin > targetMax) {
+        throw new BadRequestException(
+          'El mínimo del objetivo no puede superar el máximo',
+        );
+      }
+      return {
+        reps_or_duration: `${targetMin}-${targetMax}${
+          measureType === TrainingMeasureType.SECONDS ? 's' : ''
+        }`,
+        measure_type: measureType,
+        target_value: null,
+        target_value_min: targetMin,
+        target_value_max: targetMax,
         target_rir: targetRir,
       };
     }
@@ -560,6 +611,8 @@ export class TrainingsService {
         reps_or_duration: existing.reps_or_duration,
         measure_type: existing.measure_type,
         target_value: existing.target_value,
+        target_value_min: existing.target_value_min ?? null,
+        target_value_max: existing.target_value_max ?? null,
         target_rir: targetRir,
       };
     }
@@ -569,6 +622,8 @@ export class TrainingsService {
       reps_or_duration: legacyValue,
       measure_type: parsed?.measure_type ?? null,
       target_value: parsed?.target_value ?? null,
+      target_value_min: parsed?.target_value_min ?? null,
+      target_value_max: parsed?.target_value_max ?? null,
       target_rir: targetRir,
     };
   }
@@ -591,6 +646,8 @@ export class TrainingsService {
         reps_or_duration: true,
         measure_type: true,
         target_value: true,
+        target_value_min: true,
+        target_value_max: true,
         target_rir: true,
       },
     });

@@ -75,6 +75,8 @@ describe('TrainingsService', () => {
       reps_or_duration: '12',
       measure_type: TrainingMeasureType.REPS,
       target_value: 12,
+      target_value_min: null,
+      target_value_max: null,
       target_rir: 2,
     });
     expect(
@@ -87,8 +89,71 @@ describe('TrainingsService', () => {
       reps_or_duration: '45s',
       measure_type: TrainingMeasureType.SECONDS,
       target_value: 45,
+      target_value_min: null,
+      target_value_max: null,
       target_rir: null,
     });
+  });
+
+  it.each([
+    [TrainingMeasureType.REPS, '8-10', 8, 10],
+    [TrainingMeasureType.SECONDS, '30-45s', 30, 45],
+  ])(
+    'normalizes a structured %s range into its legacy mirror',
+    (measureType, legacyMirror, min, max) => {
+      const result = (
+        service as unknown as {
+          resolveExercisePrescription: (
+            value: Record<string, unknown>,
+          ) => Record<string, unknown>;
+        }
+      ).resolveExercisePrescription({
+        reps_or_duration: 'ignored',
+        measure_type: measureType,
+        target_value_min: min,
+        target_value_max: max,
+      });
+
+      expect(result).toEqual({
+        reps_or_duration: legacyMirror,
+        measure_type: measureType,
+        target_value: null,
+        target_value_min: min,
+        target_value_max: max,
+        target_rir: null,
+      });
+    },
+  );
+
+  it.each([
+    {
+      reps_or_duration: '8-10',
+      measure_type: TrainingMeasureType.REPS,
+      target_value_min: 8,
+    },
+    {
+      reps_or_duration: '8-10',
+      measure_type: TrainingMeasureType.REPS,
+      target_value: 8,
+      target_value_min: 8,
+      target_value_max: 10,
+    },
+    {
+      reps_or_duration: '10-8',
+      measure_type: TrainingMeasureType.REPS,
+      target_value_min: 10,
+      target_value_max: 8,
+    },
+  ])('rejects an incoherent structured target %#', (prescription) => {
+    const testService = service as unknown as {
+      resolveExercisePrescription: (
+        value: Record<string, unknown>,
+      ) => Record<string, unknown>;
+    };
+
+    expect(() =>
+      testService.resolveExercisePrescription(prescription),
+    ).toThrow();
   });
 
   it('preserves structured prescription and RIR when a legacy edit omits them', () => {
@@ -105,6 +170,8 @@ describe('TrainingsService', () => {
         reps_or_duration: '10',
         measure_type: TrainingMeasureType.REPS,
         target_value: 10,
+        target_value_min: null,
+        target_value_max: null,
         target_rir: 3,
       },
     );
@@ -113,7 +180,39 @@ describe('TrainingsService', () => {
       reps_or_duration: '10',
       measure_type: TrainingMeasureType.REPS,
       target_value: 10,
+      target_value_min: null,
+      target_value_max: null,
       target_rir: 3,
+    });
+  });
+
+  it('preserves a structured range when a legacy edit omits new fields', () => {
+    const result = (
+      service as unknown as {
+        resolveExercisePrescription: (
+          value: Record<string, unknown>,
+          existing: Record<string, unknown>,
+        ) => Record<string, unknown>;
+      }
+    ).resolveExercisePrescription(
+      { reps_or_duration: '8-10' },
+      {
+        reps_or_duration: '8-10',
+        measure_type: TrainingMeasureType.REPS,
+        target_value: null,
+        target_value_min: 8,
+        target_value_max: 10,
+        target_rir: 2,
+      },
+    );
+
+    expect(result).toEqual({
+      reps_or_duration: '8-10',
+      measure_type: TrainingMeasureType.REPS,
+      target_value: null,
+      target_value_min: 8,
+      target_value_max: 10,
+      target_rir: 2,
     });
   });
 
@@ -130,9 +229,36 @@ describe('TrainingsService', () => {
       reps_or_duration: '2 min',
       measure_type: TrainingMeasureType.SECONDS,
       target_value: 120,
+      target_value_min: null,
+      target_value_max: null,
       target_rir: null,
     });
   });
+
+  it.each([
+    ['8-10', TrainingMeasureType.REPS, 8, 10],
+    ['30-45s', TrainingMeasureType.SECONDS, 30, 45],
+  ])(
+    'backfills a legacy range %s deterministically',
+    (repsOrDuration, measureType, min, max) => {
+      const result = (
+        service as unknown as {
+          resolveExercisePrescription: (
+            value: Record<string, unknown>,
+          ) => Record<string, unknown>;
+        }
+      ).resolveExercisePrescription({ reps_or_duration: repsOrDuration });
+
+      expect(result).toEqual({
+        reps_or_duration: repsOrDuration,
+        measure_type: measureType,
+        target_value: null,
+        target_value_min: min,
+        target_value_max: max,
+        target_rir: null,
+      });
+    },
+  );
 
   it.each(['0', '0s', '35791395 min', '2147483648 reps'])(
     'keeps out-of-range legacy target %s only in the legacy field',
@@ -149,6 +275,8 @@ describe('TrainingsService', () => {
         reps_or_duration: repsOrDuration,
         measure_type: null,
         target_value: null,
+        target_value_min: null,
+        target_value_max: null,
         target_rir: null,
       });
     },
