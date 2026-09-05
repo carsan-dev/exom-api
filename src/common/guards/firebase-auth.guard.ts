@@ -5,13 +5,18 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
+import type { Request } from 'express';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
-import { verifyFirebaseIdTokenWithFallback } from '../firebase/firebase-id-token';
+import {
+  isFirebaseIdTokenRejectedError,
+  verifyFirebaseIdTokenWithFallback,
+} from '../firebase/firebase-id-token';
 
 @Injectable()
 export class FirebaseAuthGuard implements CanActivate {
@@ -31,19 +36,29 @@ export class FirebaseAuthGuard implements CanActivate {
 
     if (isPublic) return true;
 
-    const request = context.switchToHttp().getRequest();
-    const authHeader = request.headers['authorization'];
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { user?: unknown }>();
+    const authHeader = request.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
       throw new UnauthorizedException('Token de autenticación requerido');
     }
 
-    const token = authHeader.split(' ')[1];
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (!token) {
+      throw new UnauthorizedException('Token de autenticación requerido');
+    }
 
     try {
       const decoded = await verifyFirebaseIdTokenWithFallback({
         token,
         webApiKey: this.config.get<string>('FIREBASE_WEB_API_KEY'),
+        restFallbackEnabled:
+          this.config
+            .get<string>('FIREBASE_AUTH_REST_FALLBACK_ENABLED')
+            ?.trim()
+            .toLowerCase() === 'true',
         logger: this.logger,
         logContext: 'FirebaseAuthGuard',
       });
@@ -80,13 +95,15 @@ export class FirebaseAuthGuard implements CanActivate {
       request.user = user;
       return true;
     } catch (err) {
-      if (
-        err instanceof UnauthorizedException ||
-        err instanceof HttpException
-      ) {
+      if (err instanceof HttpException) {
         throw err;
       }
-      throw new UnauthorizedException('Token inválido o expirado');
+      if (isFirebaseIdTokenRejectedError(err)) {
+        throw new UnauthorizedException('Token inválido o expirado');
+      }
+      throw new ServiceUnavailableException(
+        'No se pudo validar temporalmente la sesión',
+      );
     }
   }
 }

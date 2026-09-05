@@ -1,6 +1,7 @@
 import {
   HttpException,
   HttpStatus,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -186,13 +187,10 @@ describe('AuthService', () => {
   });
 
   it('returns custom token and user payload on social login when firebase uid matches', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ users: [{
-        localId: 'firebase-google-1',
-        email: 'client@exom.dev',
-        providerUserInfo: [{ providerId: 'google.com' }],
-      }] }),
+    verifyIdTokenMock.mockResolvedValue({
+      uid: 'firebase-google-1',
+      email: 'client@exom.dev',
+      firebase: { sign_in_provider: 'google.com' },
     });
     prisma.user.findUnique.mockResolvedValue({
       id: 'user-1',
@@ -227,13 +225,10 @@ describe('AuthService', () => {
   });
 
   it('links social login when the verified email belongs to an existing user', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ users: [{
-        localId: 'firebase-google-2',
-        email: 'client@exom.dev',
-        providerUserInfo: [{ providerId: 'google.com' }],
-      }] }),
+    verifyIdTokenMock.mockResolvedValue({
+      uid: 'firebase-google-2',
+      email: 'client@exom.dev',
+      firebase: { sign_in_provider: 'google.com' },
     });
     prisma.user.findUnique
       .mockResolvedValueOnce(null)
@@ -281,6 +276,30 @@ describe('AuthService', () => {
       },
       include: { profile: true },
     });
+  });
+
+  it('returns 401 when Firebase rejects a social ID token', async () => {
+    verifyIdTokenMock.mockRejectedValue(
+      Object.assign(new Error('invalid token'), {
+        code: 'auth/invalid-id-token',
+      }),
+    );
+
+    await expect(
+      service.socialLogin({ token: 'bad-token', provider: 'google' }),
+    ).rejects.toThrow(UnauthorizedException);
+  });
+
+  it('returns 503 when social token verification fails temporarily', async () => {
+    verifyIdTokenMock.mockRejectedValue(
+      Object.assign(new Error('firebase unavailable'), {
+        code: 'auth/internal-error',
+      }),
+    );
+
+    await expect(
+      service.socialLogin({ token: 'token-1', provider: 'google' }),
+    ).rejects.toThrow(ServiceUnavailableException);
   });
 
   it('throws when getMe cannot find the user', async () => {

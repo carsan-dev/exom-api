@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
   Logger,
   Optional,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
@@ -14,6 +15,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { LoginDto, SocialLoginDto } from './dto/login.dto';
 import {
+  isFirebaseIdTokenRejectedError,
   VerifiedFirebaseIdToken,
   verifyFirebaseIdTokenWithFallback,
 } from '../../common/firebase/firebase-id-token';
@@ -32,6 +34,7 @@ export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly maxAttempts: number;
   private readonly firebaseWebApiKey?: string;
+  private readonly firebaseAuthRestFallbackEnabled: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -40,6 +43,11 @@ export class AuthService {
   ) {
     this.maxAttempts = parseInt(this.config.get('LOGIN_MAX_ATTEMPTS', '3'));
     this.firebaseWebApiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
+    this.firebaseAuthRestFallbackEnabled =
+      this.config
+        .get<string>('FIREBASE_AUTH_REST_FALLBACK_ENABLED')
+        ?.trim()
+        .toLowerCase() === 'true';
   }
 
   private async signInWithFirebasePassword(email: string, password: string) {
@@ -313,6 +321,7 @@ export class AuthService {
       decoded = await verifyFirebaseIdTokenWithFallback({
         token: dto.token,
         webApiKey: this.firebaseWebApiKey,
+        restFallbackEnabled: this.firebaseAuthRestFallbackEnabled,
         logger: this.logger,
         logContext: 'AuthService.socialLogin',
         expectedProvider: this.expectedSocialProvider(dto.provider),
@@ -322,7 +331,12 @@ export class AuthService {
       this.logger.error(
         `Firebase social token verification failed: ${message}`,
       );
-      throw new UnauthorizedException('Token social inválido');
+      if (isFirebaseIdTokenRejectedError(err)) {
+        throw new UnauthorizedException('Token social inválido');
+      }
+      throw new ServiceUnavailableException(
+        'No se pudo validar temporalmente el token social',
+      );
     }
 
     const expectedProvider = this.expectedSocialProvider(dto.provider);
