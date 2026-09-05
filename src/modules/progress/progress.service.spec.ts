@@ -182,27 +182,120 @@ describe('ProgressService', () => {
     );
   });
 
+  it('stores RIR with the performance of its set', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-06-22',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-1',
+      sets: [{ set_number: 1, reps: 10, weight_kg: 40, rir: 0 }],
+    });
+
+    const input = (
+      prisma.dayProgress.upsert.mock.calls as unknown as Array<
+        [
+          {
+            create: {
+              exercises_completed: Array<{
+                sets: Array<Record<string, unknown>>;
+              }>;
+            };
+          },
+        ]
+      >
+    )[0][0];
+    expect(input.create.exercises_completed[0].sets).toEqual([
+      { set_number: 1, reps: 10, weight_kg: 40, rir: 0 },
+    ]);
+  });
+
+  it('keeps existing RIR when a legacy payload omits it', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-1',
+          exercise_id: 'exercise-1',
+          completed_at: '2026-06-22T10:00:00.000Z',
+          sets: [
+            { set_number: 1, reps: 8, weight_kg: 40, rir: 3 },
+            { set_number: 2, reps: 7, weight_kg: 40, rir: 4 },
+          ],
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+      training_completed: true,
+      trainings_completed: ['training-1'],
+    });
+    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-06-22',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-1',
+      sets: [{ set_number: 1, reps: 10, weight_kg: 42.5 }],
+    });
+
+    const input = (
+      prisma.dayProgress.upsert.mock.calls as unknown as Array<
+        [
+          {
+            update: {
+              exercises_completed: Array<{
+                sets: Array<Record<string, unknown>>;
+              }>;
+            };
+          },
+        ]
+      >
+    )[0][0];
+    expect(input.update.exercises_completed[0].sets).toEqual([
+      { set_number: 1, reps: 10, weight_kg: 42.5, rir: 3 },
+      { set_number: 2, reps: 7, weight_kg: 40, rir: 4 },
+    ]);
+  });
+
   it('rejects a required exercise without final-set video evidence', async () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
-      trainings: [{
-        requires_last_set_video: true,
-        training: {
-          id: 'training-1',
-          exercises: [{
-            id: 'training-exercise-1',
-            exercise_id: 'exercise-1',
-          }],
+      trainings: [
+        {
+          requires_last_set_video: true,
+          training: {
+            id: 'training-1',
+            exercises: [
+              {
+                id: 'training-exercise-1',
+                exercise_id: 'exercise-1',
+              },
+            ],
+          },
         },
-      }],
+      ],
       training: null,
       diet: null,
     });
 
-    await expect(service.markExerciseCompleted('client-1', {
-      date: '2026-06-22',
-      exercise_id: 'exercise-1',
-      training_exercise_id: 'training-exercise-1',
-    })).rejects.toThrow('Debes adjuntar el vídeo de la última serie');
+    await expect(
+      service.markExerciseCompleted('client-1', {
+        date: '2026-06-22',
+        exercise_id: 'exercise-1',
+        training_exercise_id: 'training-exercise-1',
+      }),
+    ).rejects.toThrow('Debes adjuntar el vídeo de la última serie');
 
     expect(prisma.dayProgress.upsert).not.toHaveBeenCalled();
   });
@@ -265,9 +358,7 @@ describe('ProgressService', () => {
   it('resolves an omitted occurrence only when the exercise is unique', async () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
       training: {
-        exercises: [
-          { id: 'training-exercise-1', exercise_id: 'exercise-1' },
-        ],
+        exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
       },
       diet: null,
     });
@@ -393,6 +484,131 @@ describe('ProgressService', () => {
     expect(prisma.dayProgress.upsert).not.toHaveBeenCalled();
   });
 
+  it('does not let complete training bypass required circuit rounds', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        id: 'training-1',
+        exercises: [
+          {
+            id: 'training-exercise-1',
+            exercise_id: 'exercise-1',
+            sets: 1,
+            block: { rounds: 2 },
+            measure_type: 'REPS',
+            reps_or_duration: '10',
+            request_set_tracking: true,
+          },
+        ],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-1',
+          exercise_id: 'exercise-1',
+          completed_at: '2026-07-01T10:00:00.000Z',
+          sets: [{ set_number: 1, reps: 10 }],
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+    });
+
+    await expect(
+      service.completeTraining('client-1', {
+        date: '2026-07-01',
+        training_id: 'training-1',
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'SET_PERFORMANCE_REQUIRED' },
+    });
+    expect(prisma.dayProgress.upsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts required seconds for every set when completing training', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        id: 'training-1',
+        exercises: [
+          {
+            id: 'training-exercise-1',
+            exercise_id: 'exercise-1',
+            sets: 2,
+            measure_type: 'SECONDS',
+            reps_or_duration: '30s',
+            request_set_tracking: true,
+          },
+        ],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-1',
+          exercise_id: 'exercise-1',
+          completed_at: '2026-07-01T10:00:00.000Z',
+          sets: [
+            { set_number: 1, seconds: 30, rir: 2 },
+            { set_number: 2, seconds: 28, rir: 1 },
+          ],
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+      training_completed: true,
+      trainings_completed: ['training-1'],
+    });
+
+    await expect(
+      service.completeTraining('client-1', {
+        date: '2026-07-01',
+        training_id: 'training-1',
+      }),
+    ).resolves.toMatchObject({ training_completed: true });
+  });
+
+  it('keeps legacy minute prescriptions time-based when completing training', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        id: 'training-1',
+        exercises: [
+          {
+            id: 'training-exercise-1',
+            exercise_id: 'exercise-1',
+            sets: 1,
+            measure_type: null,
+            reps_or_duration: '1 min',
+            request_set_tracking: true,
+          },
+        ],
+      },
+      diet: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-1',
+          exercise_id: 'exercise-1',
+          completed_at: '2026-07-01T10:00:00.000Z',
+          sets: [{ set_number: 1, seconds: 60 }],
+        },
+      ],
+      meals_completed: [],
+      notes: null,
+      training_completed: true,
+      trainings_completed: ['training-1'],
+    });
+
+    await expect(
+      service.completeTraining('client-1', {
+        date: '2026-07-01',
+        training_id: 'training-1',
+      }),
+    ).resolves.toMatchObject({ training_completed: true });
+  });
+
   it('returns previous performances before the requested date', async () => {
     prisma.dayProgress.findMany.mockResolvedValue([
       {
@@ -400,7 +616,7 @@ describe('ProgressService', () => {
         exercises_completed: [
           {
             exercise_id: 'exercise-1',
-            sets: [{ set_number: 1, seconds: 45 }],
+            sets: [{ set_number: 1, seconds: 45, rir: 1 }],
             completed_at: '2026-06-21T10:00:00.000Z',
           },
         ],
@@ -425,7 +641,7 @@ describe('ProgressService', () => {
       ),
     ).resolves.toEqual({
       'exercise-1': expect.objectContaining({
-        sets: [{ set_number: 1, seconds: 45 }],
+        sets: [{ set_number: 1, seconds: 45, rir: 1 }],
       }),
       'exercise-2': expect.objectContaining({
         sets: [{ set_number: 1, reps: 12, weight_kg: 20 }],
@@ -672,14 +888,18 @@ describe('ProgressService', () => {
           position: 0,
           training: {
             id: 'training-1',
-            exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+            exercises: [
+              { id: 'training-exercise-1', exercise_id: 'exercise-1' },
+            ],
           },
         },
         {
           position: 1,
           training: {
             id: 'training-2',
-            exercises: [{ id: 'training-exercise-2', exercise_id: 'exercise-2' }],
+            exercises: [
+              { id: 'training-exercise-2', exercise_id: 'exercise-2' },
+            ],
           },
         },
       ],
@@ -700,7 +920,9 @@ describe('ProgressService', () => {
           training_completed: false,
           trainings_completed: ['training-1'],
           exercises_completed: [
-            expect.objectContaining({ training_exercise_id: 'training-exercise-1' }),
+            expect.objectContaining({
+              training_exercise_id: 'training-exercise-1',
+            }),
           ],
         }),
       }),

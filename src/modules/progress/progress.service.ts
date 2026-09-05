@@ -12,6 +12,7 @@ import {
   MediaType,
   Prisma,
   PrismaClient,
+  TrainingMeasureType,
 } from '@prisma/client';
 import { isDeepStrictEqual } from 'node:util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -46,6 +47,7 @@ interface ExerciseCompletedEntry {
     reps?: number;
     seconds?: number;
     weight_kg?: number;
+    rir?: number | null;
   }>;
   completed_at: string;
   last_set_feedback_client_upload_id?: string;
@@ -60,6 +62,14 @@ interface AssignmentContext {
   trainingExerciseIdsByTrainingId: Map<string, Set<string>>;
   exerciseIdsByTrainingId: Map<string, Set<string>>;
   requiredTrainingExerciseIds: Set<string>;
+  trackingRequirementByTrainingExerciseId: Map<
+    string,
+    {
+      sets: number;
+      measure_type: TrainingMeasureType | null;
+      reps_or_duration: string;
+    }
+  >;
   mealIds: Set<string>;
   mealGroupById: Map<string, string>;
 }
@@ -92,6 +102,38 @@ export class ProgressService {
     return entries as unknown as Prisma.InputJsonValue;
   }
 
+  private mergeSetPerformances(
+    existingSets: ExerciseCompletedEntry['sets'],
+    incomingSets: NonNullable<MarkExerciseDto['sets']>,
+  ): NonNullable<ExerciseCompletedEntry['sets']> {
+    const existing = existingSets ?? [];
+    const existingNumbers = new Set(existing.map((set) => set.set_number));
+    const incomingByNumber = new Map(
+      incomingSets.map((set) => [set.set_number, set]),
+    );
+    const merge = (
+      current: NonNullable<ExerciseCompletedEntry['sets']>[number] | undefined,
+      set: NonNullable<MarkExerciseDto['sets']>[number],
+    ): NonNullable<ExerciseCompletedEntry['sets']>[number] => {
+      const merged = { ...current, set_number: set.set_number };
+      if (set.reps !== undefined) merged.reps = set.reps;
+      if (set.seconds !== undefined) merged.seconds = set.seconds;
+      if (set.weight_kg !== undefined) merged.weight_kg = set.weight_kg;
+      if (set.rir !== undefined) merged.rir = set.rir;
+      return merged;
+    };
+
+    return [
+      ...existing.map((set) => {
+        const incoming = incomingByNumber.get(set.set_number);
+        return incoming ? merge(set, incoming) : set;
+      }),
+      ...incomingSets
+        .filter((set) => !existingNumbers.has(set.set_number))
+        .map((set) => merge(undefined, set)),
+    ];
+  }
+
   private parseDate(dateStr: string): Date {
     return parseDateOnly(dateStr);
   }
@@ -108,7 +150,20 @@ export class ProgressService {
           orderBy: { position: 'asc' },
           include: {
             training: {
-              select: { id: true, exercises: { select: { id: true, exercise_id: true } } },
+              select: {
+                id: true,
+                exercises: {
+                  select: {
+                    id: true,
+                    exercise_id: true,
+                    sets: true,
+                    measure_type: true,
+                    reps_or_duration: true,
+                    request_set_tracking: true,
+                    block: { select: { rounds: true } },
+                  },
+                },
+              },
             },
           },
         },
@@ -116,7 +171,15 @@ export class ProgressService {
           select: {
             id: true,
             exercises: {
-              select: { id: true, exercise_id: true },
+              select: {
+                id: true,
+                exercise_id: true,
+                sets: true,
+                measure_type: true,
+                reps_or_duration: true,
+                request_set_tracking: true,
+                block: { select: { rounds: true } },
+              },
             },
           },
         },
@@ -131,38 +194,45 @@ export class ProgressService {
     });
 
     const dietMeals = assignment?.diet?.meals ?? [];
-    const assignedTrainingLinks = (assignment?.trainings ?? []).length
-      ? assignment!.trainings!.map((link) => ({
+    const assignmentTrainings = assignment?.trainings ?? [];
+    const assignedTrainingLinks = assignmentTrainings.length
+      ? assignmentTrainings.map((link) => ({
           training: link.training,
           requiresLastSetVideo: link.requires_last_set_video,
         }))
       : assignment?.training
-        ? [{
-            training: {
-              ...assignment.training,
-              id: assignment.training.id ?? assignment.training_id ?? '__legacy_training__',
+        ? [
+            {
+              training: {
+                ...assignment.training,
+                id:
+                  assignment.training.id ??
+                  assignment.training_id ??
+                  '__legacy_training__',
+              },
+              requiresLastSetVideo: false,
             },
-            requiresLastSetVideo: false,
-          }]
+          ]
         : [];
-    const assignedTrainings = assignedTrainingLinks.map((link) => link.training);
-    const allExercises = assignedTrainings.flatMap((training) => training.exercises);
+    const assignedTrainings = assignedTrainingLinks.map(
+      (link) => link.training,
+    );
+    const allExercises = assignedTrainings.flatMap(
+      (training) => training.exercises,
+    );
 
     return {
       date,
       trainingIds: assignedTrainings.map((training) => training.id),
-      trainingExerciseIds: new Set(
-        allExercises.map((exercise) => exercise.id),
-      ),
+      trainingExerciseIds: new Set(allExercises.map((exercise) => exercise.id)),
       exerciseIdByTrainingExerciseId: new Map(
-        allExercises.map((exercise) => [
-          exercise.id,
-          exercise.exercise_id,
-        ]),
+        allExercises.map((exercise) => [exercise.id, exercise.exercise_id]),
       ),
       trainingIdByTrainingExerciseId: new Map(
         assignedTrainings.flatMap((training) =>
-          training.exercises.map((exercise) => [exercise.id, training.id] as const),
+          training.exercises.map(
+            (exercise) => [exercise.id, training.id] as const,
+          ),
         ),
       ),
       trainingExerciseIdsByTrainingId: new Map(
@@ -180,7 +250,21 @@ export class ProgressService {
       requiredTrainingExerciseIds: new Set(
         assignedTrainingLinks
           .filter((link) => link.requiresLastSetVideo)
-          .flatMap((link) => link.training.exercises.map((exercise) => exercise.id)),
+          .flatMap((link) =>
+            link.training.exercises.map((exercise) => exercise.id),
+          ),
+      ),
+      trackingRequirementByTrainingExerciseId: new Map(
+        allExercises
+          .filter((exercise) => exercise.request_set_tracking)
+          .map((exercise) => [
+            exercise.id,
+            {
+              sets: exercise.block?.rounds ?? exercise.sets,
+              measure_type: exercise.measure_type,
+              reps_or_duration: exercise.reps_or_duration,
+            },
+          ]),
       ),
       mealIds: new Set(dietMeals.map((meal) => meal.id)),
       mealGroupById: new Map(
@@ -265,6 +349,39 @@ export class ProgressService {
         completedEntries,
       ),
     );
+  }
+
+  private validateRequiredSetPerformance(
+    trainingExerciseId: string,
+    entry: ExerciseCompletedEntry | undefined,
+    requirement: {
+      sets: number;
+      measure_type: TrainingMeasureType | null;
+      reps_or_duration: string;
+    },
+  ) {
+    const timeBased =
+      requirement.measure_type === TrainingMeasureType.SECONDS ||
+      (requirement.measure_type == null &&
+        /(?:\d+\s*s\b|\bseg\b|segundos?|\bsec\b|seconds?|\bs\b|\bmin\b|\bmins\b|minutos?|minutes?|tiempo|time)/i.test(
+          requirement.reps_or_duration,
+        ));
+    const setsByNumber = new Map(
+      (entry?.sets ?? []).map((set) => [set.set_number, set]),
+    );
+    const complete = Array.from(
+      { length: requirement.sets },
+      (_, index) => index + 1,
+    ).every((setNumber) => {
+      const set = setsByNumber.get(setNumber);
+      return timeBased ? set?.seconds != null : set?.reps != null;
+    });
+    if (!complete) {
+      throw new UnprocessableEntityException({
+        code: 'SET_PERFORMANCE_REQUIRED',
+        message: `Registra el rendimiento obligatorio de todas las series (${trainingExerciseId})`,
+      });
+    }
   }
 
   private async notifyStreakMilestone(clientId: string, days: number) {
@@ -411,7 +528,8 @@ export class ProgressService {
     if (!matches) {
       throw new UnprocessableEntityException({
         code: 'LAST_SET_FEEDBACK_INVALID',
-        message: 'El vídeo no corresponde a este cliente, fecha, entrenamiento y ejercicio',
+        message:
+          'El vídeo no corresponde a este cliente, fecha, entrenamiento y ejercicio',
       });
     }
   }
@@ -506,7 +624,9 @@ export class ProgressService {
           ...(dto.weight_used !== undefined && {
             weight_used: dto.weight_used,
           }),
-          ...(dto.sets !== undefined && { sets: dto.sets }),
+          ...(dto.sets !== undefined && {
+            sets: this.mergeSetPerformances(matchingEntry?.sets, dto.sets),
+          }),
           ...(dto.last_set_feedback_client_upload_id && {
             last_set_feedback_client_upload_id:
               dto.last_set_feedback_client_upload_id,
@@ -616,10 +736,25 @@ export class ProgressService {
           assignment.trainingExerciseIdsByTrainingId.get(targetTrainingId) ??
           new Set<string>();
         for (const trainingExerciseId of targetExerciseIds) {
+          const exerciseId =
+            assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
+          const entry =
+            currentByTrainingExercise.get(trainingExerciseId) ??
+            currentByExercise.get(exerciseId);
+          const trackingRequirement =
+            assignment.trackingRequirementByTrainingExerciseId.get(
+              trainingExerciseId,
+            );
+          if (trackingRequirement) {
+            this.validateRequiredSetPerformance(
+              trainingExerciseId,
+              entry,
+              trackingRequirement,
+            );
+          }
           if (!assignment.requiredTrainingExerciseIds.has(trainingExerciseId)) {
             continue;
           }
-          const entry = currentByTrainingExercise.get(trainingExerciseId);
           await this.validateLastSetFeedback(
             clientId,
             date,

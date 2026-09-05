@@ -1,4 +1,4 @@
-import { Level } from '@prisma/client';
+import { Level, TrainingMeasureType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { TrainingsService } from './trainings.service';
@@ -56,6 +56,103 @@ describe('TrainingsService', () => {
       autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
     );
   });
+
+  it('normalizes structured reps, seconds and target RIR into legacy mirrors', () => {
+    const testService = service as unknown as {
+      resolveExercisePrescription: (
+        value: Record<string, unknown>,
+      ) => Record<string, unknown>;
+    };
+
+    expect(
+      testService.resolveExercisePrescription({
+        reps_or_duration: 'ignored',
+        measure_type: TrainingMeasureType.REPS,
+        target_value: 12,
+        target_rir: 2,
+      }),
+    ).toEqual({
+      reps_or_duration: '12',
+      measure_type: TrainingMeasureType.REPS,
+      target_value: 12,
+      target_rir: 2,
+    });
+    expect(
+      testService.resolveExercisePrescription({
+        reps_or_duration: 'ignored',
+        measure_type: TrainingMeasureType.SECONDS,
+        target_value: 45,
+      }),
+    ).toEqual({
+      reps_or_duration: '45s',
+      measure_type: TrainingMeasureType.SECONDS,
+      target_value: 45,
+      target_rir: null,
+    });
+  });
+
+  it('preserves structured prescription and RIR when a legacy edit omits them', () => {
+    const result = (
+      service as unknown as {
+        resolveExercisePrescription: (
+          value: Record<string, unknown>,
+          existing: Record<string, unknown>,
+        ) => Record<string, unknown>;
+      }
+    ).resolveExercisePrescription(
+      { reps_or_duration: '10' },
+      {
+        reps_or_duration: '10',
+        measure_type: TrainingMeasureType.REPS,
+        target_value: 10,
+        target_rir: 3,
+      },
+    );
+
+    expect(result).toEqual({
+      reps_or_duration: '10',
+      measure_type: TrainingMeasureType.REPS,
+      target_value: 10,
+      target_rir: 3,
+    });
+  });
+
+  it('normalizes an unambiguous legacy minute target to seconds', () => {
+    const result = (
+      service as unknown as {
+        resolveExercisePrescription: (
+          value: Record<string, unknown>,
+        ) => Record<string, unknown>;
+      }
+    ).resolveExercisePrescription({ reps_or_duration: '2 min' });
+
+    expect(result).toEqual({
+      reps_or_duration: '2 min',
+      measure_type: TrainingMeasureType.SECONDS,
+      target_value: 120,
+      target_rir: null,
+    });
+  });
+
+  it.each(['0', '0s', '35791395 min', '2147483648 reps'])(
+    'keeps out-of-range legacy target %s only in the legacy field',
+    (repsOrDuration) => {
+      const result = (
+        service as unknown as {
+          resolveExercisePrescription: (
+            value: Record<string, unknown>,
+          ) => Record<string, unknown>;
+        }
+      ).resolveExercisePrescription({ reps_or_duration: repsOrDuration });
+
+      expect(result).toEqual({
+        reps_or_duration: repsOrDuration,
+        measure_type: null,
+        target_value: null,
+        target_rir: null,
+      });
+    },
+  );
 
   it('builds prisma filters for list mode', async () => {
     const query = Object.assign(new TrainingsQueryDto(), {
@@ -240,7 +337,9 @@ describe('TrainingsService', () => {
       { id: 'training-1', tags: ['Fuerza', 'Casa', 'Corto'] },
       { id: 'training-2', tags: ['Casa'] },
     ]);
-    prisma.training.update.mockImplementation(({ data }) => Promise.resolve(data));
+    prisma.training.update.mockImplementation(({ data }) =>
+      Promise.resolve(data),
+    );
 
     await expect(service.deleteTags(['fuerza', 'CASA'])).resolves.toEqual({
       values: ['fuerza', 'CASA'],
@@ -259,7 +358,12 @@ describe('TrainingsService', () => {
 
   it('deletes training types while preserving a remaining type', async () => {
     prisma.training.findMany.mockResolvedValue([
-      { id: 'training-1', name: 'Mixto', type: 'Fuerza', types: ['Fuerza', 'Cardio'] },
+      {
+        id: 'training-1',
+        name: 'Mixto',
+        type: 'Fuerza',
+        types: ['Fuerza', 'Cardio'],
+      },
     ]);
     prisma.achievement.findMany.mockResolvedValue([]);
     prisma.training.update.mockResolvedValue({});
@@ -279,7 +383,11 @@ describe('TrainingsService', () => {
       { id: 'training-1', name: 'Fuerza', type: 'Fuerza', types: ['Fuerza'] },
     ]);
     prisma.achievement.findMany.mockResolvedValue([
-      { id: 'achievement-1', name: 'Fuerza', rule_config: { training_type: 'Fuerza' } },
+      {
+        id: 'achievement-1',
+        name: 'Fuerza',
+        rule_config: { training_type: 'Fuerza' },
+      },
     ]);
 
     await expect(service.deleteTypes(['Fuerza'])).rejects.toThrow(
@@ -364,7 +472,9 @@ describe('TrainingsService', () => {
       color: '#22C55E',
     });
 
-    await expect(service.updateTypeColor('Pilates', '#22c55e')).resolves.toEqual({
+    await expect(
+      service.updateTypeColor('Pilates', '#22c55e'),
+    ).resolves.toEqual({
       value: 'Pilates',
       color: '#22C55E',
     });

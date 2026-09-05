@@ -17,7 +17,7 @@ interface CompletedExercise {
   training_exercise_id?: string;
   exercise_id: string;
   completed_at: string;
-  sets?: Array<{ set_number: number; reps?: number }>;
+  sets?: Array<{ set_number: number; reps?: number; rir?: number }>;
 }
 
 describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
@@ -276,6 +276,34 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     );
     expect(entries).toHaveLength(1);
     expect([8, 12]).toContain(entries[0].sets?.[0].reps);
+  });
+
+  it('merges different series written simultaneously without losing RIR', async () => {
+    await Promise.all([
+      serviceOne.markExerciseCompleted(clientId, {
+        date,
+        exercise_id: exerciseOneId,
+        training_exercise_id: trainingExerciseOneId,
+        sets: [{ set_number: 1, reps: 10, rir: 0 }],
+      }),
+      serviceTwo.markExerciseCompleted(clientId, {
+        date,
+        exercise_id: exerciseOneId,
+        training_exercise_id: trainingExerciseOneId,
+        sets: [{ set_number: 2, reps: 8, rir: 10 }],
+      }),
+    ]);
+
+    const entries = completedExercises(
+      (await readProgress()).exercises_completed,
+    );
+    expect(entries).toHaveLength(1);
+    expect(
+      [...(entries[0].sets ?? [])].sort((a, b) => a.set_number - b.set_number),
+    ).toEqual([
+      { set_number: 1, reps: 10, rir: 0 },
+      { set_number: 2, reps: 8, rir: 10 },
+    ]);
   });
 
   it('does not rewrite state when the same completion is retried', async () => {

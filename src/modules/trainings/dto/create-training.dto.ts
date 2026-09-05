@@ -13,9 +13,10 @@ import {
   Matches,
   IsIn,
   IsBoolean,
+  Max,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { Level } from '@prisma/client';
+import { Level, TrainingMeasureType } from '@prisma/client';
 
 const trimString = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : value;
@@ -24,9 +25,7 @@ const trimStringArray = ({ value }: { value: unknown }) =>
   Array.isArray(value)
     ? value
         .map((entry) =>
-          typeof entry === 'string'
-            ? entry.trim().replace(/\s+/g, ' ')
-            : entry,
+          typeof entry === 'string' ? entry.trim().replace(/\s+/g, ' ') : entry,
         )
         .filter((entry) => typeof entry === 'string' && entry.length > 0)
     : value;
@@ -65,7 +64,27 @@ export class TrainingExerciseDto {
 
   @ApiProperty()
   @IsString()
+  @IsNotEmpty()
   reps_or_duration: string;
+
+  @ApiPropertyOptional({ enum: TrainingMeasureType })
+  @IsOptional()
+  @IsEnum(TrainingMeasureType)
+  measure_type?: TrainingMeasureType;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2147483647 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  target_value?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 10, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10)
+  target_rir?: number | null;
 
   @ApiPropertyOptional({
     default: 60,
@@ -97,7 +116,27 @@ export class TrainingCircuitExerciseDto {
 
   @ApiProperty()
   @IsString()
+  @IsNotEmpty()
   reps_or_duration: string;
+
+  @ApiPropertyOptional({ enum: TrainingMeasureType })
+  @IsOptional()
+  @IsEnum(TrainingMeasureType)
+  measure_type?: TrainingMeasureType;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2147483647 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  target_value?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 10, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10)
+  target_rir?: number | null;
 
   @ApiPropertyOptional({ default: false })
   @IsOptional()

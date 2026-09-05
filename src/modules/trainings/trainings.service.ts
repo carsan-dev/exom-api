@@ -3,7 +3,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CatalogColorType, Prisma, TrainingBlockType } from '@prisma/client';
+import {
+  CatalogColorType,
+  Prisma,
+  TrainingBlockType,
+  TrainingMeasureType,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
@@ -62,6 +67,20 @@ type TrainingProgressLike = {
   training_completed: boolean;
   trainings_completed: string[];
   exercises_completed: Prisma.JsonValue;
+};
+
+type TrainingPrescriptionInput = {
+  reps_or_duration: string;
+  measure_type?: TrainingMeasureType;
+  target_value?: number;
+  target_rir?: number | null;
+};
+
+type ExistingExercisePrescription = {
+  reps_or_duration: string;
+  measure_type: TrainingMeasureType | null;
+  target_value: number | null;
+  target_rir: number | null;
 };
 
 const trainingExercisesInclude = {
@@ -181,7 +200,8 @@ export class TrainingsService {
 
     return values.map((value) => ({
       value,
-      color: colorsByKey.get(this.getCatalogKey(value)) ?? DEFAULT_CATALOG_COLOR,
+      color:
+        colorsByKey.get(this.getCatalogKey(value)) ?? DEFAULT_CATALOG_COLOR,
     }));
   }
 
@@ -342,7 +362,9 @@ export class TrainingsService {
     const types = this.resolveTrainingTypes(training);
     const blocks = training.blocks ?? [];
     const flatExercises = (training.exercises ?? []).map((exercise) => {
-      const block = blocks.find((candidate) => candidate.id === exercise.block_id);
+      const block = blocks.find(
+        (candidate) => candidate.id === exercise.block_id,
+      );
 
       return {
         ...exercise,
@@ -353,8 +375,7 @@ export class TrainingsService {
               type: block.type,
               name: block.name,
               rounds: block.rounds,
-              rest_between_rounds_seconds:
-                block.rest_between_rounds_seconds,
+              rest_between_rounds_seconds: block.rest_between_rounds_seconds,
             }
           : null,
       };
@@ -444,6 +465,114 @@ export class TrainingsService {
     );
   }
 
+  private parseLegacyPrescription(value: string): {
+    measure_type: TrainingMeasureType;
+    target_value: number;
+  } | null {
+    const seconds = value.match(
+      /^\s*(\d+)\s*(?:s|seg|sec|segundo(?:s)?|second(?:s)?)\s*$/i,
+    );
+    if (seconds) {
+      const targetValue = Number(seconds[1]);
+      if (
+        !Number.isSafeInteger(targetValue) ||
+        targetValue < 1 ||
+        targetValue > 2147483647
+      ) {
+        return null;
+      }
+      return {
+        measure_type: TrainingMeasureType.SECONDS,
+        target_value: targetValue,
+      };
+    }
+
+    const minutes = value.match(
+      /^\s*(\d+)\s*(?:min|mins|minute(?:s)?|minuto(?:s)?)\s*$/i,
+    );
+    if (minutes) {
+      const targetValue = Number(minutes[1]) * 60;
+      if (
+        !Number.isSafeInteger(targetValue) ||
+        targetValue < 1 ||
+        targetValue > 2147483647
+      ) {
+        return null;
+      }
+      return {
+        measure_type: TrainingMeasureType.SECONDS,
+        target_value: targetValue,
+      };
+    }
+
+    const reps = value.match(/^\s*(\d+)\s*(?:rep(?:s|eticiones?)?)?\s*$/i);
+    if (reps) {
+      const targetValue = Number(reps[1]);
+      if (
+        !Number.isSafeInteger(targetValue) ||
+        targetValue < 1 ||
+        targetValue > 2147483647
+      ) {
+        return null;
+      }
+      return {
+        measure_type: TrainingMeasureType.REPS,
+        target_value: targetValue,
+      };
+    }
+
+    return null;
+  }
+
+  private resolveExercisePrescription(
+    exercise: TrainingPrescriptionInput,
+    existing?: ExistingExercisePrescription,
+  ) {
+    const hasMeasureType = exercise.measure_type !== undefined;
+    const hasTargetValue = exercise.target_value !== undefined;
+    if (hasMeasureType !== hasTargetValue) {
+      throw new BadRequestException(
+        'measure_type y target_value deben indicarse juntos',
+      );
+    }
+
+    const targetRir =
+      exercise.target_rir !== undefined
+        ? exercise.target_rir
+        : (existing?.target_rir ?? null);
+    if (hasMeasureType && hasTargetValue) {
+      const measureType = exercise.measure_type!;
+      const targetValue = exercise.target_value!;
+      return {
+        reps_or_duration:
+          measureType === TrainingMeasureType.SECONDS
+            ? `${targetValue}s`
+            : `${targetValue}`,
+        measure_type: measureType,
+        target_value: targetValue,
+        target_rir: targetRir,
+      };
+    }
+
+    const legacyValue = exercise.reps_or_duration.trim();
+    if (existing && legacyValue === existing.reps_or_duration) {
+      return {
+        reps_or_duration: existing.reps_or_duration,
+        measure_type: existing.measure_type,
+        target_value: existing.target_value,
+        target_rir: targetRir,
+      };
+    }
+
+    const parsed = this.parseLegacyPrescription(legacyValue);
+    return {
+      reps_or_duration: legacyValue,
+      measure_type: parsed?.measure_type ?? null,
+      target_value: parsed?.target_value ?? null,
+      target_rir: targetRir,
+    };
+  }
+
   private async replaceTrainingItems(
     tx: Prisma.TransactionClient,
     trainingId: string,
@@ -457,11 +586,20 @@ export class TrainingsService {
     });
     const existingExercises = await tx.trainingExercise.findMany({
       where: { training_id: trainingId },
-      select: { id: true },
+      select: {
+        id: true,
+        reps_or_duration: true,
+        measure_type: true,
+        target_value: true,
+        target_rir: true,
+      },
     });
     const existingBlockIds = new Set(existingBlocks.map((block) => block.id));
     const existingExerciseIds = new Set(
       existingExercises.map((exercise) => exercise.id),
+    );
+    const existingExerciseById = new Map(
+      existingExercises.map((exercise) => [exercise.id, exercise]),
     );
     const nextBlockIds = new Set(
       items
@@ -482,12 +620,16 @@ export class TrainingsService {
 
     for (const blockId of nextBlockIds) {
       if (!existingBlockIds.has(blockId)) {
-        throw new BadRequestException('El circuito indicado no pertenece al entrenamiento');
+        throw new BadRequestException(
+          'El circuito indicado no pertenece al entrenamiento',
+        );
       }
     }
     for (const exerciseId of nextExerciseIds) {
       if (!existingExerciseIds.has(exerciseId)) {
-        throw new BadRequestException('El ejercicio indicado no pertenece al entrenamiento');
+        throw new BadRequestException(
+          'El ejercicio indicado no pertenece al entrenamiento',
+        );
       }
     }
 
@@ -530,13 +672,13 @@ export class TrainingsService {
       if (item.kind === 'CIRCUIT') {
         const circuit = item as TrainingCircuitItemDto;
         const blockData = {
-            training_id: trainingId,
-            order,
-            type: TrainingBlockType.CIRCUIT,
-            name: circuit.name?.trim() || 'Circuito',
-            rounds: circuit.rounds,
-            rest_between_rounds_seconds:
-              circuit.rest_between_rounds_seconds ?? 60,
+          training_id: trainingId,
+          order,
+          type: TrainingBlockType.CIRCUIT,
+          name: circuit.name?.trim() || 'Circuito',
+          rounds: circuit.rounds,
+          rest_between_rounds_seconds:
+            circuit.rest_between_rounds_seconds ?? 60,
         };
         const block = circuit.id
           ? await tx.trainingBlock.update({
@@ -550,6 +692,10 @@ export class TrainingsService {
             });
 
         for (const [position, exercise] of circuit.exercises.entries()) {
+          const prescription = this.resolveExercisePrescription(
+            exercise,
+            exercise.id ? existingExerciseById.get(exercise.id) : undefined,
+          );
           const exerciseData = {
             training_id: trainingId,
             block_id: block.id,
@@ -557,7 +703,7 @@ export class TrainingsService {
             order: order * 1000 + position,
             position_in_block: position,
             sets: 1,
-            reps_or_duration: exercise.reps_or_duration,
+            ...prescription,
             request_set_tracking: exercise.request_set_tracking ?? false,
             rest_seconds: exercise.rest_seconds ?? 15,
           };
@@ -576,16 +722,20 @@ export class TrainingsService {
       }
 
       const exercise = item as TrainingItemExerciseDto;
+      const prescription = this.resolveExercisePrescription(
+        exercise,
+        exercise.id ? existingExerciseById.get(exercise.id) : undefined,
+      );
       const exerciseData = {
-          training_id: trainingId,
-          block_id: null,
-          exercise_id: exercise.exercise_id,
-          order: hasCircuits ? order * 1000 : order,
-          position_in_block: null,
-          sets: exercise.sets,
-          reps_or_duration: exercise.reps_or_duration,
-          request_set_tracking: exercise.request_set_tracking ?? false,
-          rest_seconds: exercise.rest_seconds ?? 60,
+        training_id: trainingId,
+        block_id: null,
+        exercise_id: exercise.exercise_id,
+        order: hasCircuits ? order * 1000 : order,
+        position_in_block: null,
+        sets: exercise.sets,
+        ...prescription,
+        request_set_tracking: exercise.request_set_tracking ?? false,
+        rest_seconds: exercise.rest_seconds ?? 60,
       };
 
       if (exercise.id) {
@@ -621,7 +771,10 @@ export class TrainingsService {
         select: {
           client_id: true,
           date: true,
-          trainings: { orderBy: { position: 'asc' }, select: { training_id: true } },
+          trainings: {
+            orderBy: { position: 'asc' },
+            select: { training_id: true },
+          },
           training_id: true,
         },
       }),
@@ -639,7 +792,9 @@ export class TrainingsService {
       },
     });
     const assignedKeys = new Set(
-      assignments.map(({ client_id, date }) => `${client_id}:${date.toISOString()}`),
+      assignments.map(
+        ({ client_id, date }) => `${client_id}:${date.toISOString()}`,
+      ),
     );
 
     for (const progress of progresses) {
@@ -658,13 +813,20 @@ export class TrainingsService {
       )!;
       const assignedIds = assignment.trainings.length
         ? assignment.trainings.map((link) => link.training_id)
-        : assignment.training_id ? [assignment.training_id] : [];
+        : assignment.training_id
+          ? [assignment.training_id]
+          : [];
       await tx.dayProgress.update({
         where: { id: progress.id },
         data: {
-          exercises_completed: reconciled.entries as unknown as Prisma.InputJsonValue,
-          trainings_completed: [...completedIds].filter((id) => assignedIds.includes(id)),
-          training_completed: assignedIds.length > 0 && assignedIds.every((id) => completedIds.has(id)),
+          exercises_completed:
+            reconciled.entries as unknown as Prisma.InputJsonValue,
+          trainings_completed: [...completedIds].filter((id) =>
+            assignedIds.includes(id),
+          ),
+          training_completed:
+            assignedIds.length > 0 &&
+            assignedIds.every((id) => completedIds.has(id)),
         },
       });
     }
@@ -700,7 +862,9 @@ export class TrainingsService {
       _count?: { exercises: number };
     },
   >(trainings: T[]) {
-    return trainings.map((training) => this.serializeTrainingListItem(training));
+    return trainings.map((training) =>
+      this.serializeTrainingListItem(training),
+    );
   }
 
   private normalizeTrainingTypeValue(value: string) {
@@ -933,7 +1097,9 @@ export class TrainingsService {
       const trainingType = this.parseAchievementRuleConfig(
         achievement.rule_config,
       )?.training_type;
-      return Boolean(trainingType && keys.has(this.getCatalogKey(trainingType)));
+      return Boolean(
+        trainingType && keys.has(this.getCatalogKey(trainingType)),
+      );
     });
     const plannedUpdates = trainings.flatMap((training) => {
       const currentTypes = this.resolveTrainingTypes(training);
@@ -950,10 +1116,14 @@ export class TrainingsService {
 
     const blockers = [
       ...(trainingsWithoutType.length > 0
-        ? [`dejaría ${trainingsWithoutType.length} ${trainingsWithoutType.length === 1 ? 'entrenamiento' : 'entrenamientos'} sin tipo`]
+        ? [
+            `dejaría ${trainingsWithoutType.length} ${trainingsWithoutType.length === 1 ? 'entrenamiento' : 'entrenamientos'} sin tipo`,
+          ]
         : []),
       ...(referencedAchievements.length > 0
-        ? [`afectaría ${referencedAchievements.length} ${referencedAchievements.length === 1 ? 'logro configurado' : 'logros configurados'}`]
+        ? [
+            `afectaría ${referencedAchievements.length} ${referencedAchievements.length === 1 ? 'logro configurado' : 'logros configurados'}`,
+          ]
         : []),
     ];
     if (blockers.length > 0) {
@@ -1142,15 +1312,20 @@ export class TrainingsService {
 
     return this.prisma.$transaction(async (tx) => {
       if (groupId) {
-        const group = await tx.trainingGroup.findUnique({ where: { id: groupId } });
-        if (!group) throw new NotFoundException('Grupo de entrenamientos no encontrado');
+        const group = await tx.trainingGroup.findUnique({
+          where: { id: groupId },
+        });
+        if (!group)
+          throw new NotFoundException('Grupo de entrenamientos no encontrado');
       }
 
       const activeCount = await tx.training.count({
         where: { id: { in: ids }, is_active: true },
       });
       if (activeCount !== ids.length) {
-        throw new NotFoundException('Uno o más entrenamientos no existen o están inactivos');
+        throw new NotFoundException(
+          'Uno o más entrenamientos no existen o están inactivos',
+        );
       }
 
       const result = await tx.training.updateMany({

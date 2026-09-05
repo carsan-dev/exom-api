@@ -133,6 +133,11 @@ enum TrainingBlockType {
   CIRCUIT
 }
 
+enum TrainingMeasureType {
+  REPS
+  SECONDS
+}
+
 enum CatalogColorType {
   training_type
   diet_nutritional_badge
@@ -409,6 +414,9 @@ model TrainingExercise {
   position_in_block Int?
   sets             Int
   reps_or_duration String
+  measure_type     TrainingMeasureType?
+  target_value     Int?
+  target_rir       Int?
   request_set_tracking Boolean @default(false)
   /// Descanso entre series, en segundos.
   rest_seconds     Int    @default(60)
