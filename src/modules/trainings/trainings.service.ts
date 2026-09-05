@@ -50,11 +50,18 @@ type TrainingResponseLike = TrainingCatalogRecord & {
   exercises?: Array<
     Record<string, unknown> & {
       id?: string;
+      exercise_id?: string;
       order?: number;
       block_id?: string | null;
       position_in_block?: number | null;
     }
   >;
+};
+
+type TrainingProgressLike = {
+  training_completed: boolean;
+  trainings_completed: string[];
+  exercises_completed: Prisma.JsonValue;
 };
 
 const trainingExercisesInclude = {
@@ -381,6 +388,47 @@ export class TrainingsService {
       exercises: flatExercises,
       items,
     };
+  }
+
+  private hasRecordedTrainingProgress(
+    training: {
+      id: string;
+      exercises?: Array<{ id?: string; exercise_id?: string }>;
+    },
+    progress: TrainingProgressLike | null | undefined,
+    assignedTrainingCount: number,
+  ): boolean {
+    if (!progress) return false;
+    if (progress.trainings_completed.includes(training.id)) return true;
+
+    const completedEntries = Array.isArray(progress.exercises_completed)
+      ? (progress.exercises_completed as Array<{
+          training_exercise_id?: string;
+          exercise_id?: string;
+        }>)
+      : [];
+    const trainingExerciseIds = new Set(
+      (training.exercises ?? [])
+        .map((exercise) => exercise.id)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const exerciseIds = new Set(
+      (training.exercises ?? [])
+        .map((exercise) => exercise.exercise_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    if (
+      completedEntries.some((entry) =>
+        entry.training_exercise_id
+          ? trainingExerciseIds.has(entry.training_exercise_id)
+          : Boolean(entry.exercise_id && exerciseIds.has(entry.exercise_id)),
+      )
+    ) {
+      return true;
+    }
+
+    return assignedTrainingCount === 1 && progress.training_completed;
   }
 
   private resolveTrainingItems(dto: CreateTrainingDto | UpdateTrainingDto) {
@@ -1136,7 +1184,6 @@ export class TrainingsService {
       where: { client_id_date: { client_id: clientId, date: target } },
       include: {
         trainings: {
-          where: { training: { is_active: true } },
           orderBy: { position: 'asc' },
           include: { training: { include: trainingExercisesInclude } },
         },
@@ -1154,13 +1201,20 @@ export class TrainingsService {
         exercises_completed: true,
       },
     });
-    const assignedTrainingLinks = assignment?.trainings.length
+    type AssignedTraining = NonNullable<
+      NonNullable<typeof assignment>['training']
+    >;
+    const candidateTrainingLinks: Array<{
+      training: AssignedTraining;
+      assignmentTrainingId: string | null;
+      requiresLastSetVideo: boolean;
+    }> = assignment?.trainings.length
       ? assignment.trainings.map((link) => ({
           training: link.training,
           assignmentTrainingId: link.id,
           requiresLastSetVideo: link.requires_last_set_video,
         }))
-      : assignment?.training?.is_active
+      : assignment?.training
         ? [
             {
               training: assignment.training,
@@ -1169,6 +1223,16 @@ export class TrainingsService {
             },
           ]
         : [];
+    const hasRecordedAssignmentProgress = candidateTrainingLinks.some((link) =>
+      this.hasRecordedTrainingProgress(
+        link.training,
+        progress,
+        candidateTrainingLinks.length,
+      ),
+    );
+    const assignedTrainingLinks = candidateTrainingLinks.filter(
+      (link) => link.training.is_active || hasRecordedAssignmentProgress,
+    );
     const assignedTrainings = assignedTrainingLinks.map(
       (link) => link.training,
     );
@@ -1238,8 +1302,9 @@ export class TrainingsService {
   }
 
   async findOne(id: string, clientId?: string, date?: Date) {
+    const hasAssignmentContext = Boolean(clientId && date);
     const training = await this.prisma.training.findFirst({
-      where: { id, is_active: true },
+      where: hasAssignmentContext ? { id } : { id, is_active: true },
       include: trainingExercisesInclude,
     });
 
@@ -1249,7 +1314,9 @@ export class TrainingsService {
 
     const serialized = this.serializeTraining(training);
     if (!clientId || !date) return serialized;
-    const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const target = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
     await this.autoAssignmentMaterializer.reconcile(clientId, {
       start: target,
       end: target,
@@ -1259,12 +1326,60 @@ export class TrainingsService {
       where: { client_id_date: { client_id: clientId, date: target } },
       select: {
         trainings: {
-          where: { training_id: id },
-          select: { id: true, requires_last_set_video: true },
+          select: {
+            id: true,
+            training_id: true,
+            requires_last_set_video: true,
+            training: {
+              select: {
+                id: true,
+                exercises: { select: { id: true, exercise_id: true } },
+              },
+            },
+          },
+        },
+        training_id: true,
+        training: {
+          select: {
+            id: true,
+            exercises: { select: { id: true, exercise_id: true } },
+          },
         },
       },
     });
-    const link = assignment?.trainings[0];
+    const link = assignment?.trainings.find((item) => item.training_id === id);
+    const isLegacyAssignment = assignment?.training_id === id;
+    if (training.is_active === false) {
+      const progress = await this.prisma.dayProgress.findUnique({
+        where: { client_id_date: { client_id: clientId, date: target } },
+        select: {
+          training_completed: true,
+          trainings_completed: true,
+          exercises_completed: true,
+        },
+      });
+      const assignedTrainingCount = assignment?.trainings.length
+        ? assignment.trainings.length
+        : assignment?.training_id
+          ? 1
+          : 0;
+      const assignedTrainings = assignment?.trainings.length
+        ? assignment.trainings.map((item) => item.training)
+        : assignment?.training
+          ? [assignment.training]
+          : [];
+      const hasRecordedAssignmentProgress = assignedTrainings.some(
+        (assignedTraining) =>
+          this.hasRecordedTrainingProgress(
+            assignedTraining,
+            progress,
+            assignedTrainingCount,
+          ),
+      );
+      if ((!link && !isLegacyAssignment) || !hasRecordedAssignmentProgress) {
+        throw new NotFoundException('Entrenamiento no encontrado');
+      }
+    }
     return {
       ...serialized,
       assignment_training_id: link?.id ?? null,

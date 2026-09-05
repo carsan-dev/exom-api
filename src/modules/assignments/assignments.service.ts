@@ -44,6 +44,7 @@ const assignmentInclude = {
       level: true,
       estimated_duration_min: true,
       estimated_calories: true,
+      is_active: true,
     },
   },
   trainings: {
@@ -59,6 +60,7 @@ const assignmentInclude = {
           level: true,
           estimated_duration_min: true,
           estimated_calories: true,
+          is_active: true,
         },
       },
     },
@@ -89,6 +91,7 @@ const autoAssignmentRuleInclude = {
           level: true,
           estimated_duration_min: true,
           estimated_calories: true,
+          is_active: true,
         },
       },
       trainings: {
@@ -104,6 +107,7 @@ const autoAssignmentRuleInclude = {
               level: true,
               estimated_duration_min: true,
               estimated_calories: true,
+              is_active: true,
             },
           },
         },
@@ -131,6 +135,7 @@ export interface AssignmentTrainingSummary {
   level: string;
   estimated_duration_min: number | null;
   estimated_calories: number | null;
+  is_active: boolean;
 }
 
 export interface AssignmentDietSummary {
@@ -260,6 +265,7 @@ export class AssignmentsService {
           level: true,
           estimated_duration_min: true,
           estimated_calories: true,
+          is_active: true,
           _count: { select: { exercises: true } },
         },
         orderBy: [{ created_at: 'desc' }, { id: 'desc' }],

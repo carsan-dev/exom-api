@@ -28,6 +28,7 @@ function createAssignment(overrides: Record<string, unknown> = {}) {
       level: 'INTERMEDIO',
       estimated_duration_min: 45,
       estimated_calories: 320,
+      is_active: true,
     },
     diet: null,
     ...overrides,
@@ -255,7 +256,10 @@ describe('AssignmentsService', () => {
   });
 
   it('rejects bulk assignment when no training, diet or rest day is provided', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
 
     await expect(
@@ -376,6 +380,55 @@ describe('AssignmentsService', () => {
       diet: null,
     });
     expect(prisma.adminClientAssignment.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('preserves and identifies inactive trainings in assignment history', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
+    prisma.planAssignment.findMany.mockResolvedValue([
+      createAssignment({
+        training_id: null,
+        training: null,
+        trainings: [
+          {
+            position: 0,
+            last_set_video_policy: 'AUTO',
+            requires_last_set_video: false,
+            training: {
+              ...createAssignment().training,
+              is_active: false,
+            },
+          },
+          {
+            position: 1,
+            last_set_video_policy: 'AUTO',
+            requires_last_set_video: false,
+            training: {
+              ...createAssignment().training,
+              id: 'training-2',
+              name: 'Full Body B',
+              is_active: false,
+            },
+          },
+        ],
+      }),
+    ]);
+
+    const response = await service.getWeek(clientUser, {
+      client_id: 'client-1',
+      week_start: '2026-03-30',
+    });
+
+    expect(response.days[0]).toMatchObject({
+      training_ids: ['training-1', 'training-2'],
+      training: { id: 'training-1', is_active: false },
+      trainings: [
+        { id: 'training-1', is_active: false },
+        { id: 'training-2', is_active: false },
+      ],
+    });
   });
 
   it('returns a normalized monthly response for admin planning', async () => {

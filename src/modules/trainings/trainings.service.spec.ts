@@ -387,8 +387,13 @@ describe('TrainingsService', () => {
     });
     prisma.planAssignment.findUnique.mockResolvedValue({
       trainings: [
-        { id: 'assignment-training-1', requires_last_set_video: true },
+        {
+          id: 'assignment-training-1',
+          training_id: 'training-1',
+          requires_last_set_video: true,
+        },
       ],
+      training_id: null,
     });
 
     await expect(
@@ -412,7 +417,7 @@ describe('TrainingsService', () => {
     );
   });
 
-  it('does not return inactive assigned trainings as the current training', async () => {
+  it('does not return an inactive assigned training without recorded progress', async () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
       trainings: [],
       training: {
@@ -438,7 +443,6 @@ describe('TrainingsService', () => {
       expect.objectContaining({
         include: expect.objectContaining({
           trainings: expect.objectContaining({
-            where: { training: { is_active: true } },
             orderBy: { position: 'asc' },
           }),
         }),
@@ -452,6 +456,191 @@ describe('TrainingsService', () => {
         dates: [new Date('2026-09-03T00:00:00.000Z')],
       },
     );
+  });
+
+  it('keeps the full inactive assigned plan visible when one exercise has progress', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      trainings: [
+        {
+          id: 'assignment-training-inactive',
+          requires_last_set_video: false,
+          training: {
+            id: 'training-inactive',
+            name: 'Retirado',
+            type: 'FUERZA',
+            types: ['FUERZA'],
+            is_active: false,
+            blocks: [],
+            exercises: [
+              {
+                id: 'training-exercise-inactive',
+                exercise_id: 'exercise-1',
+                order: 0,
+                block_id: null,
+                exercise: { id: 'exercise-1' },
+              },
+            ],
+          },
+        },
+        {
+          id: 'assignment-training-inactive-2',
+          requires_last_set_video: false,
+          training: {
+            id: 'training-inactive-2',
+            name: 'Retirado 2',
+            type: 'FUERZA',
+            types: ['FUERZA'],
+            is_active: false,
+            blocks: [],
+            exercises: [
+              {
+                id: 'training-exercise-inactive-2',
+                exercise_id: 'exercise-2',
+                order: 0,
+                block_id: null,
+                exercise: { id: 'exercise-2' },
+              },
+            ],
+          },
+        },
+      ],
+      training: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      training_completed: false,
+      trainings_completed: [],
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-inactive',
+          exercise_id: 'exercise-1',
+        },
+      ],
+    });
+
+    await expect(
+      service.findDay('client-1', new Date('2026-09-05T00:00:00.000Z')),
+    ).resolves.toMatchObject({
+      date: '2026-09-05',
+      training_completed: false,
+      trainings: [
+        {
+          id: 'training-inactive',
+          assignment_training_id: 'assignment-training-inactive',
+          completed: true,
+        },
+        {
+          id: 'training-inactive-2',
+          assignment_training_id: 'assignment-training-inactive-2',
+          completed: false,
+        },
+      ],
+    });
+  });
+
+  it('allows reopening any inactive training after its assigned plan has progress', async () => {
+    const target = new Date('2026-09-05T00:00:00.000Z');
+    prisma.training.findFirst.mockResolvedValue({
+      id: 'training-inactive-2',
+      name: 'Retirado 2',
+      type: 'FUERZA',
+      types: ['FUERZA'],
+      is_active: false,
+      blocks: [],
+      exercises: [
+        {
+          id: 'training-exercise-inactive-2',
+          exercise_id: 'exercise-2',
+          order: 0,
+          block_id: null,
+          exercise: { id: 'exercise-2' },
+        },
+      ],
+    });
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training_id: null,
+      trainings: [
+        {
+          id: 'assignment-training-inactive',
+          training_id: 'training-inactive',
+          requires_last_set_video: false,
+          training: {
+            id: 'training-inactive',
+            exercises: [
+              {
+                id: 'training-exercise-inactive',
+                exercise_id: 'exercise-1',
+              },
+            ],
+          },
+        },
+        {
+          id: 'assignment-training-inactive-2',
+          training_id: 'training-inactive-2',
+          requires_last_set_video: false,
+          training: {
+            id: 'training-inactive-2',
+            exercises: [
+              {
+                id: 'training-exercise-inactive-2',
+                exercise_id: 'exercise-2',
+              },
+            ],
+          },
+        },
+      ],
+      training: null,
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      training_completed: false,
+      trainings_completed: [],
+      exercises_completed: [
+        {
+          training_exercise_id: 'training-exercise-inactive',
+          exercise_id: 'exercise-1',
+        },
+      ],
+    });
+
+    await expect(
+      service.findOne('training-inactive-2', 'client-1', target),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: 'training-inactive-2',
+        assignment_training_id: 'assignment-training-inactive-2',
+        assignment_date: '2026-09-05',
+      }),
+    );
+    expect(prisma.training.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'training-inactive-2' } }),
+    );
+  });
+
+  it('does not expose an inactive assigned training before it has progress', async () => {
+    const target = new Date('2026-09-05T00:00:00.000Z');
+    prisma.training.findFirst.mockResolvedValue({
+      id: 'training-inactive',
+      name: 'Retirado',
+      type: 'FUERZA',
+      types: ['FUERZA'],
+      is_active: false,
+      blocks: [],
+      exercises: [],
+    });
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training_id: null,
+      trainings: [
+        {
+          id: 'assignment-training-inactive',
+          training_id: 'training-inactive',
+          requires_last_set_video: false,
+        },
+      ],
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.findOne('training-inactive', 'client-1', target),
+    ).rejects.toThrow('Entrenamiento no encontrado');
   });
 
   it('does not mark replacement trainings complete from historical progress', async () => {
