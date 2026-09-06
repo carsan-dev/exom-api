@@ -138,7 +138,7 @@ export async function verifyFirebaseIdTokenWithFallback({
       `${logContext}: Firebase Admin token verification failed: ${errorMessage(error)}`,
     );
 
-    if (!restFallbackEnabled) {
+    if (!restFallbackEnabled || isFirebaseIdTokenRejectedError(error)) {
       throw error;
     }
   }

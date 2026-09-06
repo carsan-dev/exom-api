@@ -125,7 +125,7 @@ describe('verifyFirebaseIdTokenWithFallback', () => {
   it('preserves a concrete REST token rejection as an auth rejection', async () => {
     verifyIdTokenMock.mockRejectedValue(
       Object.assign(new Error('invalid token'), {
-        code: 'auth/invalid-id-token',
+        code: 'auth/internal-error',
       }),
     );
     fetchMock.mockResolvedValue({
@@ -144,5 +144,26 @@ describe('verifyFirebaseIdTokenWithFallback', () => {
         logContext: 'test',
       }),
     ).rejects.toBeInstanceOf(FirebaseIdTokenRejectedError);
+  });
+
+  it('never bypasses a concrete Admin rejection even with REST enabled', async () => {
+    const rejection = Object.assign(new Error('revoked'), {
+      code: 'auth/id-token-revoked',
+    });
+    verifyIdTokenMock.mockRejectedValue(rejection);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ users: [{ localId: 'user' }] }),
+    });
+    await expect(
+      verifyFirebaseIdTokenWithFallback({
+        token: 'revoked',
+        webApiKey: 'test',
+        restFallbackEnabled: true,
+        logger,
+        logContext: 'test',
+      }),
+    ).rejects.toBe(rejection);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
