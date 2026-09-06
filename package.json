@@ -14,7 +14,7 @@
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
-    "test:concurrency": "jest --runInBand src/modules/progress/progress.concurrency.spec.ts",
+    "test:concurrency": "jest --runInBand src/modules/progress/progress.concurrency.spec.ts src/modules/assignments/planning-progress.concurrency.spec.ts src/modules/diets/diet-history.concurrency.spec.ts",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",

@@ -813,7 +813,7 @@ export class TrainingsService {
     trainingId: string,
     explicitlyDeletedIds: ReadonlySet<string>,
   ) {
-    const [currentExercises, assignments] = await Promise.all([
+    const [currentExercises, scannedAssignments] = await Promise.all([
       tx.trainingExercise.findMany({
         where: { training_id: trainingId },
         select: { id: true, exercise_id: true },
@@ -836,12 +836,35 @@ export class TrainingsService {
         },
       }),
     ]);
-    if (!assignments.length) return;
+    if (!scannedAssignments.length) return;
 
     await lockClientsDayProgress(
       tx,
-      assignments.map((assignment) => assignment.client_id),
+      scannedAssignments.map((assignment) => assignment.client_id),
     );
+
+    // Planning may have changed while these client locks were pending.
+    const assignments = await tx.planAssignment.findMany({
+      where: {
+        client_id: {
+          in: scannedAssignments.map((assignment) => assignment.client_id),
+        },
+        OR: [
+          { training_id: trainingId },
+          { trainings: { some: { training_id: trainingId } } },
+        ],
+      },
+      select: {
+        client_id: true,
+        date: true,
+        training_id: true,
+        trainings: {
+          orderBy: { position: 'asc' },
+          select: { training_id: true },
+        },
+      },
+    });
+    if (!assignments.length) return;
 
     const progresses = await tx.dayProgress.findMany({
       where: {
@@ -878,9 +901,7 @@ export class TrainingsService {
         data: {
           exercises_completed:
             reconciled.entries as unknown as Prisma.InputJsonValue,
-          trainings_completed: [...completedIds].filter((id) =>
-            assignedIds.includes(id),
-          ),
+          trainings_completed: [...completedIds],
           training_completed:
             assignedIds.length > 0 &&
             assignedIds.every((id) => completedIds.has(id)),

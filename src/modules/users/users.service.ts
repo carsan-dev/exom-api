@@ -11,6 +11,10 @@ import {
 import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  flattenHistoricalMeals,
+  loadDietHistory,
+} from '../../common/progress/diet-history';
 import { ChallengesService } from '../challenges/challenges.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -1201,6 +1205,28 @@ export class UsersService {
       where: { client_id: clientId, date: new Date(date) },
     });
 
+    const dietHistory = await loadDietHistory(
+      this.prisma,
+      [clientId],
+      new Date(date),
+    );
+
+    if (!progress && dietHistory.length) {
+      return {
+        id: null,
+        client_id: clientId,
+        date: new Date(date),
+        training_completed: false,
+        trainings_completed: [],
+        exercises_completed: [],
+        meals_completed: [],
+        meals_completed_details: [],
+        notes: null,
+        admin_reply_text: null,
+        admin_reply_sent_at: null,
+        diet_history: dietHistory,
+      };
+    }
     if (!progress) {
       return null;
     }
@@ -1241,9 +1267,16 @@ export class UsersService {
     const mealNames = new Map<string, string>(
       meals.map((meal) => [meal.id, meal.name] as [string, string]),
     );
+    // Immutable evidence wins over a renamed/deleted live catalog row.
+    for (const entry of dietHistory) {
+      for (const meal of flattenHistoricalMeals(entry.diet)) {
+        mealNames.set(meal.id, meal.name);
+      }
+    }
 
     return {
       ...progress,
+      diet_history: dietHistory,
       exercises_completed: completedExercises.map((entry) => ({
         ...entry,
         exercise_name: exerciseNames.get(entry.exercise_id) ?? null,

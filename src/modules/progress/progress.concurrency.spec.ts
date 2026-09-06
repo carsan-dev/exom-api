@@ -306,6 +306,126 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     ]);
   });
 
+  it('allows a partial RIR correction without resending the recorded reps', async () => {
+    const command = {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    };
+    await serviceOne.markExerciseCompleted(clientId, {
+      ...command,
+      sets: [{ set_number: 1, reps: 8, rir: 2 }],
+    });
+    await serviceTwo.markExerciseCompleted(clientId, {
+      ...command,
+      sets: [{ set_number: 1, rir: null }],
+    });
+    expect(
+      completedExercises((await readProgress()).exercises_completed)[0].sets,
+    ).toEqual([{ set_number: 1, reps: 8, rir: null }]);
+  });
+
+  it('serializes actual concurrent partial fields of an existing series', async () => {
+    const command = {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    };
+    await serviceOne.markExerciseCompleted(clientId, {
+      ...command,
+      sets: [{ set_number: 1, reps: 8, rir: 2 }],
+    });
+    const blocker = await poolOne.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`exom:day-progress:${clientId}`],
+    );
+    const writes = Promise.all([
+      serviceOne.markExerciseCompleted(clientId, {
+        ...command,
+        sets: [{ set_number: 1, reps: 10 }],
+      }),
+      serviceTwo.markExerciseCompleted(clientId, {
+        ...command,
+        sets: [{ set_number: 1, rir: 5 }],
+      }),
+    ]);
+    let waiters = 0;
+    try {
+      for (let attempt = 0; attempt < 200 && waiters < 2; attempt++) {
+        const result = await blocker.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        );
+        waiters = result.rows[0].n;
+        if (waiters < 2)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      await blocker.query('COMMIT');
+      blocker.release();
+    }
+    await writes;
+    expect(waiters).toBe(2);
+    expect(
+      completedExercises((await readProgress()).exercises_completed)[0].sets,
+    ).toEqual([{ set_number: 1, reps: 10, rir: 5 }]);
+  });
+
+  it('cannot use another training occurrence to satisfy required sets in completeTraining', async () => {
+    await prismaOne.trainingExercise.update({
+      where: { id: trainingExerciseThreeId },
+      data: { exercise_id: exerciseOneId, request_set_tracking: true },
+    });
+    try {
+      await serviceOne.markExerciseCompleted(clientId, {
+        date,
+        exercise_id: exerciseOneId,
+        training_exercise_id: trainingExerciseOneId,
+        sets: [{ set_number: 1, reps: 8, rir: 2 }],
+      });
+      await expect(
+        serviceTwo.completeTraining(clientId, {
+          date,
+          training_id: trainingTwoId,
+        }),
+      ).rejects.toThrow();
+      expect(
+        completedExercises((await readProgress()).exercises_completed),
+      ).toHaveLength(1);
+    } finally {
+      await prismaOne.trainingExercise.update({
+        where: { id: trainingExerciseThreeId },
+        data: { exercise_id: exerciseThreeId, request_set_tracking: false },
+      });
+    }
+  });
+
+  it('does not bypass required series through the individual completion command', async () => {
+    await prismaOne.trainingExercise.update({
+      where: { id: trainingExerciseOneId },
+      data: { request_set_tracking: true, sets: 2 },
+    });
+    try {
+      await expect(
+        serviceOne.markExerciseCompleted(clientId, {
+          date,
+          exercise_id: exerciseOneId,
+          training_exercise_id: trainingExerciseOneId,
+          sets: [{ set_number: 1, reps: 8 }],
+        }),
+      ).rejects.toThrow();
+      expect(
+        await prismaOne.dayProgress.count({ where: { client_id: clientId } }),
+      ).toBe(0);
+    } finally {
+      await prismaOne.trainingExercise.update({
+        where: { id: trainingExerciseOneId },
+        data: { request_set_tracking: false, sets: 1 },
+      });
+    }
+  });
+
   it('does not rewrite state when the same completion is retried', async () => {
     const command = {
       date,
@@ -333,6 +453,27 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
       first.exercises_completed,
     );
     expect(retriedWithoutOptionalFields.updated_at).toEqual(first.updated_at);
+  });
+
+  it('keeps completed training identities that are no longer in the current assignment', async () => {
+    await prismaOne.dayProgress.create({
+      data: {
+        client_id: clientId,
+        date: dateValue,
+        trainings_completed: ['historical-training'],
+        exercises_completed: [],
+        meals_completed: [],
+      },
+    });
+    await serviceOne.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    });
+    expect((await readProgress()).trainings_completed).toContain(
+      'historical-training',
+    );
+    expect((await readProgress()).training_completed).toBe(false);
   });
 
   it('merges two trainings completed simultaneously', async () => {
@@ -371,6 +512,42 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
 
     expect(retried.meals_completed).toEqual([mealId, mealTwoId]);
     expect(retried.updated_at).toEqual(first.updated_at);
+  });
+
+  it('rejects ambiguous legacy unmark without deleting either occurrence', async () => {
+    await prismaOne.trainingExercise.update({
+      where: { id: trainingExerciseThreeId },
+      data: { exercise_id: exerciseOneId },
+    });
+    try {
+      for (const id of [trainingExerciseOneId, trainingExerciseThreeId]) {
+        await serviceOne.markExerciseCompleted(clientId, {
+          date,
+          exercise_id: exerciseOneId,
+          training_exercise_id: id,
+          sets: [{ set_number: 1, reps: 8, rir: 2 }],
+        });
+      }
+      await expect(
+        serviceTwo.unmarkExercise(clientId, date, exerciseOneId),
+      ).rejects.toThrow('training_exercise_id');
+      expect(
+        completedExercises((await readProgress()).exercises_completed),
+      ).toHaveLength(2);
+      await serviceTwo.unmarkExercise(clientId, date, trainingExerciseOneId);
+      expect(
+        completedExercises((await readProgress()).exercises_completed),
+      ).toEqual([
+        expect.objectContaining({
+          training_exercise_id: trainingExerciseThreeId,
+        }),
+      ]);
+    } finally {
+      await prismaOne.trainingExercise.update({
+        where: { id: trainingExerciseThreeId },
+        data: { exercise_id: exerciseThreeId },
+      });
+    }
   });
 
   it('keeps repeated unmark operations idempotent', async () => {

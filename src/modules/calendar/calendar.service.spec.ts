@@ -2,6 +2,7 @@ import { CalendarService } from './calendar.service';
 
 describe('CalendarService', () => {
   const prisma = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     planAssignment: { findMany: jest.fn() },
     dayProgress: { findMany: jest.fn() },
   };

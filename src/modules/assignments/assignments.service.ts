@@ -9,6 +9,11 @@ import {
 import { LastSetVideoPolicy, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  historicalDietFor,
+  indexDietHistory,
+  loadDietHistory,
+} from '../../common/progress/diet-history';
+import {
   CreateAutoAssignmentRuleDto,
   GetActiveAutoAssignmentRuleQueryDto,
 } from './dto/auto-assignment-rule.dto';
@@ -682,6 +687,7 @@ export class AssignmentsService {
       );
       const completedExerciseIds = new Set(
         matchingEntries
+          .filter((entry) => !entry.training_exercise_id)
           .map((entry) => entry.exercise_id)
           .filter((id): id is string => Boolean(id)),
       );
@@ -851,8 +857,11 @@ export class AssignmentsService {
     };
   }
 
-  private getAssignmentsForRange(clientId: string, range: AssignmentRange) {
-    return this.prisma.planAssignment.findMany({
+  private async getAssignmentsForRange(
+    clientId: string,
+    range: AssignmentRange,
+  ) {
+    const assignments = await this.prisma.planAssignment.findMany({
       where: {
         client_id: clientId,
         date: {
@@ -863,6 +872,13 @@ export class AssignmentsService {
       include: assignmentInclude,
       orderBy: { date: 'asc' },
     });
+    const history = indexDietHistory(
+      await loadDietHistory(this.prisma, [clientId], range.start, range.end),
+    );
+    return assignments.map((assignment) => ({
+      ...assignment,
+      diet: historicalDietFor(history, assignment) ?? assignment.diet,
+    }));
   }
 
   private isoWeekday(date: Date) {
@@ -1400,6 +1416,12 @@ export class AssignmentsService {
         const sourceTrainings = this.resolveAssignmentTrainingLinks(source);
         const sourceTrainingId = sourceTrainings[0]?.training.id ?? null;
 
+        await this.validatePlanReferences(
+          sourceTrainings.map((link) => link.training.id),
+          source.diet_id,
+          tx,
+        );
+
         await tx.planAssignment.upsert({
           where: {
             client_id_date: {
@@ -1419,12 +1441,14 @@ export class AssignmentsService {
               create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
-                last_set_video_policy: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy
-                  : LastSetVideoPolicy.AUTO,
-                requires_last_set_video: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
-                  : false,
+                last_set_video_policy:
+                  'last_set_video_policy' in link
+                    ? link.last_set_video_policy
+                    : LastSetVideoPolicy.AUTO,
+                requires_last_set_video:
+                  'last_set_video_policy' in link
+                    ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                    : false,
               })),
             },
           },
@@ -1439,12 +1463,14 @@ export class AssignmentsService {
               create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
                 position: link.position,
-                last_set_video_policy: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy
-                  : LastSetVideoPolicy.AUTO,
-                requires_last_set_video: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
-                  : false,
+                last_set_video_policy:
+                  'last_set_video_policy' in link
+                    ? link.last_set_video_policy
+                    : LastSetVideoPolicy.AUTO,
+                requires_last_set_video:
+                  'last_set_video_policy' in link
+                    ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                    : false,
               })),
             },
           },
@@ -1544,49 +1570,60 @@ export class AssignmentsService {
           }
           const sourceTrainings = this.resolveAssignmentTrainingLinks(source);
           const sourceTrainingId = sourceTrainings[0]?.training.id ?? null;
+          await this.validatePlanReferences(
+            sourceTrainings.map((link) => link.training.id),
+            source.diet_id,
+            tx,
+          );
           await tx.planAssignment.upsert({
-          where: { client_id_date: { client_id: dto.client_id, date: targetDate } },
-          create: {
-            client_id: dto.client_id,
-            admin_id: user.id,
-            auto_assignment_rule_id: null,
-            date: targetDate,
-            training_id: sourceTrainingId,
-            diet_id: source.diet_id,
-            is_rest_day: source.is_rest_day,
-            trainings: {
-              create: sourceTrainings.map((link) => ({
-                training_id: link.training.id,
-                position: link.position,
-                last_set_video_policy: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy
-                  : LastSetVideoPolicy.AUTO,
-                requires_last_set_video: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
-                  : false,
-              })),
+            where: {
+              client_id_date: { client_id: dto.client_id, date: targetDate },
             },
-          },
-          update: {
-            admin_id: user.id,
-            auto_assignment_rule_id: null,
-            training_id: sourceTrainingId,
-            diet_id: source.diet_id,
-            is_rest_day: source.is_rest_day,
-            trainings: {
-              deleteMany: {},
-              create: sourceTrainings.map((link) => ({
-                training_id: link.training.id,
-                position: link.position,
-                last_set_video_policy: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy
-                  : LastSetVideoPolicy.AUTO,
-                requires_last_set_video: 'last_set_video_policy' in link
-                  ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
-                  : false,
-              })),
+            create: {
+              client_id: dto.client_id,
+              admin_id: user.id,
+              auto_assignment_rule_id: null,
+              date: targetDate,
+              training_id: sourceTrainingId,
+              diet_id: source.diet_id,
+              is_rest_day: source.is_rest_day,
+              trainings: {
+                create: sourceTrainings.map((link) => ({
+                  training_id: link.training.id,
+                  position: link.position,
+                  last_set_video_policy:
+                    'last_set_video_policy' in link
+                      ? link.last_set_video_policy
+                      : LastSetVideoPolicy.AUTO,
+                  requires_last_set_video:
+                    'last_set_video_policy' in link
+                      ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                      : false,
+                })),
+              },
             },
-          },
+            update: {
+              admin_id: user.id,
+              auto_assignment_rule_id: null,
+              training_id: sourceTrainingId,
+              diet_id: source.diet_id,
+              is_rest_day: source.is_rest_day,
+              trainings: {
+                deleteMany: {},
+                create: sourceTrainings.map((link) => ({
+                  training_id: link.training.id,
+                  position: link.position,
+                  last_set_video_policy:
+                    'last_set_video_policy' in link
+                      ? link.last_set_video_policy
+                      : LastSetVideoPolicy.AUTO,
+                  requires_last_set_video:
+                    'last_set_video_policy' in link
+                      ? link.last_set_video_policy === LastSetVideoPolicy.ALWAYS
+                      : false,
+                })),
+              },
+            },
           });
         }
         await this.lastSetVideoPolicy.reconcile(
@@ -1686,90 +1723,111 @@ export class AssignmentsService {
 
     const { updatedAssignment, nextDate, normalizedInput } =
       await this.planningTransaction(async (tx) => {
-      await lockAssignmentPlanning(tx, assignment.client_id);
-      const lockedAssignment = await tx.planAssignment.findUnique({
-        where: { id: assignmentId },
-        include: assignmentInclude,
-      });
-      if (!lockedAssignment) {
-        throw new NotFoundException('Asignación no encontrada');
-      }
+        await lockAssignmentPlanning(tx, assignment.client_id);
+        const lockedAssignment = await tx.planAssignment.findUnique({
+          where: { id: assignmentId },
+          include: assignmentInclude,
+        });
+        if (!lockedAssignment) {
+          throw new NotFoundException('Asignación no encontrada');
+        }
 
-      const nextDate = dto.date ? this.parseDate(dto.date) : lockedAssignment.date;
-      const existingTrainings = this.resolveAssignmentTrainingLinks(lockedAssignment)
-        .map((link) => ({
+        const nextDate = dto.date
+          ? this.parseDate(dto.date)
+          : lockedAssignment.date;
+        const existingTrainings = this.resolveAssignmentTrainingLinks(
+          lockedAssignment,
+        ).map((link) => ({
           training_id: link.training.id,
           last_set_video_policy: link.last_set_video_policy,
         }));
-      const normalizedInput = this.normalizeAssignmentInput({
-        ...(dto.trainings !== undefined
-          ? { trainings: dto.trainings }
-          : dto.training_ids !== undefined
-            ? { training_ids: dto.training_ids }
-            : dto.training_id !== undefined
-              ? { training_id: dto.training_id }
-              : { trainings: existingTrainings }),
-        diet_id: dto.diet_id !== undefined ? dto.diet_id : lockedAssignment.diet_id,
-        is_rest_day: dto.is_rest_day ?? lockedAssignment.is_rest_day,
-      });
+        const normalizedInput = this.normalizeAssignmentInput({
+          ...(dto.trainings !== undefined
+            ? { trainings: dto.trainings }
+            : dto.training_ids !== undefined
+              ? { training_ids: dto.training_ids }
+              : dto.training_id !== undefined
+                ? { training_id: dto.training_id }
+                : { trainings: existingTrainings }),
+          diet_id:
+            dto.diet_id !== undefined ? dto.diet_id : lockedAssignment.diet_id,
+          is_rest_day: dto.is_rest_day ?? lockedAssignment.is_rest_day,
+        });
 
-      if (this.formatDate(nextDate) !== this.formatDate(lockedAssignment.date)) {
-        const existingTarget = await tx.planAssignment.findUnique({
-          where: {
-            client_id_date: {
-              client_id: lockedAssignment.client_id,
-              date: nextDate,
+        if (
+          this.formatDate(nextDate) !== this.formatDate(lockedAssignment.date)
+        ) {
+          const existingTarget = await tx.planAssignment.findUnique({
+            where: {
+              client_id_date: {
+                client_id: lockedAssignment.client_id,
+                date: nextDate,
+              },
+            },
+            select: { id: true },
+          });
+          if (existingTarget && existingTarget.id !== assignmentId) {
+            throw new ConflictException(
+              'Ya existe una asignación para ese cliente en la fecha indicada',
+            );
+          }
+        }
+        await this.validatePlanReferences(
+          normalizedInput.training_ids.filter(
+            (id) =>
+              nextDate.getTime() !== lockedAssignment.date.getTime() ||
+              !existingTrainings.some((item) => item.training_id === id),
+          ),
+          nextDate.getTime() === lockedAssignment.date.getTime() &&
+            normalizedInput.diet_id === lockedAssignment.diet_id
+            ? null
+            : normalizedInput.diet_id,
+          tx,
+        );
+        const affectedMonths = this.lastSetVideoPolicy.monthsForDates([
+          lockedAssignment.date,
+          nextDate,
+        ]);
+        await tx.planAssignment.update({
+          where: { id: assignmentId },
+          data: {
+            admin_id: user.id,
+            auto_assignment_rule_id: null,
+            date: nextDate,
+            training_id: normalizedInput.training_id,
+            diet_id: normalizedInput.diet_id,
+            is_rest_day: normalizedInput.is_rest_day,
+            trainings: {
+              deleteMany: {},
+              create: normalizedInput.trainings.map((item, position) => ({
+                training_id: item.training_id,
+                position,
+                last_set_video_policy: item.last_set_video_policy,
+                requires_last_set_video:
+                  item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+              })),
             },
           },
-          select: { id: true },
         });
-        if (existingTarget && existingTarget.id !== assignmentId) {
-          throw new ConflictException(
-            'Ya existe una asignación para ese cliente en la fecha indicada',
+        if (nextDate.getTime() !== lockedAssignment.date.getTime()) {
+          await this.clearAssignmentDate(
+            tx,
+            lockedAssignment.client_id,
+            user.id,
+            lockedAssignment.date,
           );
         }
-      }
-      await this.validatePlanReferences(
-        normalizedInput.training_ids,
-        normalizedInput.diet_id,
-        tx,
-      );
-      const affectedMonths = this.lastSetVideoPolicy.monthsForDates([
-        lockedAssignment.date,
-        nextDate,
-      ]);
-      await tx.planAssignment.update({
-        where: { id: assignmentId },
-        data: {
-          admin_id: user.id,
-          auto_assignment_rule_id: null,
-          date: nextDate,
-          training_id: normalizedInput.training_id,
-          diet_id: normalizedInput.diet_id,
-          is_rest_day: normalizedInput.is_rest_day,
-          trainings: {
-            deleteMany: {},
-            create: normalizedInput.trainings.map((item, position) => ({
-              training_id: item.training_id,
-              position,
-              last_set_video_policy: item.last_set_video_policy,
-              requires_last_set_video:
-                item.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
-            })),
-          },
-        },
+        await this.lastSetVideoPolicy.reconcile(
+          lockedAssignment.client_id,
+          affectedMonths,
+          tx,
+        );
+        const updatedAssignment = await tx.planAssignment.findUniqueOrThrow({
+          where: { id: assignmentId },
+          include: assignmentInclude,
+        });
+        return { updatedAssignment, nextDate, normalizedInput };
       });
-      await this.lastSetVideoPolicy.reconcile(
-        lockedAssignment.client_id,
-        affectedMonths,
-        tx,
-      );
-      const updatedAssignment = await tx.planAssignment.findUniqueOrThrow({
-        where: { id: assignmentId },
-        include: assignmentInclude,
-      });
-      return { updatedAssignment, nextDate, normalizedInput };
-    });
 
     await this.reconcileProgressForDate(assignment.client_id, nextDate);
 

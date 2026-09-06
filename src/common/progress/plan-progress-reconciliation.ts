@@ -31,10 +31,15 @@ export function reconcileTrainingProgress(
   const unresolved: CompletedExerciseEntry[] = [];
   for (const entry of entries) {
     const storedId = entry.training_exercise_id;
-    if (storedId && explicitlyDeletedIds.has(storedId)) continue;
-
-    let targetId = storedId && currentIds.has(storedId) ? storedId : undefined;
-    if (!targetId) {
+    let targetId =
+      storedId &&
+      currentIds.has(storedId) &&
+      !explicitlyDeletedIds.has(storedId)
+        ? storedId
+        : undefined;
+    // A canonical occurrence belongs to its original plan, even after removal.
+    // Catalog identity alone cannot transfer it to another occurrence/training.
+    if (!storedId) {
       const matches = currentByExerciseId.get(entry.exercise_id) ?? [];
       if (matches.length === 1) targetId = matches[0].id;
     }
@@ -53,7 +58,8 @@ export function reconcileTrainingProgress(
   return {
     entries: [...reconciled.values(), ...unresolved],
     trainingCompleted:
-      currentIds.size > 0 && [...currentIds].every((id) => completedIds.has(id)),
+      currentIds.size > 0 &&
+      [...currentIds].every((id) => completedIds.has(id)),
   };
 }
 
@@ -62,33 +68,10 @@ export interface MealIdentity {
   parent_meal_id: string | null;
 }
 
-export function reconcileMealProgress(
-  completedIds: string[],
-  previousMeals: MealIdentity[],
-  currentMeals: MealIdentity[],
-  explicitlyDeletedIds: ReadonlySet<string>,
-) {
-  const previousById = new Map(previousMeals.map((meal) => [meal.id, meal]));
-  const currentById = new Map(currentMeals.map((meal) => [meal.id, meal]));
-  const selectedByGroup = new Map<string, string>();
-
-  for (const completedId of completedIds) {
-    let targetId = currentById.has(completedId) ? completedId : undefined;
-    if (!targetId && explicitlyDeletedIds.has(completedId)) {
-      const previous = previousById.get(completedId);
-      const survivingParentId = previous?.parent_meal_id;
-      if (survivingParentId && currentById.has(survivingParentId)) {
-        targetId = survivingParentId;
-      }
-    }
-    if (!targetId) continue;
-
-    const current = currentById.get(targetId)!;
-    const groupId = current.parent_meal_id ?? current.id;
-    if (!selectedByGroup.has(groupId)) selectedByGroup.set(groupId, targetId);
-  }
-
-  return [...selectedByGroup.values()];
+export function reconcileMealProgress(completedIds: string[]) {
+  // Current meal counters filter against the assigned diet at read time.
+  // Editing that catalog must neither erase history nor invent a eaten parent.
+  return [...completedIds];
 }
 
 export function countCompletedMealGroups(

@@ -18,5 +18,13 @@ describe('lockAssignmentPlanning', () => {
     await expect(
       lockAssignmentPlanning(db as never, 'client-1'),
     ).resolves.toBeUndefined();
+    const statements = db.$queryRaw.mock.calls.map(
+      ([query]: [{ sql: string }]) => query.sql,
+    );
+    expect(statements).toHaveLength(3);
+    expect(statements[0]).toContain('pg_advisory_xact_lock_shared');
+    expect(statements[0]).toContain('exom:diet-history');
+    expect(statements[1]).toContain('pg_advisory_xact_lock(');
+    expect(statements[2]).toContain('FOR UPDATE');
   });
 });

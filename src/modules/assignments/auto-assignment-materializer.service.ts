@@ -102,7 +102,14 @@ export class AutoAssignmentMaterializerService {
           },
           include: {
             days: {
-              include: { trainings: { orderBy: { position: 'asc' } } },
+              include: {
+                training: { select: { is_active: true } },
+                diet: { select: { is_active: true } },
+                trainings: {
+                  orderBy: { position: 'asc' },
+                  include: { training: { select: { is_active: true } } },
+                },
+              },
             },
           },
           orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
@@ -259,9 +266,12 @@ export class AutoAssignmentMaterializerService {
         training_id: string | null;
         diet_id: string | null;
         is_rest_day: boolean;
+        training?: { is_active: boolean } | null;
+        diet?: { is_active: boolean } | null;
         trainings?: Array<{
           training_id: string;
           last_set_video_policy: LastSetVideoPolicy;
+          training?: { is_active: boolean };
         }>;
       }>;
     },
@@ -278,11 +288,15 @@ export class AutoAssignmentMaterializerService {
       const trainings = day.is_rest_day
         ? []
         : (day.trainings?.length ?? 0) > 0
-          ? day.trainings!.map((training) => ({
-              training_id: training.training_id,
-              last_set_video_policy: training.last_set_video_policy,
-            }))
-          : day.training_id
+          ? day
+              .trainings!.filter(
+                (training) => training.training?.is_active !== false,
+              )
+              .map((training) => ({
+                training_id: training.training_id,
+                last_set_video_policy: training.last_set_video_policy,
+              }))
+          : day.training_id && day.training?.is_active !== false
             ? [
                 {
                   training_id: day.training_id,
@@ -291,10 +305,13 @@ export class AutoAssignmentMaterializerService {
               ]
             : [];
 
+      const dietId =
+        day.is_rest_day || day.diet?.is_active === false ? null : day.diet_id;
+      if (!day.is_rest_day && trainings.length === 0 && !dietId) return null;
       return {
         admin_id: rule.admin_id,
         training_id: trainings[0]?.training_id ?? null,
-        diet_id: day.is_rest_day ? null : day.diet_id,
+        diet_id: dietId,
         is_rest_day: day.is_rest_day,
         auto_assignment_rule_id: rule.id,
         trainings,

@@ -9,6 +9,11 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  historicalDietFor,
+  indexDietHistory,
+  loadDietHistory,
+} from '../../common/progress/diet-history';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
   CreateDietDto,
@@ -667,7 +672,11 @@ export class DietsService {
       return null;
     }
 
-    const { tags: _tags, ...clientDiet } = assignment.diet;
+    const history = await loadDietHistory(this.prisma, [clientId], target);
+    const diet =
+      historicalDietFor(indexDietHistory(history), assignment) ??
+      assignment.diet;
+    const { tags: _tags, ...clientDiet } = diet;
     return clientDiet;
   }
 
@@ -735,10 +744,13 @@ export class DietsService {
       orderBy: { date: 'asc' },
     });
 
+    const history = indexDietHistory(
+      await loadDietHistory(this.prisma, [clientId], start, end),
+    );
     const assignmentsByDate = new Map(
       assignments.map((assignment) => [
         assignment.date.toISOString().split('T')[0],
-        assignment.diet,
+        historicalDietFor(history, assignment) ?? assignment.diet,
       ]),
     );
 
@@ -752,9 +764,9 @@ export class DietsService {
 
       if (!diet) return { date: dateKey, diet: null };
       const { tags: _tags, ...clientDiet } = diet;
+      void _tags; // Staff catalog labels are deliberately omitted from client views.
       return { date: dateKey, diet: clientDiet };
     });
-
   }
 
   private formatUtcDate(date: Date) {
@@ -1017,7 +1029,9 @@ export class DietsService {
 
     for (const mealId of nextMealIds) {
       if (!existingMealIds.has(mealId)) {
-        throw new BadRequestException('La comida indicada no pertenece a la dieta');
+        throw new BadRequestException(
+          'La comida indicada no pertenece a la dieta',
+        );
       }
     }
 
@@ -1039,16 +1053,10 @@ export class DietsService {
       }
     }
 
-    const [currentMeals, assignments] = await Promise.all([
-      tx.meal.findMany({
-        where: { diet_id: dietId },
-        select: { id: true, parent_meal_id: true },
-      }),
-      tx.planAssignment.findMany({
-        where: { diet_id: dietId },
-        select: { client_id: true, date: true },
-      }),
-    ]);
+    const assignments = await tx.planAssignment.findMany({
+      where: { diet_id: dietId },
+      select: { client_id: true, date: true },
+    });
     if (!assignments.length) return;
 
     await lockClientsDayProgress(
@@ -1057,22 +1065,26 @@ export class DietsService {
     );
 
     const progresses = await tx.dayProgress.findMany({
-      where: { OR: assignments.map(({ client_id, date }) => ({ client_id, date })) },
+      where: {
+        OR: assignments.map(({ client_id, date }) => ({ client_id, date })),
+      },
     });
     const assignedKeys = new Set(
-      assignments.map(({ client_id, date }) => `${client_id}:${date.toISOString()}`),
+      assignments.map(
+        ({ client_id, date }) => `${client_id}:${date.toISOString()}`,
+      ),
     );
     for (const progress of progresses) {
-      if (!assignedKeys.has(`${progress.client_id}:${progress.date.toISOString()}`)) continue;
+      if (
+        !assignedKeys.has(
+          `${progress.client_id}:${progress.date.toISOString()}`,
+        )
+      )
+        continue;
       await tx.dayProgress.update({
         where: { id: progress.id },
         data: {
-          meals_completed: reconcileMealProgress(
-            progress.meals_completed,
-            existingMeals,
-            currentMeals,
-            deletedMealIds,
-          ),
+          meals_completed: reconcileMealProgress(progress.meals_completed),
         },
       });
     }

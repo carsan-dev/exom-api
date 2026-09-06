@@ -48,7 +48,7 @@ describe('ProgressService', () => {
   beforeEach(() => {
     prisma = {
       $transaction: jest.fn(),
-      $queryRaw: jest.fn().mockResolvedValue([{ pg_advisory_xact_lock: null }]),
+      $queryRaw: jest.fn().mockResolvedValue([]),
       planAssignment: {
         findUnique: jest.fn(),
       },

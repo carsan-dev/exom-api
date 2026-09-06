@@ -163,6 +163,7 @@ model User {
   adminOf          AdminClientAssignment[] @relation("AdminAssignments")
   clientOf         AdminClientAssignment[] @relation("ClientAssignments")
   dayProgress      DayProgress[]
+  dietDaySnapshots DietDaySnapshot[]
   bodyMetrics      BodyMetric[]
   streak           Streak?
   weeklyRecaps     WeeklyRecap[]
@@ -566,6 +567,7 @@ model PlanAssignment {
   @@unique([client_id, date])
   @@index([admin_id])
   @@index([auto_assignment_rule_id])
+  @@index([diet_id, date, client_id])
   @@map("plan_assignments")
 }
 
@@ -640,6 +642,22 @@ model AutoAssignmentRuleDayTraining {
   @@unique([rule_day_id, position])
   @@index([training_id])
   @@map("auto_assignment_rule_day_trainings")
+}
+
+// Immutable content, deliberately independent of mutable diet/meal/assignment FKs.
+model DietDaySnapshot {
+  client_id   String
+  date        DateTime @db.Date
+  diet_id     String
+  version     Int      @default(1)
+  provenance  String
+  captured_at DateTime @default(now())
+  diet        Json
+
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@id([client_id, date, diet_id])
+  @@map("diet_day_snapshots")
 }
 
 model DayProgress {

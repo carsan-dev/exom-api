@@ -16,6 +16,12 @@ import {
 } from '@prisma/client';
 import { isDeepStrictEqual } from 'node:util';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  flattenHistoricalMeals,
+  historicalDietFor,
+  indexDietHistory,
+  loadDietHistory,
+} from '../../common/progress/diet-history';
 
 type TransactionClient = Omit<
   PrismaClient,
@@ -193,7 +199,13 @@ export class ProgressService {
       },
     });
 
-    const dietMeals = assignment?.diet?.meals ?? [];
+    const history = indexDietHistory(
+      await loadDietHistory(db, [clientId], date),
+    );
+    const historicalDiet = assignment && historicalDietFor(history, assignment);
+    const dietMeals = historicalDiet
+      ? flattenHistoricalMeals(historicalDiet)
+      : (assignment?.diet?.meals ?? []);
     const assignmentTrainings = assignment?.trainings ?? [];
     const assignedTrainingLinks = assignmentTrainings.length
       ? assignmentTrainings.map((link) => ({
@@ -341,14 +353,21 @@ export class ProgressService {
   private getCompletedTrainingIds(
     assignment: AssignmentContext,
     completedEntries: ExerciseCompletedEntry[],
+    historicalTrainingIds: string[] = [],
   ): string[] {
-    return assignment.trainingIds.filter((trainingId) =>
+    const completed = assignment.trainingIds.filter((trainingId) =>
       this.getTrainingCompletedStatus(
         assignment.trainingExerciseIdsByTrainingId.get(trainingId) ?? new Set(),
         assignment.exerciseIdsByTrainingId.get(trainingId) ?? new Set(),
         completedEntries,
       ),
     );
+    return [
+      ...historicalTrainingIds.filter(
+        (id) => !assignment.trainingIds.includes(id),
+      ),
+      ...completed,
+    ];
   }
 
   private validateRequiredSetPerformance(
@@ -414,6 +433,13 @@ export class ProgressService {
     const progress = await this.prisma.dayProgress.findUnique({
       where: { client_id_date: { client_id: clientId, date } },
     });
+    const dietHistory = (
+      await loadDietHistory(this.prisma, [clientId], date)
+    ).map(({ diet, ...entry }) => {
+      const { tags, ...clientDiet } = diet;
+      void tags; // Same client contract as /diets/today: no staff catalog labels.
+      return { ...entry, diet: clientDiet };
+    });
 
     if (!progress) {
       return {
@@ -426,10 +452,11 @@ export class ProgressService {
         notes: null,
         admin_reply_text: null,
         admin_reply_sent_at: null,
+        diet_history: dietHistory,
       };
     }
 
-    return progress;
+    return { ...progress, diet_history: dietHistory };
   }
 
   async getPreviousExercisePerformances(
@@ -539,7 +566,10 @@ export class ProgressService {
       if (
         dto.sets.some(
           (set) =>
-            set.reps == null && set.seconds == null && set.weight_kg == null,
+            set.reps == null &&
+            set.seconds == null &&
+            set.weight_kg == null &&
+            set.rir === undefined,
         )
       ) {
         throw new BadRequestException(
@@ -632,6 +662,27 @@ export class ProgressService {
               dto.last_set_feedback_client_upload_id,
           }),
         };
+        if (
+          replacement.sets?.some(
+            (set) =>
+              set.reps == null && set.seconds == null && set.weight_kg == null,
+          )
+        ) {
+          throw new BadRequestException(
+            'Cada serie debe incluir repeticiones, segundos o peso',
+          );
+        }
+        const trackingRequirement =
+          assignment.trackingRequirementByTrainingExerciseId.get(
+            trainingExerciseId,
+          );
+        if (trackingRequirement) {
+          this.validateRequiredSetPerformance(
+            trainingExerciseId,
+            replacement,
+            trackingRequirement,
+          );
+        }
         let replaced = false;
         const completedExercises: ExerciseCompletedEntry[] = [];
         for (const entry of currentExercises) {
@@ -650,10 +701,11 @@ export class ProgressService {
         const trainingsCompleted = this.getCompletedTrainingIds(
           assignment,
           completedExercises,
+          existing?.trainings_completed,
         );
         const allTrainingsCompleted =
           assignment.trainingIds.length > 0 &&
-          trainingsCompleted.length === assignment.trainingIds.length;
+          assignment.trainingIds.every((id) => trainingsCompleted.includes(id));
 
         const unchanged =
           existing &&
@@ -723,7 +775,15 @@ export class ProgressService {
             .map((entry) => [entry.training_exercise_id!, entry]),
         );
         const currentByExercise = new Map(
-          currentExercises.map((entry) => [entry.exercise_id, entry]),
+          currentExercises
+            .filter(
+              (entry) =>
+                !entry.training_exercise_id &&
+                [...assignment.exerciseIdByTrainingExerciseId.values()].filter(
+                  (id) => id === entry.exercise_id,
+                ).length === 1,
+            )
+            .map((entry) => [entry.exercise_id, entry]),
         );
 
         const targetTrainingId = dto.training_id ?? assignment.trainingIds[0];
@@ -803,7 +863,8 @@ export class ProgressService {
             }
           } else if (
             !trainingExerciseId &&
-            targetCatalogExerciseIds.has(entry.exercise_id)
+            targetCatalogExerciseIds.has(entry.exercise_id) &&
+            currentByExercise.has(entry.exercise_id)
           ) {
             continue;
           } else {
@@ -818,9 +879,11 @@ export class ProgressService {
         const trainingsCompleted = this.getCompletedTrainingIds(
           assignment,
           completedExercises,
+          existing?.trainings_completed,
         );
-        const allTrainingsCompleted =
-          trainingsCompleted.length === assignment.trainingIds.length;
+        const allTrainingsCompleted = assignment.trainingIds.every((id) =>
+          trainingsCompleted.includes(id),
+        );
         const notes = dto.notes?.trim() || existing?.notes || null;
         const unchanged =
           existing &&
@@ -960,15 +1023,36 @@ export class ProgressService {
         const currentExercises = this.parseExercisesCompleted(
           existing.exercises_completed,
         );
-        const filtered = currentExercises.filter(
-          (entry) =>
-            entry.training_exercise_id !== exerciseId &&
-            entry.exercise_id !== exerciseId,
+        const canonical = assignment.trainingExerciseIds.has(exerciseId);
+        const catalogId = canonical
+          ? assignment.exerciseIdByTrainingExerciseId.get(exerciseId)!
+          : exerciseId;
+        const matchingIds = [...assignment.exerciseIdByTrainingExerciseId]
+          .filter(([, id]) => id === catalogId)
+          .map(([id]) => id);
+        if (!canonical && matchingIds.length > 1) {
+          throw new UnprocessableEntityException({
+            code: 'TRAINING_EXERCISE_AMBIGUOUS',
+            message:
+              'training_exercise_id es obligatorio cuando un ejercicio se repite',
+          });
+        }
+        const targetId = canonical ? exerciseId : matchingIds[0];
+        if (!targetId) {
+          throw new ForbiddenException(
+            'Ese ejercicio no pertenece al entrenamiento asignado',
+          );
+        }
+        const filtered = currentExercises.filter((entry) =>
+          entry.training_exercise_id
+            ? entry.training_exercise_id !== targetId
+            : entry.exercise_id !== catalogId || matchingIds.length !== 1,
         );
         if (filtered.length === currentExercises.length) return existing;
         const trainingsCompleted = this.getCompletedTrainingIds(
           assignment,
           filtered,
+          existing.trainings_completed,
         );
 
         const result = await tx.dayProgress.update({
@@ -977,7 +1061,9 @@ export class ProgressService {
             exercises_completed: this.serializeExercisesCompleted(filtered),
             training_completed:
               assignment.trainingIds.length > 0 &&
-              trainingsCompleted.length === assignment.trainingIds.length,
+              assignment.trainingIds.every((id) =>
+                trainingsCompleted.includes(id),
+              ),
             trainings_completed: trainingsCompleted,
           },
         });

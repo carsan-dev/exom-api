@@ -24,6 +24,7 @@ jest.mock('firebase-admin', () => ({
 describe('UsersService', () => {
   let service: UsersService;
   let prisma: {
+    $queryRaw: jest.Mock;
     $transaction: jest.Mock;
     user: {
       findUnique: jest.Mock;
@@ -71,6 +72,7 @@ describe('UsersService', () => {
   beforeEach(() => {
     createUserMock.mockReset();
     prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
       $transaction: jest.fn(async (callback: any) => callback(prisma)),
       user: {
         findUnique: jest.fn(),
@@ -257,6 +259,7 @@ describe('UsersService', () => {
       ),
     ).resolves.toEqual({
       ...progress,
+      diet_history: [],
       exercises_completed: [
         {
           exercise_id: 'ex-plank',

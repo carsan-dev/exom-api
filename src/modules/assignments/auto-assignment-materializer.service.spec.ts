@@ -91,7 +91,8 @@ describe('AutoAssignmentMaterializerService', () => {
       expect.any(Function),
       ASSIGNMENT_TRANSACTION_OPTIONS,
     );
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    // Catalog barrier, client advisory, then user row lock.
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
     expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
       prisma.autoAssignmentRule.findMany.mock.invocationCallOrder[0],
     );
@@ -119,6 +120,41 @@ describe('AutoAssignmentMaterializerService', () => {
     });
     expect(prisma.planAssignment.update).not.toHaveBeenCalled();
     expect(prisma.planAssignment.delete).not.toHaveBeenCalled();
+  });
+
+  it('does not create new assignments from retired rule catalog entries', async () => {
+    prisma.autoAssignmentRule.findMany.mockResolvedValue([
+      {
+        id: 'rule-1',
+        admin_id: null,
+        starts_on: new Date('2026-07-01'),
+        ends_on: null,
+        days: [
+          {
+            weekday: 4,
+            training_id: 'retired',
+            training: { is_active: false },
+            trainings: [
+              {
+                training_id: 'retired',
+                training: { is_active: false },
+                last_set_video_policy: LastSetVideoPolicy.NEVER,
+              },
+            ],
+            diet_id: 'retired-diet',
+            diet: { is_active: false },
+            is_rest_day: false,
+          },
+        ],
+      },
+    ]);
+    const date = new Date('2026-07-02');
+    await service.reconcile('client-1', {
+      start: date,
+      end: date,
+      dates: [date],
+    });
+    expect(prisma.planAssignment.create).not.toHaveBeenCalled();
   });
 
   it('updates stale automatic dates, removes obsolete ones, and is idempotent', async () => {

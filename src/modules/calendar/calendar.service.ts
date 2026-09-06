@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  flattenHistoricalMeals,
+  historicalDietFor,
+  indexDietHistory,
+  loadDietHistory,
+} from '../../common/progress/diet-history';
 import { countCompletedMealGroups } from '../../common/progress/plan-progress-reconciliation';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
@@ -63,6 +69,9 @@ export class CalendarService {
       }),
     ]);
 
+    const history = indexDietHistory(
+      await loadDietHistory(this.prisma, [clientId], firstDay, lastDay),
+    );
     const assignmentMap = new Map(
       assignments.map((a) => [new Date(a.date).toISOString().split('T')[0], a]),
     );
@@ -79,7 +88,11 @@ export class CalendarService {
       const assignment = assignmentMap.get(dateStr);
       const progress = progressMap.get(dateStr);
 
-      const assignedMeals = assignment?.diet?.meals ?? [];
+      const historicalDiet =
+        assignment && historicalDietFor(history, assignment);
+      const assignedMeals = historicalDiet
+        ? flattenHistoricalMeals(historicalDiet)
+        : (assignment?.diet?.meals ?? []);
       const mealsCompletedCount = countCompletedMealGroups(
         progress?.meals_completed ?? [],
         assignedMeals,
@@ -90,16 +103,17 @@ export class CalendarService {
       const assignedTrainingIds = assignment?.trainings?.map(
         (link) => link.training_id,
       ) ?? [];
-      const currentTrainingCompleted = assignedTrainingIds.length > 0
-        ? assignedTrainingIds.every((id) =>
+      const currentTrainingCompleted =
+        assignedTrainingIds.length > 0
+          ? assignedTrainingIds.every((id) =>
               progress?.trainings_completed.includes(id),
             ) ||
             Boolean(
               assignedTrainingIds.length === 1 &&
-                progress?.training_completed &&
-                progress.trainings_completed.length === 0,
+              progress?.training_completed &&
+              progress.trainings_completed.length === 0,
             )
-        : Boolean(assignment?.training_id && progress?.training_completed);
+          : Boolean(assignment?.training_id && progress?.training_completed);
 
       days.push({
         date: dateStr,
@@ -149,6 +163,15 @@ export class CalendarService {
       }),
     ]);
 
+    const history = indexDietHistory(
+      await loadDietHistory(this.prisma, [clientId], start, end),
+    );
+    const mealsFor = (assignment: (typeof assignments)[number]) => {
+      const diet = historicalDietFor(history, assignment);
+      return diet
+        ? flattenHistoricalMeals(diet)
+        : (assignment.diet?.meals ?? []);
+    };
     const trainingsAssigned = assignments.reduce(
       (sum, assignment) => sum + (assignment.is_rest_day
         ? 0
@@ -170,15 +193,18 @@ export class CalendarService {
       );
       if (assignment.trainings?.length) {
         const assignedIds = new Set(assignment.trainings.map((link) => link.training_id));
-        return sum + (progress?.trainings_completed.filter((id) => assignedIds.has(id)).length ?? 0);
+        return (
+          sum +
+          (progress?.trainings_completed.filter((id) => assignedIds.has(id))
+            .length ?? 0)
+        );
       }
       return sum + (assignment.training_id && progress?.training_completed ? 1 : 0);
     }, 0);
 
     const totalMeals = assignments.reduce((sum, a) => {
       return (
-        sum +
-        (a.diet?.meals.filter((meal) => meal.parent_meal_id === null).length ?? 0)
+        sum + mealsFor(a).filter((meal) => meal.parent_meal_id === null).length
       );
     }, 0);
 
@@ -190,7 +216,7 @@ export class CalendarService {
         sum +
         countCompletedMealGroups(
           progress?.meals_completed ?? [],
-          assignment.diet?.meals ?? [],
+          mealsFor(assignment),
         )
       );
     }, 0);

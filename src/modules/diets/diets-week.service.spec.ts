@@ -7,7 +7,10 @@ describe('DietsService.findWeek', () => {
   const findUnique = jest.fn();
   const reconcile = jest.fn();
   const service = new DietsService(
-    { planAssignment: { findMany, findUnique } } as unknown as PrismaService,
+    {
+      planAssignment: { findMany, findUnique },
+      $queryRaw: jest.fn().mockResolvedValue([]),
+    } as unknown as PrismaService,
     {} as never,
     { reconcile } as unknown as AutoAssignmentMaterializerService,
   );
