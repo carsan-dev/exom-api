@@ -171,6 +171,7 @@ model User {
   userAchievements UserAchievement[]
   feedbackMedia    FeedbackMedia[]
   managedUploads   ManagedUpload[]
+  progressOperations ProgressOperation[]
   sentNotifications     Notification[] @relation("SentNotifications")
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   approvalRequestsMade     ApprovalRequest[] @relation("ApprovalRequester")
@@ -661,6 +662,7 @@ model DietDaySnapshot {
 }
 
 model DayProgress {
+  sync_revision Int @default(0)
   id                  String   @id @default(uuid())
   client_id           String
   date                DateTime @db.Date
@@ -897,6 +899,8 @@ model FeedbackMedia {
 }
 
 model ManagedUpload {
+  client_operation_id String?
+  object_deleted_at DateTime?
   id             String              @id @default(uuid())
   owner_id       String
   approval_request_id String?
@@ -918,5 +922,18 @@ model ManagedUpload {
   @@index([owner_id, status, expires_at])
   @@index([status, expires_at])
   @@index([approval_request_id, status])
+  @@unique([owner_id, client_operation_id])
   @@map("managed_uploads")
+}
+
+model ProgressOperation {
+  id String
+  owner_id String
+  date DateTime @db.Date
+  payload_hash String
+  response Json
+  created_at DateTime @default(now())
+  owner User @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  @@id([owner_id, id])
+  @@map("progress_operations")
 }
