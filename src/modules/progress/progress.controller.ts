@@ -1,3 +1,4 @@
+import { runProgressCommand } from '../../common/progress/progress-command';
 import {
   Controller,
   Get,
@@ -6,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  Headers,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -75,19 +77,33 @@ export class ProgressController {
   @Post('exercises/complete')
   @ApiOperation({ summary: 'Mark an exercise as completed' })
   markExerciseCompleted(
+    @Headers('x-exom-operation-id') operationId: string | undefined,
+    @Headers('x-exom-revision') revision: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: MarkExerciseDto,
   ) {
-    return this.progressService.markExerciseCompleted(user.id, dto);
+    return runProgressCommand(
+      operationId,
+      revision,
+      ['markExerciseCompleted', dto],
+      () => this.progressService.markExerciseCompleted(user.id, dto),
+    );
   }
 
   @Post('trainings/complete')
   @ApiOperation({ summary: 'Mark the assigned training as completed' })
   completeTraining(
+    @Headers('x-exom-operation-id') operationId: string | undefined,
+    @Headers('x-exom-revision') revision: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CompleteTrainingDto,
   ) {
-    return this.progressService.completeTraining(user.id, dto);
+    return runProgressCommand(
+      operationId,
+      revision,
+      ['completeTraining', dto],
+      () => this.progressService.completeTraining(user.id, dto),
+    );
   }
 
   @Delete('exercises/:exerciseId')
@@ -99,20 +115,34 @@ export class ProgressController {
     description: 'YYYY-MM-DD',
   })
   unmarkExercise(
+    @Headers('x-exom-operation-id') operationId: string | undefined,
+    @Headers('x-exom-revision') revision: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
     @Param('exerciseId') exerciseId: string,
     @Query('date') date: string,
   ) {
-    return this.progressService.unmarkExercise(user.id, date, exerciseId);
+    return runProgressCommand(
+      operationId,
+      revision,
+      ['unmarkExercise', date, exerciseId],
+      () => this.progressService.unmarkExercise(user.id, date, exerciseId),
+    );
   }
 
   @Post('meals/complete')
   @ApiOperation({ summary: 'Mark a meal as completed' })
   markMealCompleted(
+    @Headers('x-exom-operation-id') operationId: string | undefined,
+    @Headers('x-exom-revision') revision: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: MarkMealDto,
   ) {
-    return this.progressService.markMealCompleted(user.id, dto);
+    return runProgressCommand(
+      operationId,
+      revision,
+      ['markMealCompleted', dto],
+      () => this.progressService.markMealCompleted(user.id, dto),
+    );
   }
 
   @Delete('meals/:mealId')
@@ -124,10 +154,17 @@ export class ProgressController {
     description: 'YYYY-MM-DD',
   })
   unmarkMeal(
+    @Headers('x-exom-operation-id') operationId: string | undefined,
+    @Headers('x-exom-revision') revision: string | undefined,
     @CurrentUser() user: AuthenticatedUser,
     @Param('mealId') mealId: string,
     @Query('date') date: string,
   ) {
-    return this.progressService.unmarkMeal(user.id, date, mealId);
+    return runProgressCommand(
+      operationId,
+      revision,
+      ['unmarkMeal', date, mealId],
+      () => this.progressService.unmarkMeal(user.id, date, mealId),
+    );
   }
 }

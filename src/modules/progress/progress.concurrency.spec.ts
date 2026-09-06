@@ -1,3 +1,4 @@
+import { runProgressCommand } from '../../common/progress/progress-command';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { Pool } from 'pg';
@@ -186,6 +187,9 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
 
   beforeEach(async () => {
     await prismaOne.dayProgress.deleteMany({ where: { client_id: clientId } });
+    await prismaOne.progressOperation.deleteMany({
+      where: { owner_id: clientId },
+    });
   });
 
   afterAll(async () => {
@@ -205,6 +209,156 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     await prismaTwo?.$disconnect();
     await poolOne?.end();
     await poolTwo?.end();
+  });
+
+  it('P4: a lost completion response replay cannot undo a later unmark', async () => {
+    const dto = {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    };
+    const apply = () =>
+      runProgressCommand('lost-' + suffix, '0', ['complete', dto], () =>
+        serviceOne.markExerciseCompleted(clientId, dto),
+      );
+    await apply();
+    const revision = (await readProgress()).sync_revision;
+    await runProgressCommand(
+      'unmark-' + suffix,
+      String(revision),
+      ['unmark', date, trainingExerciseOneId],
+      () => serviceTwo.unmarkExercise(clientId, date, trainingExerciseOneId),
+    );
+    const after = await readProgress();
+    const replay: unknown = await apply();
+    expect(replay).toMatchObject({
+      sync_revision: after.sync_revision,
+      operation_revision: revision,
+      exercises_completed: after.exercises_completed,
+    });
+    expect(await readProgress()).toEqual(after);
+    expect(completedExercises(after.exercises_completed)).toEqual([]);
+    expect(
+      await prismaOne.progressOperation.count({
+        where: { owner_id: clientId },
+      }),
+    ).toBe(2);
+  });
+
+  it('P4: an old first attempt conflicts with a newer device or legacy writer', async () => {
+    const dto = {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+      sets: [{ set_number: 1, reps: 8, rir: 2 }],
+    };
+    await serviceOne.markExerciseCompleted(clientId, dto);
+    await expect(
+      runProgressCommand('stale-' + suffix, '0', ['edit', dto], () =>
+        serviceTwo.markExerciseCompleted(clientId, {
+          ...dto,
+          sets: [{ set_number: 1, reps: 4 }],
+        }),
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'PROGRESS_VERSION_CONFLICT' },
+    });
+    expect(
+      completedExercises((await readProgress()).exercises_completed)[0].sets,
+    ).toEqual(dto.sets);
+  });
+
+  it('P4: concurrent devices at the same revision have one winner and one explicit conflict', async () => {
+    const blocker = await poolOne.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      ['exom:day-progress:' + clientId],
+    );
+    const dto = {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    };
+    const writes = Promise.allSettled([
+      runProgressCommand('device-one-' + suffix, '0', ['edit', 8], () =>
+        serviceOne.markExerciseCompleted(clientId, {
+          ...dto,
+          sets: [{ set_number: 1, reps: 8 }],
+        }),
+      ),
+      runProgressCommand('device-two-' + suffix, '0', ['edit', 9], () =>
+        serviceTwo.markExerciseCompleted(clientId, {
+          ...dto,
+          sets: [{ set_number: 1, reps: 9 }],
+        }),
+      ),
+    ]);
+    let waiters = 0;
+    try {
+      for (let attempt = 0; attempt < 200 && waiters < 2; attempt++) {
+        const result = await blocker.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM pg_locks WHERE locktype='advisory' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+        );
+        waiters = result.rows[0].n;
+        if (waiters < 2)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      await blocker.query('COMMIT');
+      blocker.release();
+    }
+    const result = await writes;
+    expect(waiters).toBe(2);
+    expect(result.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = result.find(
+      (r): r is PromiseRejectedResult => r.status === 'rejected',
+    );
+    expect(rejected?.reason).toMatchObject({
+      response: { code: 'PROGRESS_VERSION_CONFLICT' },
+    });
+    expect((await readProgress()).sync_revision).toBe(1);
+  });
+
+  it('P4: crash post-commit retains the receipt; rollback does not', async () => {
+    const dto = {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    };
+    const id = 'post-commit-' + suffix;
+    await expect(
+      runProgressCommand(id, '0', dto, () =>
+        createService(prismaOne, 'challenge').markExerciseCompleted(
+          clientId,
+          dto,
+        ),
+      ),
+    ).rejects.toThrow('challenge failure');
+    const before = await readProgress();
+    await runProgressCommand(id, '0', dto, () =>
+      serviceTwo.markExerciseCompleted(clientId, dto),
+    );
+    expect(await readProgress()).toEqual(before);
+    await expect(
+      runProgressCommand(
+        'rollback-' + suffix,
+        String(before.sync_revision),
+        ['meal', mealId],
+        () =>
+          createService(prismaOne, 'streak').markMealCompleted(clientId, {
+            date,
+            meal_id: mealId,
+          }),
+      ),
+    ).rejects.toThrow('streak failure');
+    expect(
+      await prismaOne.progressOperation.findUnique({
+        where: {
+          owner_id_id: { owner_id: clientId, id: 'rollback-' + suffix },
+        },
+      }),
+    ).toBeNull();
   });
 
   it('preserves two different exercises completed simultaneously', async () => {

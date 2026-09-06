@@ -1,3 +1,4 @@
+import { progressCommand } from '../../common/progress/progress-command';
 import {
   BadRequestException,
   ConflictException,
@@ -301,8 +302,75 @@ export class ProgressService {
 
     return this.prisma.$transaction(async (tx) => {
       await lockClientDayProgress(tx, clientId);
+      const command = progressCommand.getStore();
+      if (command) {
+        const receipt = await tx.progressOperation.findUnique({
+          where: { owner_id_id: { owner_id: clientId, id: command.id } },
+        });
+        if (receipt) {
+          if (
+            receipt.payload_hash !== command.payloadHash ||
+            receipt.date.getTime() !== date.getTime()
+          ) {
+            throw new ConflictException({
+              code: 'PROGRESS_OPERATION_CONFLICT',
+              message: 'La operación ya identifica otro cambio',
+            });
+          }
+          // The durable receipt is written by this same callback in the same
+          // transaction and bound to the exact endpoint/payload above. JSON is
+          // the public response contract (dates serialize at the HTTP boundary).
+          const current = await tx.dayProgress.findUnique({
+            where: { client_id_date: { client_id: clientId, date } },
+          });
+          const saved = receipt.response;
+          const revision =
+            saved && typeof saved === 'object' && !Array.isArray(saved)
+              ? saved.operation_revision
+              : null;
+          return Object.assign({}, current ?? saved, {
+            operation_revision: revision,
+          }) as T;
+        }
+        const current = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+        });
+        if ((current?.sync_revision ?? 0) !== command.revision) {
+          throw new ConflictException({
+            code: 'PROGRESS_VERSION_CONFLICT',
+            message:
+              'Hay cambios de otro dispositivo. Revisa el entrenamiento antes de volver a registrar esta acción.',
+            current_revision: current?.sync_revision ?? 0,
+            current_progress: current,
+          });
+        }
+      }
       const assignment = await this.getAssignmentContext(tx, clientId, date);
-      return operation(tx, assignment);
+      const result = await operation(tx, assignment);
+      if (command) {
+        // Only data returned by our command crosses this JSON serialization boundary.
+        const current = await tx.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date } },
+          select: { sync_revision: true },
+        });
+        const acknowledged = Object.assign({}, result, {
+          operation_revision: current?.sync_revision ?? command.revision,
+        });
+        const response = JSON.parse(
+          JSON.stringify(acknowledged),
+        ) as Prisma.InputJsonValue;
+        await tx.progressOperation.create({
+          data: {
+            owner_id: clientId,
+            id: command.id,
+            date,
+            payload_hash: command.payloadHash,
+            response,
+          },
+        });
+        return acknowledged;
+      }
+      return result;
     }, DAY_PROGRESS_TRANSACTION_OPTIONS);
   }
 
@@ -445,6 +513,7 @@ export class ProgressService {
       return {
         client_id: clientId,
         date,
+        sync_revision: 0,
         training_completed: false,
         trainings_completed: [],
         exercises_completed: [],

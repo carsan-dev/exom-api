@@ -21,6 +21,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let message = 'Error interno del servidor';
     let error = 'Internal Server Error';
     let code: string | undefined;
+    let progressConflict:
+      | { current_revision: number; current_progress: unknown }
+      | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -31,6 +34,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = (res as any).message || message;
         error = (res as any).error || error;
         code = (res as any).code;
+        // Only the owner-scoped progress conflict has an additional public
+        // contract. Never forward arbitrary exception properties or internals.
+        const detail = res as Record<string, unknown>;
+        if (
+          code === 'PROGRESS_VERSION_CONFLICT' &&
+          typeof detail.current_revision === 'number' &&
+          Number.isSafeInteger(detail.current_revision) &&
+          detail.current_revision >= 0 &&
+          'current_progress' in detail
+        ) {
+          progressConflict = {
+            current_revision: detail.current_revision,
+            current_progress: detail.current_progress,
+          };
+        }
       }
       if (error === 'Internal Server Error') error = exception.name;
     } else if (exception instanceof Error) {
@@ -42,6 +60,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message,
       error,
       ...(code && { code }),
+      ...progressConflict,
       timestamp: new Date().toISOString(),
       path: request.url,
     });
