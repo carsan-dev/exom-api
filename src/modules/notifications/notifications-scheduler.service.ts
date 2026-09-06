@@ -2,6 +2,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { MealType, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  countCompletedMealGroups,
+  type MealIdentity,
+} from '../../common/progress/plan-progress-reconciliation';
+import {
+  flattenHistoricalMeals,
+  historicalDietFor,
+  indexDietHistory,
+  loadDietHistory,
+} from '../../common/progress/diet-history';
 import { NotificationsService } from './notifications.service';
 import {
   NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY,
@@ -290,7 +300,6 @@ export class NotificationsSchedulerService {
         diet_id: { not: null },
         is_rest_day: false,
         client_id: { in: [...active] },
-        diet: { meals: { some: { type: mealType } } },
       },
       select: { client_id: true, diet_id: true },
     });
@@ -307,13 +316,13 @@ export class NotificationsSchedulerService {
 
     const meals = await this.prisma.meal.findMany({
       where: { diet_id: { in: dietIds }, type: mealType },
-      select: { id: true, diet_id: true },
+      select: { id: true, diet_id: true, parent_meal_id: true },
     });
 
-    const mealsByDiet = new Map<string, string[]>();
+    const mealsByDiet = new Map<string, MealIdentity[]>();
     for (const m of meals) {
       const list = mealsByDiet.get(m.diet_id) ?? [];
-      list.push(m.id);
+      list.push(m);
       mealsByDiet.set(m.diet_id, list);
     }
 
@@ -327,12 +336,24 @@ export class NotificationsSchedulerService {
     );
 
     const pending: string[] = [];
+    const history = indexDietHistory(
+      await loadDietHistory(this.prisma, clientIds, today),
+    );
     for (const a of assignments) {
       if (!a.diet_id) continue;
-      const mealIds = mealsByDiet.get(a.diet_id) ?? [];
-      if (mealIds.length === 0) continue;
+      const historicalDiet = historicalDietFor(history, { ...a, date: today });
+      const assignedMeals = historicalDiet
+        ? flattenHistoricalMeals(historicalDiet).filter(
+            (meal) => meal.type === mealType,
+          )
+        : (mealsByDiet.get(a.diet_id) ?? []);
+      const groupCount = new Set(
+        assignedMeals.map((meal) => meal.parent_meal_id ?? meal.id),
+      ).size;
+      if (groupCount === 0) continue;
       const done = progressByClient.get(a.client_id) ?? new Set<string>();
-      if (mealIds.every((mid) => done.has(mid))) continue;
+      if (countCompletedMealGroups([...done], assignedMeals) === groupCount)
+        continue;
       pending.push(a.client_id);
     }
 
@@ -549,6 +570,7 @@ export class NotificationsSchedulerService {
           client_id: true,
           date: true,
           training_id: true,
+          diet_id: true,
           trainings: {
             orderBy: { position: 'asc' },
             select: { training_id: true },
@@ -556,7 +578,7 @@ export class NotificationsSchedulerService {
           diet: {
             select: {
               meals: {
-                select: { id: true },
+                select: { id: true, parent_meal_id: true },
               },
             },
           },
@@ -585,7 +607,7 @@ export class NotificationsSchedulerService {
         mealsAssigned: number;
         mealsCompleted: number;
         trainingIdsByDate: Map<string, Set<string>>;
-        mealIdsByDate: Map<string, Set<string>>;
+        mealsByDate: Map<string, MealIdentity[]>;
       }
     >();
     const ensureSummary = (clientId: string) => {
@@ -597,13 +619,16 @@ export class NotificationsSchedulerService {
           mealsAssigned: 0,
           mealsCompleted: 0,
           trainingIdsByDate: new Map(),
-          mealIdsByDate: new Map(),
+          mealsByDate: new Map(),
         };
         summaryByClient.set(clientId, summary);
       }
       return summary;
     };
 
+    const history = indexDietHistory(
+      await loadDietHistory(this.prisma, clientIds, start, end),
+    );
     for (const plan of plans) {
       const summary = ensureSummary(plan.client_id);
       const trainingIds = plan.trainings.length
@@ -619,13 +644,15 @@ export class NotificationsSchedulerService {
         );
       }
 
-      const meals = plan.diet?.meals ?? [];
+      const historicalDiet = historicalDietFor(history, plan);
+      const meals = historicalDiet
+        ? flattenHistoricalMeals(historicalDiet)
+        : (plan.diet?.meals ?? []);
       if (meals.length > 0) {
-        summary.mealsAssigned += meals.length;
-        summary.mealIdsByDate.set(
-          this.formatDate(plan.date),
-          new Set(meals.map((meal) => meal.id)),
-        );
+        summary.mealsAssigned += new Set(
+          meals.map((meal) => meal.parent_meal_id ?? meal.id),
+        ).size;
+        summary.mealsByDate.set(this.formatDate(plan.date), meals);
       }
     }
 
@@ -646,14 +673,17 @@ export class NotificationsSchedulerService {
               : 0;
       }
 
-      const mealIds = summary.mealIdsByDate.get(this.formatDate(entry.date));
-      if (!mealIds) {
+      const assignedMeals = summary.mealsByDate.get(
+        this.formatDate(entry.date),
+      );
+      if (!assignedMeals) {
         continue;
       }
 
-      summary.mealsCompleted += entry.meals_completed.filter((mealId) =>
-        mealIds.has(mealId),
-      ).length;
+      summary.mealsCompleted += countCompletedMealGroups(
+        entry.meals_completed,
+        assignedMeals,
+      );
     }
 
     this.logger.log(
