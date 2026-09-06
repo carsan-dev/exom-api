@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   DeleteObjectCommand,
@@ -48,6 +49,7 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const PRESIGNED_TTL_SECONDS = 15 * 60;
 
 interface SessionRequest {
+  clientOperationId?: string;
   purpose: ManagedUploadPurpose;
   mimeType: string;
   bytes?: number;
@@ -110,6 +112,29 @@ export class UploadsService {
       await tx.$queryRaw(
         Prisma.sql`SELECT "id" FROM "users" WHERE "id" = ${ownerId} FOR UPDATE`,
       );
+      if (request.clientOperationId) {
+        const existing = await tx.managedUpload.findUnique({
+          where: {
+            owner_id_client_operation_id: {
+              owner_id: ownerId,
+              client_operation_id: request.clientOperationId,
+            },
+          },
+        });
+        if (existing) {
+          if (
+            existing.purpose !== request.purpose ||
+            existing.mime_type !== mimeType ||
+            existing.expected_bytes !== expectedBytes
+          ) {
+            throw new ConflictException({
+              code: 'UPLOAD_OPERATION_CONFLICT',
+              message: 'La operación ya identifica otro archivo',
+            });
+          }
+          return existing;
+        }
+      }
       const activeCount = await tx.managedUpload.count({
         where: {
           owner_id: ownerId,
@@ -129,12 +154,14 @@ export class UploadsService {
       if (activeCount >= MAX_ACTIVE_SESSIONS) {
         throw new ConflictException({
           code: 'UPLOAD_SESSION_LIMIT',
-          message: 'Tienes demasiadas subidas activas; completa o elimina alguna',
+          message:
+            'Tienes demasiadas subidas activas; completa o elimina alguna',
         });
       }
       return tx.managedUpload.create({
         data: {
           owner_id: ownerId,
+          client_operation_id: request.clientOperationId,
           purpose: request.purpose,
           object_key: objectKey,
           mime_type: mimeType,
@@ -143,24 +170,34 @@ export class UploadsService {
         },
       });
     });
-    const uploadUrl = await getSignedUrl(
-      this.s3Client,
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: objectKey,
-        ContentType: mimeType,
-      }),
-      { expiresIn: PRESIGNED_TTL_SECONDS },
-    );
+    // Idempotent lookup of a sealed/expired session is read-only. Issuing a
+    // fresh presigned PUT here would extend write access to confirmed evidence.
+    if (
+      session.status !== ManagedUploadStatus.PENDING ||
+      session.expires_at <= new Date()
+    ) {
+      return this.serializeSession(session);
+    }
+    const uploadUrl = this.isDev
+      ? `/uploads/sessions/${session.id}/file`
+      : await getSignedUrl(
+          this.s3Client,
+          new PutObjectCommand({
+            Bucket: this.bucket,
+            Key: session.object_key,
+            ContentType: session.mime_type,
+          }),
+          { expiresIn: PRESIGNED_TTL_SECONDS },
+        );
 
     return {
       upload_id: session.id,
       upload_url: uploadUrl,
-      file_url: this.buildStoredFileUrl(objectKey),
-      expires_at: expiresAt,
-      presigned_expires_at: new Date(
-        Date.now() + PRESIGNED_TTL_SECONDS * 1000,
-      ),
+      file_url: this.buildStoredFileUrl(session.object_key),
+      expires_at: session.expires_at,
+      status: session.status,
+      transport: this.isDev ? 'proxy' : 'direct',
+      presigned_expires_at: new Date(Date.now() + PRESIGNED_TTL_SECONDS * 1000),
       max_bytes: limit,
       content_type: mimeType,
     };
@@ -177,14 +214,19 @@ export class UploadsService {
     ) {
       return this.serializeSession(session);
     }
+    if (
+      session.status === ManagedUploadStatus.EXPIRED ||
+      session.status === ManagedUploadStatus.FAILED
+    ) {
+      throw new ConflictException({
+        code: 'UPLOAD_EXPIRED',
+        message: 'La sesión ya no admite transferencias',
+      });
+    }
     if (session.status !== ManagedUploadStatus.PENDING) {
       throw new ConflictException('La sesión ya no admite verificaciones');
     }
     if (session.expires_at <= new Date()) {
-      await this.prisma.managedUpload.update({
-        where: { id: session.id },
-        data: { status: ManagedUploadStatus.EXPIRED },
-      });
       throw new ConflictException({
         code: 'UPLOAD_EXPIRED',
         message: 'La sesión de subida ha caducado',
@@ -195,8 +237,21 @@ export class UploadsService {
     try {
       inspected = await this.inspectObject(session.object_key);
     } catch (error) {
-      await this.failSession(session.id, session.object_key);
-      throw error;
+      // A missing object or transient HEAD/GET failure is not proof of corrupt
+      // bytes. Retain PENDING and the object so reconciliation can be retried.
+      if (error instanceof NotFoundException) throw error;
+      const metadata = (error as { $metadata?: { httpStatusCode?: number } })
+        .$metadata;
+      if (metadata?.httpStatusCode === 404) {
+        throw new NotFoundException({
+          code: 'UPLOAD_OBJECT_MISSING',
+          message: 'La transferencia aún no está confirmada',
+        });
+      }
+      throw new ServiceUnavailableException({
+        code: 'UPLOAD_INSPECTION_UNAVAILABLE',
+        message: 'No se pudo verificar temporalmente el archivo',
+      });
     }
     const expectedIsLegacyMaximum =
       session.expected_bytes === this.limitFor(session.purpose);
@@ -277,6 +332,15 @@ export class UploadsService {
         where: { id: session.id },
       });
     }
+    if (
+      session.status === ManagedUploadStatus.VERIFIED &&
+      session.expires_at <= new Date()
+    ) {
+      throw new ConflictException({
+        code: 'UPLOAD_EXPIRED',
+        message: 'La sesión de subida ha caducado',
+      });
+    }
     const reservedForThisApproval =
       session.status === ManagedUploadStatus.RESERVED &&
       Boolean(options.approvalRequestId) &&
@@ -317,10 +381,12 @@ export class UploadsService {
             expires_at: { gt: new Date() },
           },
           ...(approvalRequestId
-            ? [{
-                status: ManagedUploadStatus.RESERVED,
-                approval_request_id: approvalRequestId,
-              }]
+            ? [
+                {
+                  status: ManagedUploadStatus.RESERVED,
+                  approval_request_id: approvalRequestId,
+                },
+              ]
             : []),
         ],
       },
@@ -360,7 +426,8 @@ export class UploadsService {
       if (result.count !== 1) {
         throw new ConflictException({
           code: 'UPLOAD_NOT_RESERVABLE',
-          message: 'Una subida ya fue consumida, caducó o pertenece a otro usuario',
+          message:
+            'Una subida ya fue consumida, caducó o pertenece a otro usuario',
         });
       }
     }
@@ -474,6 +541,46 @@ export class UploadsService {
     }
   }
 
+  async uploadSessionFile(
+    ownerId: string,
+    id: string,
+    filePath: string,
+    bytes: number,
+  ) {
+    const session = await this.prisma.managedUpload.findFirst({
+      where: { id, owner_id: ownerId },
+    });
+    if (!session) throw new NotFoundException('Sesión de subida no encontrada');
+    if (
+      session.status === ManagedUploadStatus.VERIFIED ||
+      session.status === ManagedUploadStatus.CONSUMED
+    ) {
+      return this.serializeSession(session);
+    }
+    if (
+      session.status !== ManagedUploadStatus.PENDING ||
+      session.expires_at <= new Date()
+    ) {
+      throw new ConflictException({
+        code: 'UPLOAD_EXPIRED',
+        message: 'La sesión de subida ha caducado',
+      });
+    }
+    if (bytes !== session.expected_bytes) {
+      throw new BadRequestException({
+        code: 'UPLOAD_SIZE_MISMATCH',
+        message: 'El tamaño no coincide con la sesión',
+      });
+    }
+    await this.uploadFileFromPath(
+      filePath,
+      bytes,
+      session.object_key,
+      session.mime_type,
+    );
+    return this.completeSession(ownerId, id);
+  }
+
   async getSignedReadUrl(
     fileUrl: string | null | undefined,
     expiresIn = this.signedReadExpiresIn,
@@ -533,6 +640,7 @@ export class UploadsService {
       where: {
         OR: [
           { status: ManagedUploadStatus.FAILED },
+          { status: ManagedUploadStatus.EXPIRED, object_deleted_at: null },
           {
             status: {
               in: [ManagedUploadStatus.PENDING, ManagedUploadStatus.VERIFIED],
@@ -544,13 +652,9 @@ export class UploadsService {
       take: 100,
     });
     for (const session of expired) {
-      try {
-        await this.deleteManagedObject(session.object_key);
-      } catch {
-        // Keep FAILED/PENDING/VERIFIED visible so the next cron can retry.
-        continue;
-      }
-      await this.prisma.managedUpload.updateMany({
+      // Claim retirement before any destructive storage effect. A stale scan
+      // cannot delete an object that another transaction already consumed.
+      const claimed = await this.prisma.managedUpload.updateMany({
         where: {
           id: session.id,
           status: {
@@ -558,11 +662,26 @@ export class UploadsService {
               ManagedUploadStatus.PENDING,
               ManagedUploadStatus.VERIFIED,
               ManagedUploadStatus.FAILED,
+              ManagedUploadStatus.EXPIRED,
             ],
           },
+          ...(session.status === ManagedUploadStatus.PENDING ||
+          session.status === ManagedUploadStatus.VERIFIED
+            ? { expires_at: { lte: new Date() } }
+            : {}),
         },
         data: { status: ManagedUploadStatus.EXPIRED },
       });
+      if (claimed.count !== 1) continue;
+      try {
+        await this.deleteManagedObject(session.object_key);
+        await this.prisma.managedUpload.updateMany({
+          where: { id: session.id, status: ManagedUploadStatus.EXPIRED },
+          data: { object_deleted_at: new Date() },
+        });
+      } catch {
+        // EXPIRED without object_deleted_at is durable cleanup work.
+      }
     }
     return expired.length;
   }
@@ -587,14 +706,16 @@ export class UploadsService {
   }
 
   private async failSession(id: string, objectKey?: string) {
-    await this.prisma.managedUpload.updateMany({
+    const failed = await this.prisma.managedUpload.updateMany({
       where: {
         id,
-        status: { in: [ManagedUploadStatus.PENDING, ManagedUploadStatus.VERIFIED] },
+        status: {
+          in: [ManagedUploadStatus.PENDING, ManagedUploadStatus.VERIFIED],
+        },
       },
       data: { status: ManagedUploadStatus.FAILED },
     });
-    if (objectKey) {
+    if (objectKey && failed.count === 1) {
       await this.deleteManagedObject(objectKey).catch(() => undefined);
     }
   }
@@ -605,7 +726,10 @@ export class UploadsService {
     if (this.isDev) {
       const filePath = this.localFilePath(objectKey);
       if (!fs.existsSync(filePath)) {
-        throw new BadRequestException('No se encontró el archivo subido');
+        throw new NotFoundException({
+          code: 'UPLOAD_OBJECT_MISSING',
+          message: 'No se encontró el archivo subido',
+        });
       }
       const stat = fs.statSync(filePath);
       const fd = fs.openSync(filePath, 'r');
@@ -654,9 +778,7 @@ export class UploadsService {
         bytes.length >= 8 &&
         bytes
           .subarray(0, 8)
-          .equals(
-            Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-          )
+          .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
       );
     }
     if (mimeType === 'image/webp') {
@@ -674,8 +796,7 @@ export class UploadsService {
     }
     if (VIDEO_MIME_TYPES.has(mimeType)) {
       return (
-        bytes.length >= 12 &&
-        bytes.subarray(4, 8).toString('ascii') === 'ftyp'
+        bytes.length >= 12 && bytes.subarray(4, 8).toString('ascii') === 'ftyp'
       );
     }
     return false;
@@ -724,20 +845,13 @@ export class UploadsService {
     if (VIDEO_MIME_TYPES.has(mime)) {
       return ManagedUploadPurpose.EXERCISE_VIDEO;
     }
-    if (
-      key.includes('meal') ||
-      key.includes('diet') ||
-      key.includes('food')
-    ) {
+    if (key.includes('meal') || key.includes('diet') || key.includes('food')) {
       return ManagedUploadPurpose.MEAL_IMAGE;
     }
     return ManagedUploadPurpose.EXERCISE_THUMBNAIL;
   }
 
-  private assertMimeAllowed(
-    purpose: ManagedUploadPurpose,
-    mimeType: string,
-  ) {
+  private assertMimeAllowed(purpose: ManagedUploadPurpose, mimeType: string) {
     const valid =
       purpose === ManagedUploadPurpose.FEEDBACK_VIDEO ||
       purpose === ManagedUploadPurpose.EXERCISE_VIDEO
@@ -771,16 +885,18 @@ export class UploadsService {
 
   private extensionFor(mime: string) {
     return (
-      {
-        'image/jpeg': '.jpg',
-        'image/png': '.png',
-        'image/webp': '.webp',
-        'video/mp4': '.mp4',
-        'video/quicktime': '.mov',
-        'video/x-m4v': '.m4v',
-        'video/webm': '.webm',
-      } as Record<string, string>
-    )[mime] ?? '';
+      (
+        {
+          'image/jpeg': '.jpg',
+          'image/png': '.png',
+          'image/webp': '.webp',
+          'video/mp4': '.mp4',
+          'video/quicktime': '.mov',
+          'video/x-m4v': '.m4v',
+          'video/webm': '.webm',
+        } as Record<string, string>
+      )[mime] ?? ''
+    );
   }
 
   private buildStoredFileUrl(fileKey: string): string {
@@ -791,7 +907,9 @@ export class UploadsService {
   private extractManagedFileKey(fileUrl: string): string | null {
     const raw = fileUrl.trim();
     if (raw.startsWith('r2://')) {
-      return this.normalizeObjectKey(raw.slice('r2://'.length).split(/[?#]/, 1)[0]);
+      return this.normalizeObjectKey(
+        raw.slice('r2://'.length).split(/[?#]/, 1)[0],
+      );
     }
 
     let parsed: URL;
@@ -800,7 +918,8 @@ export class UploadsService {
     } catch {
       return null;
     }
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')
+      return null;
 
     const publicBase = this.parseConfiguredUrl(this.publicUrl);
     if (publicBase && parsed.origin === publicBase.origin) {
@@ -814,8 +933,13 @@ export class UploadsService {
     if (endpoint) {
       const pathStylePrefix = `${endpoint.pathname.replace(/\/$/, '')}/${this.bucket}/`;
       const virtualHost = `${this.bucket}.${endpoint.hostname}`;
-      if (parsed.origin === endpoint.origin && parsed.pathname.startsWith(pathStylePrefix)) {
-        return this.decodeObjectKey(parsed.pathname.slice(pathStylePrefix.length));
+      if (
+        parsed.origin === endpoint.origin &&
+        parsed.pathname.startsWith(pathStylePrefix)
+      ) {
+        return this.decodeObjectKey(
+          parsed.pathname.slice(pathStylePrefix.length),
+        );
       }
       if (
         parsed.protocol === endpoint.protocol &&
@@ -851,7 +975,8 @@ export class UploadsService {
 
   private normalizeObjectKey(value: string): string | null {
     const key = value.replace(/^\/+/, '');
-    if (!key || key.includes('\\') || key.split('/').includes('..')) return null;
+    if (!key || key.includes('\\') || key.split('/').includes('..'))
+      return null;
     return key;
   }
 
@@ -901,7 +1026,8 @@ export class UploadsService {
 
   private localFilePath(fileKey: string): string {
     const normalized = this.normalizeObjectKey(fileKey);
-    if (!normalized) throw new BadRequestException('Clave de archivo no válida');
+    if (!normalized)
+      throw new BadRequestException('Clave de archivo no válida');
     const base = path.resolve(this.localUploadsDir);
     const target = path.resolve(base, normalized);
     if (target !== base && !target.startsWith(`${base}${path.sep}`)) {

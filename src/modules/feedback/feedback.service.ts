@@ -7,7 +7,6 @@ import {
   FeedbackStatus,
   ManagedUploadPurpose,
   MediaType,
-  Prisma,
   Role,
 } from '@prisma/client';
 import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
@@ -98,17 +97,18 @@ export class FeedbackService {
         );
       }
     }
-    const expectedPurpose = dto.media_type === MediaType.VIDEO
-      ? ManagedUploadPurpose.FEEDBACK_VIDEO
-      : ManagedUploadPurpose.FEEDBACK_IMAGE;
-    const upload = await this.uploadsService.prepareForConsumption({
-      ownerId: clientId,
-      uploadId: dto.upload_id,
-      legacyUrl: dto.media_url,
-      purposes: [expectedPurpose],
-    });
+    const expectedPurpose =
+      dto.media_type === MediaType.VIDEO
+        ? ManagedUploadPurpose.FEEDBACK_VIDEO
+        : ManagedUploadPurpose.FEEDBACK_IMAGE;
     let feedback;
     try {
+      const upload = await this.uploadsService.prepareForConsumption({
+        ownerId: clientId,
+        uploadId: dto.upload_id,
+        legacyUrl: dto.media_url,
+        purposes: [expectedPurpose],
+      });
       feedback = await this.prisma.$transaction(async (tx) => {
         await this.uploadsService.consumePrepared(
           tx,
@@ -137,11 +137,7 @@ export class FeedbackService {
         });
       });
     } catch (error) {
-      if (
-        dto.client_upload_id &&
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
+      if (dto.client_upload_id) {
         const existing = await this.prisma.feedbackMedia.findUnique({
           where: {
             client_id_client_upload_id: {

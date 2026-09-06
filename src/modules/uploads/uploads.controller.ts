@@ -32,6 +32,7 @@ import {
   IsOptional,
   IsString,
   Min,
+  MaxLength,
 } from 'class-validator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -39,6 +40,13 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { UploadsService } from './uploads.service';
 
 class CreateUploadSessionDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  client_operation_id?: string;
+
   @ApiProperty({ enum: ManagedUploadPurpose })
   @IsEnum(ManagedUploadPurpose)
   purpose: ManagedUploadPurpose;
@@ -89,6 +97,7 @@ export class UploadsController {
       purpose: body.purpose,
       mimeType: body.content_type,
       bytes: body.bytes,
+      clientOperationId: body.client_operation_id,
     });
   }
 
@@ -120,6 +129,39 @@ export class UploadsController {
     );
   }
 
+  @Post('sessions/:id/file')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_request, _file, callback) => {
+          fs.mkdir(legacyUploadTempDir, { recursive: true }, (error) =>
+            callback(error, legacyUploadTempDir),
+          );
+        },
+        filename: (_request, _file, callback) => callback(null, randomUUID()),
+      }),
+      limits: { fileSize: 250 * 1024 * 1024, files: 1 },
+    }),
+  )
+  async uploadSessionFile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('file is required');
+    try {
+      return await this.uploadsService.uploadSessionFile(
+        user.id,
+        id,
+        file.path,
+        file.size,
+      );
+    } finally {
+      await fs.promises.unlink(file.path).catch(() => undefined);
+    }
+  }
+
   @Post('file')
   @HttpCode(HttpStatus.OK)
   @ApiConsumes('multipart/form-data')
@@ -142,8 +184,7 @@ export class UploadsController {
             callback(error, legacyUploadTempDir),
           );
         },
-        filename: (_request, _file, callback) =>
-          callback(null, randomUUID()),
+        filename: (_request, _file, callback) => callback(null, randomUUID()),
       }),
       limits: { fileSize: 250 * 1024 * 1024, files: 1 },
     }),

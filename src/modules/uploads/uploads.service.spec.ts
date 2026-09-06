@@ -33,6 +33,7 @@ describe('UploadsService', () => {
     findMany: jest.fn(),
     findFirst: jest.fn(),
     findUniqueOrThrow: jest.fn(),
+    findUnique: jest.fn(),
     update: jest.fn(),
     updateMany: jest.fn(),
   };
@@ -305,4 +306,65 @@ describe('UploadsService', () => {
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
   });
+  it('P4: a temporary object inspection failure preserves the pending session and object', async () => {
+    managedUpload.findFirst.mockResolvedValue(
+      session(ManagedUploadStatus.PENDING),
+    );
+    const inspect = jest
+      .fn()
+      .mockRejectedValue(new Error('temporary object-store timeout'));
+    const remove = jest.fn();
+    Object.defineProperty(service, 'inspectObject', { value: inspect });
+    Object.defineProperty(service, 'deleteManagedObject', { value: remove });
+    await expect(
+      service.completeSession('client-1', 'upload-1'),
+    ).rejects.toMatchObject({
+      response: { code: 'UPLOAD_INSPECTION_UNAVAILABLE' },
+    });
+    expect(managedUpload.updateMany).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('P4: expiry cannot delete a session concurrently consumed by feedback', async () => {
+    managedUpload.findMany.mockResolvedValue([
+      session(ManagedUploadStatus.FAILED),
+    ]);
+    managedUpload.updateMany.mockResolvedValue({ count: 0 });
+    const remove = jest.fn();
+    Object.defineProperty(service, 'deleteManagedObject', { value: remove });
+    await expect(service.purgeExpiredSessions()).resolves.toBe(1);
+    expect(remove).not.toHaveBeenCalled();
+  });
+  it('P4: object deletion failure leaves durable expired cleanup work', async () => {
+    managedUpload.findMany.mockResolvedValue([
+      session(ManagedUploadStatus.EXPIRED),
+    ]);
+    managedUpload.updateMany.mockResolvedValue({ count: 1 });
+    const remove = jest
+      .fn()
+      .mockRejectedValue(new Error('temporary delete failure'));
+    Object.defineProperty(service, 'deleteManagedObject', { value: remove });
+    await service.purgeExpiredSessions();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(managedUpload.updateMany).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ManagedUploadStatus.VERIFIED,
+    ManagedUploadStatus.CONSUMED,
+    ManagedUploadStatus.EXPIRED,
+    ManagedUploadStatus.FAILED,
+    ManagedUploadStatus.RESERVED,
+  ])(
+    'review: %s session replay never grants another write URL',
+    async (status) => {
+      managedUpload.findUnique.mockResolvedValue(session(status));
+      const result = await service.createSession('client-1', Role.CLIENT, {
+        purpose: ManagedUploadPurpose.FEEDBACK_VIDEO,
+        mimeType: 'video/mp4',
+        bytes: 12,
+        clientOperationId: 'original:0',
+      });
+      expect('upload_url' in result).toBe(false);
+      expect(result.upload_id).toBe('upload-1');
+    },
+  );
 });
