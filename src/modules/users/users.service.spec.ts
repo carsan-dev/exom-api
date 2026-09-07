@@ -884,6 +884,7 @@ describe('UsersService', () => {
             role: true,
             is_active: true,
             is_locked: true,
+            is_archived: true,
             created_at: true,
             profile: true,
             clientOf: {
@@ -990,6 +991,7 @@ describe('UsersService', () => {
         role: true,
         is_active: true,
         is_locked: true,
+        is_archived: true,
         created_at: true,
         profile: true,
         clientOf: {

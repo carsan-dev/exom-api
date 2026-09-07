@@ -152,6 +152,7 @@ model User {
   role           Role         @default(CLIENT)
   auth_provider  AuthProvider @default(email)
   is_active      Boolean      @default(true)
+  is_archived    Boolean      @default(false)
   is_locked      Boolean      @default(false)
   login_attempts Int          @default(0)
   locked_at      DateTime?

@@ -429,6 +429,42 @@ export class UsersService {
     return { message: 'Rol actualizado exitosamente' };
   }
 
+  async setClientArchived(
+    currentUserId: string,
+    currentUserRole: string,
+    clientId: string,
+    isArchived: boolean,
+  ) {
+    if (
+      currentUserRole !== Role.SUPER_ADMIN &&
+      currentUserRole !== Role.ADMIN
+    ) {
+      throw new ForbiddenException('No tienes permisos para archivar clientes');
+    }
+    // Apply scope and role in the write itself, including retries. Archiving
+    // never changes access, assignments, history or external identities.
+    const result = await this.prisma.user.updateMany({
+      where: {
+        id: clientId,
+        role: Role.CLIENT,
+        ...(currentUserRole === Role.ADMIN
+          ? { clientOf: { some: { admin_id: currentUserId, is_active: true } } }
+          : {}),
+      },
+      data: { is_archived: isArchived },
+    });
+    if (result.count !== 1) {
+      throw new NotFoundException(
+        'Cliente no encontrado o sin permiso para gestionarlo',
+      );
+    }
+    return {
+      id: clientId,
+      is_archived: isArchived,
+      message: isArchived ? 'Cliente archivado' : 'Cliente desarchivado',
+    };
+  }
+
   async getMyClients(
     currentUserId: string,
     currentUserRole: string,
@@ -447,12 +483,19 @@ export class UsersService {
     const pageSize = limit ?? 20;
     const normalizedSearch = search?.trim();
     const createdAtRange = getDateRange(created_from, created_to);
+    // Preserve the legacy all-clients contract for selectors and other readers.
+    // The main Admin list explicitly requests visible or archived clients.
+    const archiveWhere: Prisma.UserWhereInput =
+      query.archive && query.archive !== 'all'
+        ? { is_archived: query.archive === 'archived' }
+        : {};
     const clientSelect = {
       id: true,
       email: true,
       role: true,
       is_active: true,
       is_locked: true,
+      is_archived: true,
       created_at: true,
       profile: true,
       clientOf: {
@@ -530,6 +573,7 @@ export class UsersService {
     if (currentUserRole === Role.SUPER_ADMIN) {
       const where: Prisma.UserWhereInput = {
         role: Role.CLIENT,
+        ...archiveWhere,
         ...(level?.length ? { profile: { is: { level: { in: level } } } } : {}),
         ...(createdAtRange ? { created_at: createdAtRange } : {}),
       };
@@ -579,6 +623,7 @@ export class UsersService {
       client: {
         is: {
           role: Role.CLIENT,
+          ...archiveWhere,
           ...(level?.length
             ? { profile: { is: { level: { in: level } } } }
             : {}),

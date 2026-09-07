@@ -39,6 +39,11 @@ function toArray(value: unknown): string[] | undefined {
 }
 
 export class AdminClientsQueryDto extends PaginationDto {
+  @ApiPropertyOptional({ enum: ['visible', 'archived', 'all'], default: 'all' })
+  @IsOptional()
+  @IsIn(['visible', 'archived', 'all'])
+  archive?: 'visible' | 'archived' | 'all';
+
   @ApiPropertyOptional({ description: 'Search clients by name or email' })
   @IsOptional()
   @IsString()

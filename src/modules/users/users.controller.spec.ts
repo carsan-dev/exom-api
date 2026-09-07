@@ -1,3 +1,4 @@
+import type { Server } from 'node:http';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
@@ -6,7 +7,7 @@ import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 describe('UsersController', () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
   const usersService = {
     updateFcmToken: jest.fn(),
     findAll: jest.fn(),
@@ -14,6 +15,7 @@ describe('UsersController', () => {
     unlockUser: jest.fn(),
     updateRole: jest.fn(),
     getMyClients: jest.fn(),
+    setClientArchived: jest.fn(),
     getClientProfile: jest.fn(),
     replyToTrainingNote: jest.fn(),
   };
@@ -30,15 +32,17 @@ describe('UsersController', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.use((request: { user?: unknown }, _response: unknown, next: () => void) => {
-      request.user = {
-        id: 'admin-1',
-        email: 'admin@exom.dev',
-        role: Role.ADMIN,
-        firebase_uid: 'firebase-admin-1',
-      };
-      next();
-    });
+    app.use(
+      (request: { user?: unknown }, _response: unknown, next: () => void) => {
+        request.user = {
+          id: 'admin-1',
+          email: 'admin@exom.dev',
+          role: Role.ADMIN,
+          firebase_uid: 'firebase-admin-1',
+        };
+        next();
+      },
+    );
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -62,6 +66,45 @@ describe('UsersController', () => {
       .expect(400);
 
     expect(usersService.findAll).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    'accepts an explicit archive boolean %s for the current admin',
+    async (is_archived) => {
+      usersService.setClientArchived.mockResolvedValue({ is_archived });
+      await request(app.getHttpServer())
+        .put('/admin/clients/client-1/archive')
+        .send({ is_archived })
+        .expect(200);
+      expect(usersService.setClientArchived).toHaveBeenCalledWith(
+        'admin-1',
+        Role.ADMIN,
+        'client-1',
+        is_archived,
+      );
+    },
+  );
+
+  it.each(['false', 'true', null, 0])(
+    'refuses malformed archive state %s without changing the account',
+    async (value) => {
+      await request(app.getHttpServer())
+        .put('/admin/clients/client-1/archive')
+        .send({ is_archived: value })
+        .expect(400);
+      expect(usersService.setClientArchived).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects unknown archive filters and extra account-state fields', async () => {
+    await request(app.getHttpServer())
+      .get('/admin/clients?archive=unknown')
+      .expect(400);
+    await request(app.getHttpServer())
+      .put('/admin/clients/client-1/archive')
+      .send({ is_archived: true, is_active: false })
+      .expect(400);
+    expect(usersService.setClientArchived).not.toHaveBeenCalled();
   });
 
   it('passes validated query params to the service', async () => {

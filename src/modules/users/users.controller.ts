@@ -18,6 +18,7 @@ import {
 } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 import { UsersService } from './users.service';
+import { ArchiveClientDto } from './dto/archive-client.dto';
 import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import { ClientAssignmentResponseDto } from './dto/client-assignment-response.dto';
@@ -193,6 +194,25 @@ export class UsersController {
     @Query() query: AdminClientsQueryDto,
   ) {
     return this.usersService.getMyClients(admin.id, admin.role, query);
+  }
+
+  @Put('clients/:id/archive')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({
+    summary:
+      'Archive or restore client visibility without changing account access',
+  })
+  archiveClient(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: ArchiveClientDto,
+  ) {
+    return this.usersService.setClientArchived(
+      admin.id,
+      admin.role,
+      id,
+      dto.is_archived,
+    );
   }
 
   @Get('clients/:id/assignments')

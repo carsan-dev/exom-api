@@ -208,6 +208,7 @@ describe('UsersService listing filters', () => {
         role: true,
         is_active: true,
         is_locked: true,
+        is_archived: true,
         created_at: true,
         profile: true,
         clientOf: {
