@@ -927,6 +927,28 @@ model ManagedUpload {
   @@map("managed_uploads")
 }
 
+// Independent of User cascades: recover external cleanup after database deletion.
+model ClientDeletion {
+  id                     String   @id @default(uuid())
+  client_id              String   @unique
+  requested_by           String
+  status                 String   @default("PENDING")
+  firebase_uid           String?
+  object_keys            String[]
+  storage_review         Boolean  @default(false)
+  claimed_at             DateTime?
+  claim_token            String?
+  attempts               Int      @default(0)
+  next_attempt_at        DateTime @default(now())
+  last_error             String?
+  created_at             DateTime @default(now())
+  completed_at           DateTime?
+
+  @@index([status, next_attempt_at])
+  @@index([firebase_uid])
+  @@map("client_deletions")
+}
+
 model ProgressOperation {
   id String
   owner_id String

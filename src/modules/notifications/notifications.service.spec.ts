@@ -42,6 +42,8 @@ function createNotification(overrides: Record<string, unknown> = {}) {
 describe('NotificationsService', () => {
   let service: NotificationsService;
   let prisma: {
+    $queryRaw: jest.Mock;
+    $transaction: jest.Mock;
     user: {
       findUnique: jest.Mock;
       findMany: jest.Mock;
@@ -84,6 +86,8 @@ describe('NotificationsService', () => {
   beforeEach(() => {
     sendMock.mockReset();
     prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'live-user' }]),
+      $transaction: jest.fn(),
       user: {
         findUnique: jest.fn(),
         findMany: jest.fn(),
@@ -109,6 +113,9 @@ describe('NotificationsService', () => {
         upsert: jest.fn(),
       },
     };
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
     prisma.notificationTemplate.findMany.mockResolvedValue([]);
     prisma.notificationTemplateSchedule.findMany.mockResolvedValue([]);
 

@@ -8,6 +8,7 @@ import {
 import { NotificationStatus, Prisma, Role } from '@prisma/client';
 import * as admin from 'firebase-admin';
 import { paginate } from '../../common/dto/pagination.dto';
+import { withLiveUsers } from '../../common/user-external-effect';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
@@ -581,28 +582,37 @@ export class NotificationsService {
     };
 
     try {
-      const messageId = await admin.messaging().send({
-        token: user.fcm_token,
-        notification: { title, body },
-        data: fcmData,
-        android: {
-          priority: 'high',
-          notification: {
-            channelId: NotificationsService.defaultChannelId,
-            sound: 'default',
-          },
-        },
-        apns: {
-          headers: {
-            'apns-priority': '10',
-          },
-          payload: {
-            aps: {
+      const fcmToken = user.fcm_token;
+      const referenceIds = [
+        userId,
+        senderId,
+        ...(data?.client_id ? [data.client_id] : []),
+        ...(data?.clientId ? [data.clientId] : []),
+      ];
+      const messageId = await withLiveUsers(this.prisma, referenceIds, () =>
+        admin.messaging().send({
+          token: fcmToken,
+          notification: { title, body },
+          data: fcmData,
+          android: {
+            priority: 'high',
+            notification: {
+              channelId: NotificationsService.defaultChannelId,
               sound: 'default',
             },
           },
-        },
-      });
+          apns: {
+            headers: {
+              'apns-priority': '10',
+            },
+            payload: {
+              aps: {
+                sound: 'default',
+              },
+            },
+          },
+        }),
+      );
 
       this.logger.log(`FCM sent to ${user.email}: ${messageId}`);
 

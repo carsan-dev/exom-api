@@ -61,6 +61,7 @@ describe('UploadsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.$queryRaw.mockResolvedValue([{ id: 'client-1' }]);
     prisma.$transaction.mockImplementation((callback) => callback(prisma));
     service = new UploadsService(
       config as unknown as ConfigService,
@@ -304,7 +305,7 @@ describe('UploadsService', () => {
 
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(3); // two quota locks and one URL-issuance fence
   });
   it('P4: a temporary object inspection failure preserves the pending session and object', async () => {
     managedUpload.findFirst.mockResolvedValue(

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
+import { withLiveUsers } from '../../common/user-external-effect';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   flattenHistoricalMeals,
@@ -318,11 +319,13 @@ export class UsersService {
     const lastName = dto.last_name.trim();
 
     await this.assertEmailAvailable(email, user.id);
-    await this.updateFirebaseEmailUser(
-      user.firebase_uid,
-      email,
-      firstName,
-      lastName,
+    await withLiveUsers(this.prisma, [id], () =>
+      this.updateFirebaseEmailUser(
+        user.firebase_uid,
+        email,
+        firstName,
+        lastName,
+      ),
     );
 
     const updatedUser = await this.prisma.user.update({
@@ -359,13 +362,15 @@ export class UsersService {
       throw new ForbiddenException('No puedes desactivar tu propia cuenta');
     }
 
-    await admin
-      .auth()
-      .updateUser(user.firebase_uid, { disabled: !dto.is_active });
+    await withLiveUsers(this.prisma, [id], async () => {
+      await admin
+        .auth()
+        .updateUser(user.firebase_uid, { disabled: !dto.is_active });
 
-    if (!dto.is_active) {
-      await admin.auth().revokeRefreshTokens(user.firebase_uid);
-    }
+      if (!dto.is_active) {
+        await admin.auth().revokeRefreshTokens(user.firebase_uid);
+      }
+    });
 
     await this.prisma.user.update({
       where: { id },

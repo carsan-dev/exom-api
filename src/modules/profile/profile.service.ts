@@ -1,6 +1,6 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as admin from 'firebase-admin';
+import { ClientDeletionService } from '../client-deletion/client-deletion.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -8,12 +8,11 @@ import { ManagedUploadPurpose } from '@prisma/client';
 
 @Injectable()
 export class ProfileService {
-  private readonly logger = new Logger(ProfileService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly uploadsService: UploadsService,
+    private readonly deletion: ClientDeletionService,
   ) {}
 
   private async buildProfileResponse(userId: string) {
@@ -135,54 +134,6 @@ export class ProfileService {
   }
 
   async deleteMyAccount(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        firebase_uid: true,
-        profile: { select: { avatar_url: true } },
-        feedbackMedia: { select: { media_url: true } },
-        managedUploads: { select: { object_key: true } },
-      },
-    });
-
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-
-    const mediaUrls = [
-      user.profile?.avatar_url ?? null,
-      ...user.feedbackMedia.map((m) => m.media_url),
-      ...user.managedUploads.map((upload) => `r2://${upload.object_key}`),
-    ].filter((url): url is string => !!url);
-
-    await this.prisma.user.delete({ where: { id: userId } });
-
-    await Promise.allSettled(
-      mediaUrls.map((url) =>
-        this.uploadsService
-          .deleteFileByUrl(url)
-          .catch((err: unknown) =>
-            this.logger.warn(
-              `No se pudo eliminar archivo R2 ${url}: ${String(err)}`,
-            ),
-          ),
-      ),
-    );
-
-    if (user.firebase_uid && admin.apps.length > 0) {
-      try {
-        await admin.auth().deleteUser(user.firebase_uid);
-      } catch (err: unknown) {
-        const code = (err as { code?: string })?.code;
-        if (code !== 'auth/user-not-found') {
-          this.logger.warn(
-            `No se pudo eliminar usuario Firebase ${user.firebase_uid}: ${String(err)}`,
-          );
-        }
-      }
-    }
-
-    return { success: true };
+    return this.deletion.deleteSelf(userId);
   }
 }

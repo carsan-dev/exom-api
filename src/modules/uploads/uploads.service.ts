@@ -28,6 +28,7 @@ import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
+import { withLiveUsers } from '../../common/user-external-effect';
 
 type TransactionClient = Omit<
   PrismaClient,
@@ -178,29 +179,33 @@ export class UploadsService {
     ) {
       return this.serializeSession(session);
     }
-    const uploadUrl = this.isDev
-      ? `/uploads/sessions/${session.id}/file`
-      : await getSignedUrl(
-          this.s3Client,
-          new PutObjectCommand({
-            Bucket: this.bucket,
-            Key: session.object_key,
-            ContentType: session.mime_type,
-          }),
-          { expiresIn: PRESIGNED_TTL_SECONDS },
-        );
+    return withLiveUsers(this.prisma, [ownerId], async () => {
+      const uploadUrl = this.isDev
+        ? `/uploads/sessions/${session.id}/file`
+        : await getSignedUrl(
+            this.s3Client,
+            new PutObjectCommand({
+              Bucket: this.bucket,
+              Key: session.object_key,
+              ContentType: session.mime_type,
+            }),
+            { expiresIn: PRESIGNED_TTL_SECONDS },
+          );
 
-    return {
-      upload_id: session.id,
-      upload_url: uploadUrl,
-      file_url: this.buildStoredFileUrl(session.object_key),
-      expires_at: session.expires_at,
-      status: session.status,
-      transport: this.isDev ? 'proxy' : 'direct',
-      presigned_expires_at: new Date(Date.now() + PRESIGNED_TTL_SECONDS * 1000),
-      max_bytes: limit,
-      content_type: mimeType,
-    };
+      return {
+        upload_id: session.id,
+        upload_url: uploadUrl,
+        file_url: this.buildStoredFileUrl(session.object_key),
+        expires_at: session.expires_at,
+        status: session.status,
+        transport: this.isDev ? 'proxy' : 'direct',
+        presigned_expires_at: new Date(
+          Date.now() + PRESIGNED_TTL_SECONDS * 1000,
+        ),
+        max_bytes: limit,
+        content_type: mimeType,
+      };
+    });
   }
 
   async completeSession(ownerId: string, sessionId: string) {
@@ -601,20 +606,57 @@ export class UploadsService {
     fileKey: string,
     contentType: string,
   ): Promise<{ file_url: string; signed_read_url?: string | null }> {
-    if (this.isDev) return this.uploadFileLocal(buffer, fileKey);
+    const upload = await this.prisma.managedUpload.findUniqueOrThrow({
+      where: { object_key: fileKey },
+    });
+    return withLiveUsers(this.prisma, [upload.owner_id], async () => {
+      if (this.isDev) return this.uploadFileLocal(buffer, fileKey);
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: fileKey,
+          Body: buffer,
+          ContentType: contentType,
+        }),
+      );
+      const file_url = this.buildStoredFileUrl(fileKey);
+      return {
+        file_url,
+        signed_read_url: await this.getSignedReadUrl(file_url),
+      };
+    });
+  }
+
+  requiresDeletionDrainReview(): boolean {
+    // Existing rows do not record the storage environment or prove that an
+    // earlier direct PUT drained. NODE_ENV is not evidence of local ownership.
+    return true;
+  }
+
+  async deleteAndVerifyForClientDeletion(fileKey: string): Promise<void> {
+    if (!this.bucket || !this.endpoint) throw new Error('STORAGE_UNAVAILABLE');
     await this.s3Client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: fileKey,
-        Body: buffer,
-        ContentType: contentType,
-      }),
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: fileKey }),
     );
-    const file_url = this.buildStoredFileUrl(fileKey);
-    return {
-      file_url,
-      signed_read_url: await this.getSignedReadUrl(file_url),
-    };
+    this.deleteFileLocal(fileKey);
+    try {
+      await this.s3Client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: fileKey }),
+      );
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && '$metadata' in error) {
+        const metadata = error.$metadata;
+        if (
+          typeof metadata === 'object' &&
+          metadata !== null &&
+          'httpStatusCode' in metadata &&
+          metadata.httpStatusCode === 404
+        )
+          return;
+      }
+      throw error;
+    }
+    throw new Error('OBJECT_STILL_EXISTS');
   }
 
   async deleteFileByUrl(fileUrl: string): Promise<boolean> {
@@ -904,7 +946,7 @@ export class UploadsService {
     return `${this.publicUrl.replace(/\/$/, '')}/${fileKey}`;
   }
 
-  private extractManagedFileKey(fileUrl: string): string | null {
+  extractManagedFileKey(fileUrl: string): string | null {
     const raw = fileUrl.trim();
     if (raw.startsWith('r2://')) {
       return this.normalizeObjectKey(
@@ -1007,21 +1049,26 @@ export class UploadsService {
     fileKey: string,
     contentType: string,
   ): Promise<void> {
-    if (this.isDev) {
-      const targetPath = this.localFilePath(fileKey);
-      await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.promises.copyFile(sourcePath, targetPath);
-      return;
-    }
-    await this.s3Client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: fileKey,
-        Body: fs.createReadStream(sourcePath),
-        ContentLength: bytes,
-        ContentType: contentType,
-      }),
-    );
+    const upload = await this.prisma.managedUpload.findUniqueOrThrow({
+      where: { object_key: fileKey },
+    });
+    return withLiveUsers(this.prisma, [upload.owner_id], async () => {
+      if (this.isDev) {
+        const targetPath = this.localFilePath(fileKey);
+        await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+        await fs.promises.copyFile(sourcePath, targetPath);
+        return;
+      }
+      await this.s3Client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: fileKey,
+          Body: fs.createReadStream(sourcePath),
+          ContentLength: bytes,
+          ContentType: contentType,
+        }),
+      );
+    });
   }
 
   private localFilePath(fileKey: string): string {
