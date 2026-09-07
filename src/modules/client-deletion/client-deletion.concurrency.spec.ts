@@ -15,6 +15,7 @@ import { Pool } from 'pg';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withLiveUsers } from '../../common/user-external-effect';
 import { UploadsService } from '../uploads/uploads.service';
+import { UsersService } from '../users/users.service';
 import {
   ClientDeletionService,
   DeletionIdentityService,
@@ -371,6 +372,88 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       await running;
     }
     expect(await service.get(op.id)).toMatchObject({ status: 'COMPLETED' });
+  });
+
+  it('does not let an expired worker overwrite the successor confirmation', async () => {
+    const a = await client();
+    const op = await service.request(a.id, adminId);
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    removeIdentity.mockImplementationOnce(async () => {
+      entered();
+      await gate;
+      throw new Error('late failure from old worker');
+    });
+    const oldWorker = service.process(op.id);
+    await started;
+    try {
+      await prisma.clientDeletion.update({
+        where: { id: op.id },
+        data: { claimed_at: new Date(0) },
+      });
+      await service.process(op.id);
+      expect(await service.get(op.id)).toMatchObject({
+        status: 'COMPLETED',
+        attempts: 2,
+      });
+    } finally {
+      release();
+      await oldWorker;
+    }
+    expect(await service.get(op.id)).toMatchObject({
+      status: 'COMPLETED',
+      last_error: null,
+      attempts: 2,
+    });
+  });
+
+  it('rejects an archive request waiting behind deletion without recreating the client', async () => {
+    const a = await client();
+    const writer = await pool.connect();
+    await writer.query('BEGIN');
+    await writer.query(
+      'INSERT INTO client_deletions(id,client_id,requested_by,firebase_uid,object_keys) VALUES($1,$2,$3,$4,$5)',
+      [randomUUID(), a.id, adminId, a.firebase_uid, []],
+    );
+    await writer.query('DELETE FROM users WHERE id=$1', [a.id]);
+    const usersService = new UsersService(
+      prisma as PrismaService,
+      undefined!,
+      undefined!,
+      undefined!,
+      undefined!,
+    );
+    const archive = usersService
+      .setClientArchived(adminId, Role.SUPER_ADMIN, a.id, true)
+      .then(
+        () => 'accepted',
+        () => 'rejected',
+      );
+    let blocked = false;
+    try {
+      for (let n = 0; n < 100 && !blocked; n++) {
+        const locks = await pool.query<{ waiting: boolean }>(
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name='f004-deletion-test' AND wait_event_type='Lock') AS waiting",
+        );
+        blocked = locks.rows[0].waiting;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      await writer.query('COMMIT');
+      writer.release();
+    }
+    expect(await archive).toBe('rejected');
+    expect(blocked).toBe(true);
+    expect(await prisma.user.count({ where: { id: a.id } })).toBe(0);
+    expect(
+      await prisma.clientDeletion.count({ where: { client_id: a.id } }),
+    ).toBe(1);
   });
 
   it('waits for an in-flight external writer; rejects writers and replay after deletion', async () => {
