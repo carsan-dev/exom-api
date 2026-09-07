@@ -6,7 +6,14 @@ import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
 
 describe('Client archive visibility', () => {
   const prisma = {
-    user: { updateMany: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+    $transaction: jest.fn(),
+    $queryRaw: jest.fn(),
+    user: {
+      updateMany: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
     adminClientAssignment: { findMany: jest.fn(), count: jest.fn() },
   };
   // Only persistence is substituted; unrelated constructor dependencies are unused.
@@ -19,6 +26,15 @@ describe('Client archive visibility', () => {
   );
   beforeEach(() => {
     jest.resetAllMocks();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.$queryRaw.mockResolvedValue([{ id: 'assigned' }]);
+    prisma.user.findUnique.mockResolvedValue({
+      role: Role.SUPER_ADMIN,
+      is_active: true,
+      is_locked: false,
+    });
     prisma.user.updateMany.mockResolvedValue({ count: 1 });
     prisma.user.findMany.mockResolvedValue([]);
     prisma.user.count.mockResolvedValue(0);
@@ -48,6 +64,11 @@ describe('Client archive visibility', () => {
     },
   );
   it('checks admin assignment in the write and refuses an unassigned client', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      role: Role.ADMIN,
+      is_active: true,
+      is_locked: false,
+    });
     prisma.user.updateMany.mockResolvedValue({ count: 0 });
     await expect(
       service.setClientArchived('admin', Role.ADMIN, 'other', true),

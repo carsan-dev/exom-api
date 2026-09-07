@@ -9,7 +9,12 @@ const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
 suite('F005 archive PostgreSQL integration', () => {
   const prefix = `archive-${process.pid}-${Date.now()}`;
-  const ids = [prefix, `${prefix}-admin`, `${prefix}-inactive`];
+  const ids = [
+    prefix,
+    `${prefix}-admin`,
+    `${prefix}-inactive`,
+    `${prefix}-super`,
+  ];
   let pool: Pool;
   let prisma: PrismaClient;
   let service: UsersService;
@@ -35,7 +40,7 @@ suite('F005 archive PostgreSQL integration', () => {
         id,
         firebase_uid: id,
         email: `${id}@example.test`,
-        role: n === 1 ? Role.ADMIN : Role.CLIENT,
+        role: n === 3 ? Role.SUPER_ADMIN : n === 1 ? Role.ADMIN : Role.CLIENT,
         is_active: n !== 2,
       })),
     });
@@ -57,7 +62,7 @@ suite('F005 archive PostgreSQL integration', () => {
       orderBy: { id: 'asc' },
     });
     for (const id of [ids[0], ids[2]])
-      await service.setClientArchived('super', Role.SUPER_ADMIN, id, true);
+      await service.setClientArchived(ids[3], Role.SUPER_ADMIN, id, true);
     const after = await prisma.user.findMany({
       where: { id: { in: [ids[0], ids[2]] } },
       orderBy: { id: 'asc' },
@@ -81,7 +86,7 @@ suite('F005 archive PostgreSQL integration', () => {
       }),
     ).toBe(1);
     for (const id of [ids[0], ids[2]])
-      await service.setClientArchived('super', Role.SUPER_ADMIN, id, false);
+      await service.setClientArchived(ids[3], Role.SUPER_ADMIN, id, false);
     expect(
       (await prisma.user.findUniqueOrThrow({ where: { id: ids[2] } }))
         .is_active,
@@ -92,7 +97,7 @@ suite('F005 archive PostgreSQL integration', () => {
       service.setClientArchived(ids[1], Role.ADMIN, ids[2], true),
     ).rejects.toThrow();
     await expect(
-      service.setClientArchived('super', Role.SUPER_ADMIN, ids[1], true),
+      service.setClientArchived(ids[3], Role.SUPER_ADMIN, ids[1], true),
     ).rejects.toThrow();
     await service.setClientArchived(ids[1], Role.ADMIN, ids[0], true);
     expect(
@@ -141,5 +146,89 @@ suite('F005 archive PostgreSQL integration', () => {
     expect(
       await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }),
     ).toMatchObject({ is_active: false, is_archived: false });
+  });
+
+  it.each(['assignment', 'role', 'active', 'locked'] as const)(
+    'rejects archiving if %s permission is revoked while the request waits',
+    async (permission) => {
+      await prisma.user.update({
+        where: { id: ids[0] },
+        data: { is_archived: false },
+      });
+      const blocker = await pool.connect();
+      await blocker.query('BEGIN');
+      await blocker.query(
+        'SELECT id FROM users WHERE id = ANY($1) ORDER BY id FOR UPDATE',
+        [[ids[0], ids[1]]],
+      );
+      const writing = service
+        .setClientArchived(ids[1], Role.ADMIN, ids[0], true)
+        .then(
+          () => 'accepted',
+          () => 'rejected',
+        );
+      let waiting = false;
+      try {
+        for (let n = 0; n < 100 && !waiting; n++) {
+          const result = await pool.query<{ waiting: boolean }>(
+            'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND cardinality(pg_blocking_pids(pid))>0) AS waiting',
+            [prefix],
+          );
+          waiting = result.rows[0].waiting;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (permission === 'assignment')
+          await blocker.query(
+            'UPDATE admin_client_assignments SET is_active=false WHERE admin_id=$1 AND client_id=$2',
+            [ids[1], ids[0]],
+          );
+        if (permission === 'role')
+          await blocker.query("UPDATE users SET role='CLIENT' WHERE id=$1", [
+            ids[1],
+          ]);
+        if (permission === 'active')
+          await blocker.query('UPDATE users SET is_active=false WHERE id=$1', [
+            ids[1],
+          ]);
+        if (permission === 'locked')
+          await blocker.query('UPDATE users SET is_locked=true WHERE id=$1', [
+            ids[1],
+          ]);
+      } finally {
+        await blocker.query('COMMIT');
+        blocker.release();
+      }
+      const result = await writing;
+      await prisma.user.update({
+        where: { id: ids[1] },
+        data: { role: Role.ADMIN, is_active: true, is_locked: false },
+      });
+      await prisma.adminClientAssignment.updateMany({
+        where: { admin_id: ids[1], client_id: ids[0] },
+        data: { is_active: true },
+      });
+      expect(waiting).toBe(true);
+      expect(result).toBe('rejected');
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }))
+          .is_archived,
+      ).toBe(false);
+    },
+  );
+
+  it('applies opposite states and a delayed replay according to last committed write', async () => {
+    await service.setClientArchived(ids[3], Role.SUPER_ADMIN, ids[0], true);
+    await service.setClientArchived(ids[1], Role.ADMIN, ids[0], false);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }))
+        .is_archived,
+    ).toBe(false);
+    // Explicit F005 policy: this reversible attribute follows commit order.
+    // No automatic mutation retry sends an old intent behind a newer action.
+    await service.setClientArchived(ids[3], Role.SUPER_ADMIN, ids[0], true);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }))
+        .is_archived,
+    ).toBe(true);
   });
 });

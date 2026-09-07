@@ -446,28 +446,59 @@ export class UsersService {
     ) {
       throw new ForbiddenException('No tienes permisos para archivar clientes');
     }
-    // Apply scope and role in the write itself, including retries. Archiving
-    // never changes access, assignments, history or external identities.
-    const result = await this.prisma.user.updateMany({
-      where: {
+    return this.prisma.$transaction(async (tx) => {
+      // Read permissions after any wait, in the same user-lock order as deletion.
+      // A role from the authentication guard can become stale while we wait.
+      await tx.$queryRaw`SELECT id FROM users WHERE id IN (${clientId}, ${currentUserId}) ORDER BY id FOR UPDATE`;
+      const actor = await tx.user.findUnique({ where: { id: currentUserId } });
+      if (
+        !actor ||
+        !actor.is_active ||
+        actor.is_locked ||
+        (actor.role !== Role.SUPER_ADMIN && actor.role !== Role.ADMIN)
+      ) {
+        throw new ForbiddenException(
+          'No tienes permisos para archivar clientes',
+        );
+      }
+      if (actor.role === Role.ADMIN) {
+        // Hold the assignment through commit; every UPDATE/DELETE writer must
+        // respect this row lock, including bulk revocation and role changes.
+        const assignments = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM admin_client_assignments
+        WHERE admin_id = ${currentUserId} AND client_id = ${clientId} AND is_active = true
+        FOR SHARE`;
+        if (!assignments.length) {
+          throw new NotFoundException(
+            'Cliente no encontrado o sin permiso para gestionarlo',
+          );
+        }
+      }
+      const result = await tx.user.updateMany({
+        where: {
+          id: clientId,
+          role: Role.CLIENT,
+          ...(actor.role === Role.ADMIN
+            ? {
+                clientOf: {
+                  some: { admin_id: currentUserId, is_active: true },
+                },
+              }
+            : {}),
+        },
+        data: { is_archived: isArchived },
+      });
+      if (result.count !== 1) {
+        throw new NotFoundException(
+          'Cliente no encontrado o sin permiso para gestionarlo',
+        );
+      }
+      return {
         id: clientId,
-        role: Role.CLIENT,
-        ...(currentUserRole === Role.ADMIN
-          ? { clientOf: { some: { admin_id: currentUserId, is_active: true } } }
-          : {}),
-      },
-      data: { is_archived: isArchived },
+        is_archived: isArchived,
+        message: isArchived ? 'Cliente archivado' : 'Cliente desarchivado',
+      };
     });
-    if (result.count !== 1) {
-      throw new NotFoundException(
-        'Cliente no encontrado o sin permiso para gestionarlo',
-      );
-    }
-    return {
-      id: clientId,
-      is_archived: isArchived,
-      message: isArchived ? 'Cliente archivado' : 'Cliente desarchivado',
-    };
   }
 
   async getMyClients(
