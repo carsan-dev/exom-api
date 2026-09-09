@@ -7,6 +7,7 @@ import type { AutoAssignmentMaterializerService } from '../assignments/auto-assi
 describe('TrainingsService', () => {
   let service: TrainingsService;
   let prisma: {
+    $queryRaw: jest.Mock;
     $transaction: jest.Mock;
     training: {
       findMany: jest.Mock;
@@ -29,6 +30,7 @@ describe('TrainingsService', () => {
 
   beforeEach(() => {
     prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
       $transaction: jest.fn().mockResolvedValue([]),
       training: {
         findMany: jest.fn(),

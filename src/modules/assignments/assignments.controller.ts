@@ -19,6 +19,8 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { AssignmentsService } from './assignments.service';
+import { RirCycleService } from './rir-cycle.service';
+import { UpdateRirCycleDto } from './dto/rir-cycle.dto';
 import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
 import {
   CreateAutoAssignmentRuleDto,
@@ -38,7 +40,31 @@ import { Role } from '@prisma/client';
 @ApiBearerAuth()
 @Controller('assignments')
 export class AssignmentsController {
-  constructor(private readonly assignmentsService: AssignmentsService) {}
+  constructor(
+    private readonly assignmentsService: AssignmentsService,
+    private readonly rirCycles: RirCycleService,
+  ) {}
+
+  @Get('clients/:clientId/rir-cycle')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  getRirCycle(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('clientId') clientId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    return this.rirCycles.read(user, clientId, from, to);
+  }
+
+  @Put('clients/:clientId/rir-cycle')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  updateRirCycle(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('clientId') clientId: string,
+    @Body() dto: UpdateRirCycleDto,
+  ) {
+    return this.rirCycles.update(user, clientId, dto);
+  }
 
   @Get('client-options')
   @ApiOperation({

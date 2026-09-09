@@ -1,4 +1,12 @@
 import {
+  applyRirTargets,
+  loadRirTargets,
+} from '../../common/progress/rir-targets';
+import {
+  validateRirOverride,
+  validateRirSequence,
+} from '../assignments/rir-cycle';
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -761,6 +769,12 @@ export class TrainingsService {
             position_in_block: position,
             sets: 1,
             ...prescription,
+            ...(exercise.rir_override !== undefined && {
+              rir_override:
+                exercise.rir_override === null
+                  ? Prisma.DbNull
+                  : { ...validateRirOverride(exercise.rir_override) },
+            }),
             request_set_tracking: exercise.request_set_tracking ?? false,
             rest_seconds: exercise.rest_seconds ?? 15,
           };
@@ -791,6 +805,12 @@ export class TrainingsService {
         position_in_block: null,
         sets: exercise.sets,
         ...prescription,
+        ...(exercise.rir_override !== undefined && {
+          rir_override:
+            exercise.rir_override === null
+              ? Prisma.DbNull
+              : { ...validateRirOverride(exercise.rir_override) },
+        }),
         request_set_tracking: exercise.request_set_tracking ?? false,
         rest_seconds: exercise.rest_seconds ?? 60,
       };
@@ -1530,9 +1550,10 @@ export class TrainingsService {
       completedIds.size === 0 &&
       completedEntries.length === 0,
     );
+    const rirTargets = await loadRirTargets(this.prisma, clientId, target);
     const serializedTrainings = assignedTrainingLinks.map(
       ({ training, assignmentTrainingId, requiresLastSetVideo }) => ({
-        ...this.serializeTraining(training),
+        ...this.serializeTraining(applyRirTargets(training, rirTargets)),
         assignment_training_id: assignmentTrainingId,
         assignment_date: target.toISOString().split('T')[0],
         requires_last_set_video: requiresLastSetVideo,
@@ -1634,11 +1655,31 @@ export class TrainingsService {
       }
     }
     return {
-      ...serialized,
+      ...this.serializeTraining(
+        applyRirTargets(
+          training,
+          await loadRirTargets(this.prisma, clientId, target),
+        ),
+      ),
       assignment_training_id: link?.id ?? null,
       assignment_date: target.toISOString().split('T')[0],
       requires_last_set_video: link?.requires_last_set_video ?? false,
     };
+  }
+
+  private async validateRirProposal(tx: Prisma.TransactionClient, id: string) {
+    const training = await tx.training.findUnique({
+      where: { id },
+      select: {
+        rir_proposal: true,
+        exercises: { select: { rir_override: true } },
+      },
+    });
+    if (!training?.rir_proposal) return;
+    const sequence = validateRirSequence(training.rir_proposal);
+    for (const exercise of training.exercises)
+      if (exercise.rir_override)
+        validateRirOverride(exercise.rir_override, sequence.length);
   }
 
   async create(adminId: string, dto: CreateTrainingDto) {
@@ -1650,6 +1691,10 @@ export class TrainingsService {
       .$transaction(async (tx) => {
         const training = await tx.training.create({
           data: {
+            rir_proposal:
+              dto.rir_proposal == null
+                ? Prisma.DbNull
+                : validateRirSequence(dto.rir_proposal),
             name: dto.name,
             type: legacyType,
             types: normalizedTypes,
@@ -1667,6 +1712,7 @@ export class TrainingsService {
 
         await this.replaceTrainingItems(tx, training.id, dto);
 
+        await this.validateRirProposal(tx, training.id);
         return tx.training.findUnique({
           where: { id: training.id },
           include: trainingExercisesInclude,
@@ -1697,6 +1743,12 @@ export class TrainingsService {
         await tx.training.update({
           where: { id },
           data: {
+            ...(dto.rir_proposal !== undefined && {
+              rir_proposal:
+                dto.rir_proposal === null
+                  ? Prisma.DbNull
+                  : validateRirSequence(dto.rir_proposal),
+            }),
             ...(dto.name !== undefined && { name: dto.name }),
             ...(normalizedTypes !== null && {
               type: legacyType!,
@@ -1732,6 +1784,7 @@ export class TrainingsService {
           await this.reconcileAssignedProgress(tx, id, deletedIds);
         }
 
+        await this.validateRirProposal(tx, id);
         return tx.training.findUnique({
           where: { id },
           include: trainingExercisesInclude,

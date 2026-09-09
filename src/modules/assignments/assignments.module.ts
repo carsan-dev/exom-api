@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RirCycleService } from './rir-cycle.service';
 import { AssignmentsController } from './assignments.controller';
 import { AssignmentsService } from './assignments.service';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -7,6 +8,6 @@ import { AssignmentReconciliationModule } from './assignment-reconciliation.modu
 @Module({
   imports: [NotificationsModule, AssignmentReconciliationModule],
   controllers: [AssignmentsController],
-  providers: [AssignmentsService],
+  providers: [AssignmentsService, RirCycleService],
 })
 export class AssignmentsModule {}

@@ -146,6 +146,9 @@ enum CatalogColorType {
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
+  rir_protected_days RirProtectedDay[]
+  rir_cycles RirCycleVersion[]
+  rir_targets RirDayTarget[]
   id             String       @id @default(uuid())
   email          String       @unique
   firebase_uid   String       @unique
@@ -322,6 +325,7 @@ model ApprovalRequest {
 // ─── Training & Exercise ──────────────────────────────────────────────────────
 
 model Training {
+  rir_proposal Json?
   id                     String       @id @default(uuid())
   name                   String
   type                   String
@@ -409,6 +413,7 @@ model Exercise {
 }
 
 model TrainingExercise {
+  rir_override Json?
   id               String @id @default(uuid())
   training_id      String
   block_id         String?
@@ -660,6 +665,43 @@ model DietDaySnapshot {
 
   @@id([client_id, date, diet_id])
   @@map("diet_day_snapshots")
+}
+
+model RirProtectedDay {
+  client_id String
+  date DateTime @db.Date
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  @@id([client_id, date])
+  @@map("rir_protected_days")
+}
+
+model RirCycleVersion {
+  client_id String
+  revision Int
+  operation_id String
+  request Json
+  effective_from DateTime @db.Date
+  starts_on DateTime @db.Date
+  config Json?
+  created_at DateTime @default(now())
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  @@id([client_id, revision])
+  @@unique([client_id, operation_id])
+  @@index([client_id, effective_from, revision], map: "rir_cycle_effective_idx")
+  @@map("rir_cycle_versions")
+}
+
+model RirDayTarget {
+  client_id String
+  date DateTime @db.Date
+  training_exercise_id String
+  training_id String
+  target_rir Int?
+  revision Int?
+  captured_at DateTime @default(now())
+  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  @@id([client_id, date, training_exercise_id])
+  @@map("rir_day_targets")
 }
 
 model DayProgress {

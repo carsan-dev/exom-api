@@ -14,6 +14,7 @@ import {
   IsIn,
   IsBoolean,
   Max,
+  IsObject,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { Level, TrainingMeasureType } from '@prisma/client';
@@ -36,6 +37,9 @@ const trimOptionalString = ({ value }: { value: unknown }) =>
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 export class TrainingExerciseDto {
+  @IsOptional()
+  @IsObject()
+  rir_override?: Record<string, unknown> | null;
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -117,6 +121,9 @@ export class TrainingItemExerciseDto extends TrainingExerciseDto {
 }
 
 export class TrainingCircuitExerciseDto {
+  @IsOptional()
+  @IsObject()
+  rir_override?: Record<string, unknown> | null;
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -222,6 +229,13 @@ export class TrainingCircuitItemDto {
 }
 
 export class CreateTrainingDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(10, { each: true })
+  rir_proposal?: number[] | null;
   @ApiProperty()
   @IsString()
   name: string;
