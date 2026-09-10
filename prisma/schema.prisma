@@ -943,6 +943,25 @@ model FeedbackMedia {
   @@map("feedback_media")
 }
 
+// Canonical remote transfer receipt. No User/ManagedUpload FK: survives cascades.
+model UploadTransfer {
+  id               String   @id
+  owner_id         String
+  object_key       String?  @unique
+  generation       String   @default(uuid())
+  protocol         String
+  state            String   @default("NEW")
+  multipart_id     String?
+  recovery_ids     String[] @default([])
+  external_pending String?
+  cancel_requested Boolean  @default(false)
+  etag             String?
+  updated_at       DateTime @updatedAt
+
+  @@index([owner_id, state])
+  @@map("upload_transfers")
+}
+
 model ManagedUpload {
   client_operation_id String?
   object_deleted_at DateTime?

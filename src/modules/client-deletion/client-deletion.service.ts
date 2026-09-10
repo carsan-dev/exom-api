@@ -112,6 +112,25 @@ export class ClientDeletionService {
             'Esta acción solo permite eliminar clientes',
           );
 
+        // Old/imported sessions without a durable receipt are not cancelable.
+        // Capture them before the User cascade; do not infer termination from status.
+        for (const upload of user.managedUploads) {
+          await tx.uploadTransfer.upsert({
+            where: { id: upload.id },
+            update: {},
+            create: {
+              id: upload.id,
+              owner_id: clientId,
+              object_key: upload.object_key,
+              protocol: 'DIRECT',
+              state: 'UNCERTAIN',
+            },
+          });
+        }
+        const transfers = await tx.uploadTransfer.findMany({
+          where: { owner_id: clientId },
+        });
+
         // Login may have rebound a completed identity to another UID. Do not
         // cancel that receipt and silently omit the previous external account.
         if (
@@ -167,6 +186,8 @@ export class ClientDeletionService {
           if (!key) throw this.ambiguous();
           keys.add(key);
         }
+        for (const transfer of transfers)
+          if (transfer.object_key) keys.add(transfer.object_key);
         for (const key of keys) {
           // Stable namespaced ownership is required even for legacy URLs.
           if (
@@ -310,6 +331,12 @@ export class ClientDeletionService {
     });
     let pendingStep = 'STORAGE_INVENTORY_PENDING';
     try {
+      pendingStep = 'STORAGE_TRANSFER_PENDING';
+      const transfersSettled =
+        await this.uploads.cancelTransfersForClientDeletion(
+          operation.client_id,
+        );
+      pendingStep = 'STORAGE_INVENTORY_PENDING';
       const settleAfter =
         operation.settle_after ??
         new Date(
@@ -344,6 +371,7 @@ export class ClientDeletionService {
       }
       if (
         auditing &&
+        transfersSettled &&
         !discovered.length &&
         (!operation.firebase_uid ||
           (await this.identity.isAbsent(operation.firebase_uid)))
@@ -419,6 +447,15 @@ export class ClientDeletionService {
       }
       if (Date.now() < settleAfter.getTime()) {
         await this.defer(operation, token, 'CREDENTIALS_EXPIRING', settleAfter);
+        return;
+      }
+      if (!transfersSettled) {
+        await this.defer(
+          operation,
+          token,
+          'STORAGE_TRANSFER_PENDING',
+          new Date(Date.now() + 3600000),
+        );
         return;
       }
       await this.complete(operation, token, settleAfter);

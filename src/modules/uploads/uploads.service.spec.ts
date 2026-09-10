@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from './uploads.service';
+import { MultipartTransfer } from './multipart-transfer';
 
 describe('UploadsService', () => {
   const configValues: Record<string, string> = {
@@ -39,6 +40,10 @@ describe('UploadsService', () => {
   };
   const prisma = {
     managedUpload,
+    uploadTransfer: {
+      create: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   };
@@ -63,11 +68,17 @@ describe('UploadsService', () => {
     jest.clearAllMocks();
     prisma.$queryRaw.mockResolvedValue([{ id: 'client-1' }]);
     prisma.$transaction.mockImplementation((callback) => callback(prisma));
+    // Session validation tests use a simulated signer. The real durable protocol
+    // and advisory locks have their own PostgreSQL suite.
+    jest
+      .spyOn(MultipartTransfer.prototype, 'signedPart')
+      .mockResolvedValue('https://storage.example.test/part');
     service = new UploadsService(
       config as unknown as ConfigService,
       prisma as unknown as PrismaService,
     );
   });
+  afterEach(() => jest.restoreAllMocks());
 
   it('rejects a MIME that is incompatible with the purpose', async () => {
     await expect(

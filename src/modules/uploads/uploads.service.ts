@@ -12,7 +12,6 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
-  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -30,6 +29,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withLiveUsers } from '../../common/user-external-effect';
+import { MultipartTransfer } from './multipart-transfer';
 
 type TransactionClient = Omit<
   PrismaClient,
@@ -66,6 +66,7 @@ export class UploadsService {
   private readonly isDev: boolean;
   private readonly localUploadsDir: string;
   private readonly signedReadExpiresIn: number;
+  private readonly transfers: MultipartTransfer;
 
   constructor(
     private readonly config: ConfigService,
@@ -81,6 +82,9 @@ export class UploadsService {
       10,
     );
     this.s3Client = new S3Client({
+      maxAttempts: 1,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      requestHandler: { requestTimeout: 15000, connectionTimeout: 5000 },
       region: 'auto',
       endpoint: this.endpoint,
       credentials: {
@@ -88,6 +92,11 @@ export class UploadsService {
         secretAccessKey: this.config.get<string>('R2_SECRET_ACCESS_KEY', ''),
       },
     });
+    this.transfers = new MultipartTransfer(
+      this.prisma,
+      this.s3Client,
+      this.bucket,
+    );
   }
 
   async createSession(ownerId: string, role: string, request: SessionRequest) {
@@ -160,8 +169,18 @@ export class UploadsService {
             'Tienes demasiadas subidas activas; completa o elimina alguna',
         });
       }
-      return tx.managedUpload.create({
+      const transferId = randomUUID();
+      await tx.uploadTransfer.create({
         data: {
+          id: transferId,
+          owner_id: ownerId,
+          object_key: objectKey,
+          protocol: this.isDev ? 'LOCAL' : 'MULTIPART',
+        },
+      });
+      const created = await tx.managedUpload.create({
+        data: {
+          id: transferId,
           owner_id: ownerId,
           client_operation_id: request.clientOperationId,
           purpose: request.purpose,
@@ -171,6 +190,7 @@ export class UploadsService {
           expires_at: expiresAt,
         },
       });
+      return created;
     });
     // Idempotent lookup of a sealed/expired session is read-only. Issuing a
     // fresh presigned PUT here would extend write access to confirmed evidence.
@@ -181,16 +201,27 @@ export class UploadsService {
       return this.serializeSession(session);
     }
     return withLiveUsers(this.prisma, [ownerId], async () => {
+      const transfer = this.isDev
+        ? null
+        : await this.prisma.uploadTransfer.findUnique({
+            where: { id: session.id },
+          });
+      // Flutter reconciles /complete before sending bytes. Preserve that path for
+      // lost Complete responses and legacy sessions without issuing another PUT.
+      if (
+        !this.isDev &&
+        (!transfer ||
+          transfer.protocol === 'DIRECT' ||
+          ['COMPLETING', 'PUBLISHED'].includes(transfer.state))
+      ) {
+        return this.serializeSession(session);
+      }
       const uploadUrl = this.isDev
         ? `/uploads/sessions/${session.id}/file`
-        : await getSignedUrl(
-            this.s3Client,
-            new PutObjectCommand({
-              Bucket: this.bucket,
-              Key: session.object_key,
-              ContentType: session.mime_type,
-            }),
-            { expiresIn: PRESIGNED_TTL_SECONDS },
+        : await this.transfers.signedPart(
+            session.id,
+            session.mime_type,
+            PRESIGNED_TTL_SECONDS,
           );
 
       return {
@@ -240,6 +271,16 @@ export class UploadsService {
     }
 
     let inspected: { bytes: number; mimeType: string; header: Buffer };
+    const transfer = this.isDev
+      ? null
+      : await this.prisma.uploadTransfer.findUnique({
+          where: { id: session.id },
+        });
+    if (!this.isDev) {
+      await withLiveUsers(this.prisma, [ownerId], () =>
+        this.transfers.publish(session.id),
+      );
+    }
     try {
       inspected = await this.inspectObject(session.object_key);
     } catch (error) {
@@ -249,6 +290,16 @@ export class UploadsService {
       const metadata = (error as { $metadata?: { httpStatusCode?: number } })
         .$metadata;
       if (metadata?.httpStatusCode === 404) {
+        if (
+          !this.isDev &&
+          (transfer?.protocol !== 'MULTIPART' || transfer.state === 'PUBLISHED')
+        ) {
+          throw new ConflictException({
+            code: 'UPLOAD_EXPIRED',
+            message:
+              'La sesión anterior requiere una nueva generación de subida',
+          });
+        }
         throw new NotFoundException({
           code: 'UPLOAD_OBJECT_MISSING',
           message: 'La transferencia aún no está confirmada',
@@ -612,14 +663,7 @@ export class UploadsService {
     });
     return withLiveUsers(this.prisma, [upload.owner_id], async () => {
       if (this.isDev) return this.uploadFileLocal(buffer, fileKey);
-      await this.s3Client.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: fileKey,
-          Body: buffer,
-          ContentType: contentType,
-        }),
-      );
+      await this.transfers.put(upload.id, contentType, buffer, buffer.length);
       const file_url = this.buildStoredFileUrl(fileKey);
       return {
         file_url,
@@ -630,6 +674,10 @@ export class UploadsService {
 
   credentialLifetimeMs(): number {
     return PRESIGNED_TTL_SECONDS * 1000;
+  }
+
+  cancelTransfersForClientDeletion(ownerId: string): Promise<boolean> {
+    return this.transfers.cancelOwner(ownerId);
   }
 
   async discoverForClientDeletion(clientId: string): Promise<string[]> {
@@ -701,6 +749,15 @@ export class UploadsService {
     if (this.isDev) {
       this.deleteFileLocal(fileKey);
       return;
+    }
+    const transfer = await this.prisma.uploadTransfer.findUnique({
+      where: { object_key: fileKey },
+    });
+    if (
+      transfer?.protocol === 'MULTIPART' &&
+      !(await this.transfers.cancel(transfer.id))
+    ) {
+      throw new Error('TRANSFER_CANCELLATION_PENDING');
     }
     await this.s3Client.send(
       new DeleteObjectCommand({ Bucket: this.bucket, Key: fileKey }),
@@ -1090,15 +1147,12 @@ export class UploadsService {
         await fs.promises.copyFile(sourcePath, targetPath);
         return;
       }
-      await this.s3Client.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: fileKey,
-          Body: fs.createReadStream(sourcePath),
-          ContentLength: bytes,
-          ContentType: contentType,
-        }),
-      );
+      const body = fs.createReadStream(sourcePath);
+      try {
+        await this.transfers.put(upload.id, contentType, body, bytes);
+      } finally {
+        body.destroy();
+      }
     });
   }
 

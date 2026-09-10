@@ -54,8 +54,14 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
   }
   async function evidence(id: string) {
     const key = `feedback-video/${id}/${randomUUID()}.mp4`;
+    const uploadId = randomUUID();
+    // These are local fixtures with simulated storage, not historical PUT URLs.
+    await prisma.uploadTransfer.create({
+      data: { id: uploadId, owner_id: id, object_key: key, protocol: 'LOCAL' },
+    });
     const upload = await prisma.managedUpload.create({
       data: {
+        id: uploadId,
         owner_id: id,
         object_key: key,
         purpose: ManagedUploadPurpose.FEEDBACK_VIDEO,
