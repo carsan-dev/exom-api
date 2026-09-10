@@ -987,8 +987,12 @@ model ClientDeletion {
   last_error             String?
   created_at             DateTime @default(now())
   completed_at           DateTime?
+  settle_after           DateTime?
+  last_verified_at       DateTime?
+  cleanup_cursor         Int      @default(0)
 
   @@index([status, next_attempt_at])
+  @@index([next_attempt_at])
   @@index([firebase_uid])
   @@map("client_deletions")
 }

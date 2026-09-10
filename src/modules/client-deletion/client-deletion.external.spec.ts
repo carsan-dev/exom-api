@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { DeletionIdentityService } from './client-deletion.service';
@@ -49,7 +49,7 @@ describe('F004 external verification adapters (no real services)', () => {
       }),
       {} as PrismaService,
     );
-    expect(service.requiresDeletionDrainReview()).toBe(true);
+    expect(service.credentialLifetimeMs()).toBe(900000);
     await expect(
       service.deleteAndVerifyForClientDeletion(
         'feedback-video/fixture/test.mp4',
@@ -80,6 +80,73 @@ describe('F004 external verification adapters (no real services)', () => {
       new DeletionIdentityService().remove('fixture'),
     ).rejects.toThrow('IDENTITY_STILL_EXISTS');
   });
+
+  it('only treats Firebase user-not-found as absence during automatic audit', async () => {
+    const service = new DeletionIdentityService();
+    getUser.mockResolvedValueOnce({ uid: 'fixture' });
+    await expect(service.isAbsent('fixture')).resolves.toBe(false);
+    getUser.mockRejectedValueOnce({ code: 'auth/user-not-found' });
+    await expect(service.isAbsent('fixture')).resolves.toBe(true);
+    getUser.mockRejectedValueOnce({ code: 'auth/insufficient-permission' });
+    await expect(service.isAbsent('fixture')).rejects.toBeDefined();
+    expect(deleteUser).not.toHaveBeenCalled();
+    expect(service.credentialLifetimeMs()).toBe(3600000);
+  });
+
+  it('discovers late objects only in the selected client namespaces using bounded pages', async () => {
+    const owner = randomUUID();
+    const key = `feedback-video/${owner}/fixture.mp4`;
+    const service = new UploadsService(
+      new ConfigService({
+        NODE_ENV: 'production',
+        R2_BUCKET_NAME: 'isolated-test-bucket',
+        R2_ENDPOINT: 'http://127.0.0.1:1',
+      }),
+      {} as PrismaService,
+    );
+    sendObject.mockImplementation((command) => {
+      if (!(command instanceof ListObjectsV2Command))
+        throw new Error('Only LIST expected');
+      expect(command.input.MaxKeys).toBe(100);
+      expect(command.input.Prefix).toContain(`/${owner}/`);
+      return Promise.resolve({
+        Contents:
+          command.input.Prefix === `feedback-video/${owner}/`
+            ? [{ Key: key }]
+            : [],
+        IsTruncated: false,
+      });
+    });
+    await expect(service.discoverForClientDeletion(owner)).resolves.toEqual([
+      key,
+    ]);
+    expect(sendObject).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['403', 'truncated', 'foreign'])(
+    'does not certify storage absence on %s',
+    async (failure) => {
+      const service = new UploadsService(
+        new ConfigService({
+          NODE_ENV: 'production',
+          R2_BUCKET_NAME: 'isolated-test-bucket',
+          R2_ENDPOINT: 'http://127.0.0.1:1',
+        }),
+        {} as PrismaService,
+      );
+      if (failure === '403')
+        sendObject.mockRejectedValue({ $metadata: { httpStatusCode: 403 } });
+      else
+        sendObject.mockResolvedValue(
+          failure === 'truncated'
+            ? { IsTruncated: true, Contents: [] }
+            : { Contents: [{ Key: 'avatar/other/fixture.jpg' }] },
+        );
+      await expect(
+        service.discoverForClientDeletion(randomUUID()),
+      ).rejects.toBeDefined();
+    },
+  );
   it.each([404, 403, 500, 200])(
     'verifies storage absence and distinguishes HEAD %s',
     async (status) => {

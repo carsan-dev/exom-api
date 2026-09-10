@@ -11,6 +11,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -627,10 +628,40 @@ export class UploadsService {
     });
   }
 
-  requiresDeletionDrainReview(): boolean {
-    // Existing rows do not record the storage environment or prove that an
-    // earlier direct PUT drained. NODE_ENV is not evidence of local ownership.
-    return true;
+  credentialLifetimeMs(): number {
+    return PRESIGNED_TTL_SECONDS * 1000;
+  }
+
+  async discoverForClientDeletion(clientId: string): Promise<string[]> {
+    if (!this.bucket || !this.endpoint) throw new Error('STORAGE_UNAVAILABLE');
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        clientId,
+      )
+    )
+      throw new Error('INVALID_DELETION_OWNER');
+    const keys: string[] = [];
+    // A bounded page per namespace is enough: cleanup removes it and the next
+    // pass discovers the remainder. Only an empty page can certify absence.
+    for (const purpose of ['avatar', 'feedback-image', 'feedback-video']) {
+      const prefix = `${purpose}/${clientId}/`;
+      const page = await this.s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          MaxKeys: 100,
+        }),
+        { abortSignal: AbortSignal.timeout(15000) },
+      );
+      if (page.IsTruncated && !page.Contents?.length)
+        throw new Error('INCOMPLETE_STORAGE_INVENTORY');
+      for (const item of page.Contents ?? []) {
+        if (!item.Key?.startsWith(prefix) || item.Key.split('/').length !== 3)
+          throw new Error('INVALID_DELETION_INVENTORY');
+        keys.push(item.Key);
+      }
+    }
+    return keys;
   }
 
   async deleteAndVerifyForClientDeletion(fileKey: string): Promise<void> {

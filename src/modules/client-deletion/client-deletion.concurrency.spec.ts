@@ -106,7 +106,8 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
   beforeEach(async () => {
     identity = new DeletionIdentityService();
     // This isolated fixture has no previously minted Firebase credentials.
-    jest.spyOn(identity, 'requiresDeletionDrainReview').mockReturnValue(false);
+    jest.spyOn(identity, 'credentialLifetimeMs').mockReturnValue(0);
+    jest.spyOn(identity, 'isAbsent').mockResolvedValue(true);
     removeIdentity = jest
       .spyOn(identity, 'remove')
       .mockResolvedValue(undefined);
@@ -124,7 +125,8 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       .spyOn(uploads, 'deleteAndVerifyForClientDeletion')
       .mockResolvedValue(undefined);
     // Only the identified simulation has a known completed transfer barrier.
-    jest.spyOn(uploads, 'requiresDeletionDrainReview').mockReturnValue(false);
+    jest.spyOn(uploads, 'credentialLifetimeMs').mockReturnValue(0);
+    jest.spyOn(uploads, 'discoverForClientDeletion').mockResolvedValue([]);
     service = new ClientDeletionService(database, uploads, identity);
     adminId = (await client(Role.SUPER_ADMIN)).id;
   });
@@ -296,7 +298,7 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       await prisma.clientDeletion.findUnique({ where: { id: op.id } }),
     ).toMatchObject({
       status: 'COMPLETED',
-      object_keys: [],
+      object_keys: [key],
       firebase_uid: a.firebase_uid,
     });
   });
@@ -652,31 +654,39 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     ).toBe(0);
   });
 
-  it('retains the journal for direct PUT drain review, including a late recreated object', async () => {
+  it('automatically completes storage cleanup after credential expiry and collects a late recreated object', async () => {
     const a = await client();
     const key = await evidence(a.id);
-    jest.spyOn(uploads, 'requiresDeletionDrainReview').mockReturnValue(true);
+    jest.spyOn(uploads, 'credentialLifetimeMs').mockReturnValue(900000);
     const op = await service.request(a.id, adminId);
     await service.process(op.id);
     expect(await service.get(op.id)).toMatchObject({
-      status: 'BLOCKED',
-      last_error: 'UPLOAD_DRAIN_REVIEW_REQUIRED',
+      status: 'PENDING',
+      last_error: 'CREDENTIALS_EXPIRING',
       completed_at: null,
     });
-    // A second cleanup must still know the key after the original object was
-    // deleted. This models late arrival; it does not prove R2's drain contract.
+    await prisma.clientDeletion.update({
+      where: { id: op.id },
+      data: { settle_after: new Date(0) },
+    });
+    jest
+      .spyOn(uploads, 'discoverForClientDeletion')
+      .mockResolvedValueOnce([key])
+      .mockResolvedValue([]);
     await due(op.id);
     await service.recover();
     expect(removeObject.mock.calls).toEqual([[key], [key]]);
+    expect((await service.get(op.id)).status).toBe('COMPLETED');
     expect(
       (await prisma.clientDeletion.findUniqueOrThrow({ where: { id: op.id } }))
         .object_keys,
     ).toEqual([key]);
   });
 
-  it('does not complete even without files while earlier Firebase credentials may recreate the account', async () => {
+  it('automatically closes without files once earlier Firebase credentials expire', async () => {
     const a = await client();
     const productionIdentity = new DeletionIdentityService();
+    jest.spyOn(productionIdentity, 'isAbsent').mockResolvedValue(true);
     const remove = jest
       .spyOn(productionIdentity, 'remove')
       .mockResolvedValue(undefined);
@@ -688,16 +698,161 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     const operation = await worker.request(a.id, adminId);
     await worker.process(operation.id);
     expect(await worker.get(operation.id)).toMatchObject({
-      status: 'BLOCKED',
-      last_error: 'AUTH_DRAIN_REVIEW_REQUIRED',
+      status: 'PENDING',
+      last_error: 'CREDENTIALS_EXPIRING',
       completed_at: null,
+    });
+    await prisma.clientDeletion.update({
+      where: { id: operation.id },
+      data: { settle_after: new Date(0) },
     });
     await due(operation.id);
     await worker.recover();
     expect(remove.mock.calls).toEqual([[a.firebase_uid], [a.firebase_uid]]);
     expect(
       await prisma.clientDeletion.findUnique({ where: { id: operation.id } }),
-    ).toMatchObject({ firebase_uid: a.firebase_uid });
+    ).toMatchObject({ firebase_uid: a.firebase_uid, status: 'COMPLETED' });
+  });
+
+  it('automatically reopens a completed receipt for late Firebase and R2 resources without losing inventory', async () => {
+    const a = await client();
+    const op = await service.request(a.id, adminId);
+    await service.process(op.id);
+    expect((await service.get(op.id)).status).toBe('COMPLETED');
+    const lateKey = `feedback-video/${a.id}/${randomUUID()}.mp4`;
+    jest
+      .spyOn(uploads, 'discoverForClientDeletion')
+      .mockResolvedValueOnce([lateKey])
+      .mockResolvedValue([]);
+    removeObject.mockImplementationOnce(async (key) => {
+      const journal = await prisma.clientDeletion.findUniqueOrThrow({
+        where: { id: op.id },
+      });
+      expect(journal.status).toBe('PROCESSING');
+      expect(journal.object_keys).toContain(key);
+      throw new Error('simulated storage outage');
+    });
+    await due(op.id);
+    await service.recover();
+    expect((await service.get(op.id)).status).toBe('PENDING');
+    expect(
+      (await prisma.clientDeletion.findUniqueOrThrow({ where: { id: op.id } }))
+        .object_keys,
+    ).toContain(lateKey);
+    await due(op.id);
+    await new ClientDeletionService(
+      prisma as PrismaService,
+      uploads,
+      identity,
+    ).recover();
+    expect((await service.get(op.id)).status).toBe('COMPLETED');
+    expect(removeObject).toHaveBeenCalledWith(lateKey);
+
+    removeIdentity.mockClear();
+    const previousCompletion = new Date(1000);
+    await prisma.clientDeletion.update({
+      where: { id: op.id },
+      data: { completed_at: previousCompletion },
+    });
+    jest
+      .spyOn(identity, 'isAbsent')
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    await due(op.id);
+    await service.recover();
+    expect(removeIdentity).toHaveBeenCalledWith(a.firebase_uid);
+    expect((await service.get(op.id)).status).toBe('COMPLETED');
+    expect((await service.get(op.id)).completed_at!.getTime()).toBeGreaterThan(
+      previousCompletion.getTime(),
+    );
+  });
+
+  it('audits an absent completed receipt without issuing destructive provider calls', async () => {
+    const a = await client();
+    const op = await service.request(a.id, adminId);
+    await service.process(op.id);
+    const completed = (await service.get(op.id)).completed_at;
+    removeObject.mockClear();
+    removeIdentity.mockClear();
+    await due(op.id);
+    await service.recover();
+    expect(removeObject).not.toHaveBeenCalled();
+    expect(removeIdentity).not.toHaveBeenCalled();
+    expect((await service.get(op.id)).status).toBe('COMPLETED');
+    expect((await service.get(op.id)).last_verified_at).not.toBeNull();
+    expect((await service.get(op.id)).completed_at).toEqual(completed);
+  });
+
+  it('does not certify ambiguous legacy inventory during a completed audit', async () => {
+    const a = await client();
+    const op = await service.request(a.id, adminId);
+    await service.process(op.id);
+    await prisma.clientDeletion.update({
+      where: { id: op.id },
+      data: { object_keys: ['avatar/another-client/shared.jpg'] },
+    });
+    removeObject.mockClear();
+    removeIdentity.mockClear();
+    await due(op.id);
+    await service.recover();
+    expect(await service.get(op.id)).toMatchObject({
+      status: 'BLOCKED',
+      completed_at: null,
+      last_error: 'DELETION_OWNERSHIP_REVIEW',
+    });
+    expect(removeObject).not.toHaveBeenCalled();
+    expect(removeIdentity).not.toHaveBeenCalled();
+  });
+
+  it('batches large inventory and resumes the durable cursor after restart', async () => {
+    const a = await client();
+    const op = await service.request(a.id, adminId);
+    const keys = Array.from(
+      { length: 205 },
+      () => `avatar/${a.id}/${randomUUID()}.jpg`,
+    );
+    await prisma.clientDeletion.update({
+      where: { id: op.id },
+      data: { object_keys: keys },
+    });
+    for (const count of [100, 200, 205]) {
+      await due(op.id);
+      await new ClientDeletionService(
+        prisma as PrismaService,
+        uploads,
+        identity,
+      ).process(op.id);
+      expect(removeObject).toHaveBeenCalledTimes(count);
+      const current = await prisma.clientDeletion.findUniqueOrThrow({
+        where: { id: op.id },
+      });
+      expect(current.cleanup_cursor).toBe(count);
+      expect(current.object_keys).toEqual(keys);
+      expect(current.status).toBe(count === 205 ? 'COMPLETED' : 'PENDING');
+    }
+  });
+
+  it('preserves the receipt on failed final enumeration and completes on automatic retry', async () => {
+    const a = await client();
+    const key = await evidence(a.id);
+    const op = await service.request(a.id, adminId);
+    jest
+      .spyOn(uploads, 'discoverForClientDeletion')
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('403 fixture'))
+      .mockResolvedValue([]);
+    await service.process(op.id);
+    expect(await service.get(op.id)).toMatchObject({
+      status: 'PENDING',
+      last_error: 'FINAL_VERIFICATION_PENDING',
+    });
+    expect(
+      (await prisma.clientDeletion.findUniqueOrThrow({ where: { id: op.id } }))
+        .object_keys,
+    ).toEqual([key]);
+    await due(op.id);
+    await service.recover();
+    expect((await service.get(op.id)).status).toBe('COMPLETED');
   });
 
   it('self-delete shares the durable operation and never returns 2xx completion on external failure', async () => {

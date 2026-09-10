@@ -14,10 +14,20 @@ import { UploadsService } from '../uploads/uploads.service';
 
 @Injectable()
 export class DeletionIdentityService {
-  requiresDeletionDrainReview(): boolean {
-    // Previously minted custom tokens can create the UID again. Existing
-    // records do not prove that those credentials and in-flight RPCs drained.
-    return true;
+  credentialLifetimeMs(): number {
+    // Firebase custom tokens can recreate the UID until their one-hour expiry.
+    return 3600000;
+  }
+
+  async isAbsent(uid: string): Promise<boolean> {
+    if (!admin.apps.length) throw new Error('IDENTITY_UNAVAILABLE');
+    try {
+      await admin.auth().getUser(uid);
+      return false;
+    } catch (error: unknown) {
+      if (this.isMissing(error)) return true;
+      throw error;
+    }
   }
 
   async remove(uid: string): Promise<void> {
@@ -54,6 +64,8 @@ const publicSelection = {
   last_error: true,
   created_at: true,
   completed_at: true,
+  settle_after: true,
+  last_verified_at: true,
 } satisfies Prisma.ClientDeletionSelect;
 
 @Injectable()
@@ -184,10 +196,15 @@ export class ClientDeletionService {
             requested_by: requesterId,
             firebase_uid: user.firebase_uid,
             object_keys: [...keys],
-            // Direct presigned PUTs are not revoked by DELETE. Without a proven
-            // drain contract keep inventory and a truthful BLOCKED state (ISSUE-042).
-            storage_review:
-              keys.size > 0 && this.uploads.requiresDeletionDrainReview(),
+            // Expiry ends admission of old credentials, not an already accepted
+            // request. Durable automatic reconciliation also covers late writes.
+            settle_after: new Date(
+              Date.now() +
+                Math.max(
+                  user.firebase_uid ? this.identity.credentialLifetimeMs() : 0,
+                  keys.size ? this.uploads.credentialLifetimeMs() : 0,
+                ),
+            ),
           },
           select: publicSelection,
         });
@@ -250,7 +267,6 @@ export class ClientDeletionService {
   async recover(): Promise<void> {
     const operations = await this.prisma.clientDeletion.findMany({
       where: {
-        status: { not: 'COMPLETED' },
         next_attempt_at: { lte: new Date() },
         OR: [
           { claimed_at: null },
@@ -266,10 +282,15 @@ export class ClientDeletionService {
   async process(id: string): Promise<void> {
     const token = randomUUID();
     const now = new Date();
+    const candidate = await this.prisma.clientDeletion.findUnique({
+      where: { id },
+    });
+    if (!candidate) return;
+    const auditing = candidate.status === 'COMPLETED';
     const claim = await this.prisma.clientDeletion.updateMany({
       where: {
         id,
-        status: { not: 'COMPLETED' },
+        status: candidate.status,
         next_attempt_at: { lte: now },
         OR: [
           { claimed_at: null },
@@ -277,7 +298,7 @@ export class ClientDeletionService {
         ],
       },
       data: {
-        status: 'PROCESSING',
+        status: auditing ? 'COMPLETED' : 'PROCESSING',
         claimed_at: now,
         claim_token: token,
         attempts: { increment: 1 },
@@ -287,51 +308,173 @@ export class ClientDeletionService {
     const operation = await this.prisma.clientDeletion.findUniqueOrThrow({
       where: { id },
     });
-    let pendingStep = 'FIREBASE_CLEANUP_PENDING';
+    let pendingStep = 'STORAGE_INVENTORY_PENDING';
     try {
-      if (operation.firebase_uid)
-        await this.identity.remove(operation.firebase_uid);
-      pendingStep = 'STORAGE_CLEANUP_PENDING';
-      for (const key of operation.object_keys)
-        await this.uploads.deleteAndVerifyForClientDeletion(key);
-      if (operation.storage_review) {
-        await this.finishAttempt(
-          operation,
-          token,
-          'BLOCKED',
-          'UPLOAD_DRAIN_REVIEW_REQUIRED',
+      const settleAfter =
+        operation.settle_after ??
+        new Date(
+          operation.created_at.getTime() +
+            Math.max(
+              operation.firebase_uid ? this.identity.credentialLifetimeMs() : 0,
+              operation.object_keys.length
+                ? this.uploads.credentialLifetimeMs()
+                : 0,
+            ),
         );
-        return;
-      }
+      const discovered = await this.uploads.discoverForClientDeletion(
+        operation.client_id,
+      );
+      // Record a late object's exact key before issuing any deletion for it.
+      const inventory = [...new Set([...operation.object_keys, ...discovered])];
       if (
-        operation.firebase_uid &&
-        this.identity.requiresDeletionDrainReview()
+        inventory.some(
+          (key) =>
+            !/^(avatar|feedback-image|feedback-video)\//.test(key) ||
+            key.split('/').length !== 3 ||
+            key.split('/')[1] !== operation.client_id,
+        )
       ) {
         await this.finishAttempt(
           operation,
           token,
           'BLOCKED',
-          'AUTH_DRAIN_REVIEW_REQUIRED',
+          'DELETION_OWNERSHIP_REVIEW',
         );
         return;
       }
-      await this.prisma.clientDeletion.updateMany({
+      if (
+        auditing &&
+        !discovered.length &&
+        (!operation.firebase_uid ||
+          (await this.identity.isAbsent(operation.firebase_uid)))
+      ) {
+        await this.complete(operation, token, settleAfter, true);
+        return;
+      }
+      let cursor = auditing ? 0 : operation.cleanup_cursor;
+      if (cursor >= inventory.length && discovered.length) cursor = 0;
+      const recorded = await this.prisma.clientDeletion.updateMany({
         where: { id, claim_token: token },
         data: {
-          status: 'COMPLETED',
-          completed_at: new Date(),
-          // Keep the opaque identity tombstone: an old token must never bind
-          // this Firebase UID to a newly created EXOM account after completion.
-          object_keys: [],
-          claimed_at: null,
-          claim_token: null,
-          last_error: null,
+          status: 'PROCESSING',
+          completed_at: null,
+          object_keys: inventory,
+          cleanup_cursor: cursor,
+          settle_after: settleAfter,
         },
       });
+      if (!recorded.count) return;
+      pendingStep = 'FIREBASE_CLEANUP_PENDING';
+      if (operation.firebase_uid)
+        await this.identity.remove(operation.firebase_uid);
+      pendingStep = 'STORAGE_CLEANUP_PENDING';
+      const end = Math.min(inventory.length, cursor + 100);
+      for (const key of inventory.slice(cursor, end))
+        await this.uploads.deleteAndVerifyForClientDeletion(key);
+      const advanced = await this.prisma.clientDeletion.updateMany({
+        where: { id, claim_token: token },
+        data: { cleanup_cursor: end },
+      });
+      if (!advanced.count) return;
+      if (end < inventory.length) {
+        await this.defer(
+          operation,
+          token,
+          'STORAGE_CLEANUP_PENDING',
+          new Date(Date.now() + 5000),
+        );
+        return;
+      }
+      pendingStep = 'FINAL_VERIFICATION_PENDING';
+      const late = await this.uploads.discoverForClientDeletion(
+        operation.client_id,
+      );
+      if (late.length) {
+        await this.prisma.clientDeletion.updateMany({
+          where: { id, claim_token: token },
+          data: {
+            object_keys: [...new Set([...inventory, ...late])],
+            cleanup_cursor: 0,
+          },
+        });
+        await this.defer(
+          operation,
+          token,
+          'LATE_RESOURCE_CLEANUP_PENDING',
+          new Date(Date.now() + 5000),
+        );
+        return;
+      }
+      if (
+        operation.firebase_uid &&
+        !(await this.identity.isAbsent(operation.firebase_uid))
+      ) {
+        await this.defer(
+          operation,
+          token,
+          'FIREBASE_CLEANUP_PENDING',
+          new Date(Date.now() + 5000),
+        );
+        return;
+      }
+      if (Date.now() < settleAfter.getTime()) {
+        await this.defer(operation, token, 'CREDENTIALS_EXPIRING', settleAfter);
+        return;
+      }
+      await this.complete(operation, token, settleAfter);
     } catch {
       // Do not persist provider messages: they may contain URLs or credentials.
       await this.finishAttempt(operation, token, 'PENDING', pendingStep);
     }
+  }
+
+  private async complete(
+    operation: ClientDeletion,
+    token: string,
+    settleAfter: Date,
+    preserveCompletion = false,
+  ) {
+    const verified = new Date();
+    if (verified < settleAfter) {
+      await this.defer(operation, token, 'CREDENTIALS_EXPIRING', settleAfter);
+      return;
+    }
+    await this.prisma.clientDeletion.updateMany({
+      where: { id: operation.id, claim_token: token },
+      data: {
+        status: 'COMPLETED',
+        completed_at: preserveCompletion
+          ? (operation.completed_at ?? verified)
+          : verified,
+        last_verified_at: verified,
+        settle_after: settleAfter,
+        // Retain UID, client namespace and inventory for automatic late cleanup.
+        // An expired URL does not prove a previously accepted PUT terminated.
+        next_attempt_at: new Date(verified.getTime() + 3600000),
+        claimed_at: null,
+        claim_token: null,
+        last_error: null,
+      },
+    });
+  }
+
+  private async defer(
+    operation: ClientDeletion,
+    token: string,
+    code: string,
+    next: Date,
+  ) {
+    await this.prisma.clientDeletion.updateMany({
+      where: { id: operation.id, claim_token: token },
+      data: {
+        status: 'PENDING',
+        completed_at: null,
+        last_error: code,
+        claimed_at: null,
+        claim_token: null,
+        next_attempt_at: next,
+      },
+    });
   }
 
   private finishAttempt(
@@ -348,6 +491,7 @@ export class ClientDeletionService {
       where: { id: operation.id, claim_token: token },
       data: {
         status,
+        completed_at: null,
         last_error: code,
         claimed_at: null,
         claim_token: null,
