@@ -8,9 +8,9 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import * as admin from 'firebase-admin';
 import { randomBytes } from 'crypto';
-import { withLiveUsers } from '../../common/user-external-effect';
+import { IdentityService } from '../identity/identity.service';
+import { IdentityProvider } from '../identity/identity-provider';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   flattenHistoricalMeals,
@@ -124,7 +124,6 @@ function getDateRange(
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,
@@ -132,6 +131,10 @@ export class UsersService {
     private readonly metricsService: MetricsService,
     private readonly calendarService: CalendarService,
     @Optional() private readonly emailService?: EmailService,
+    private readonly identity: IdentityService = new IdentityService(
+      prisma,
+      new IdentityProvider(),
+    ),
   ) {}
 
   async findAll(
@@ -204,102 +207,99 @@ export class UsersService {
     ]);
     return paginate(data, total, query);
   }
-
-  async createAdmin(dto: CreateAdminDto) {
+  async createAdmin(dto: CreateAdminDto, actorId: string, key?: string) {
     const email = this.normalizeEmail(dto.email);
     const firstName = dto.first_name.trim();
     const lastName = dto.last_name.trim();
-
-    await this.assertEmailAvailable(email);
-
-    const shouldSendInvitation = !dto.password;
-    const firebaseUser = await this.createFirebaseEmailUser(
-      email,
-      dto.password ?? this.generateSecureRandomPassword(),
-      firstName,
-      lastName,
-    );
-
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        firebase_uid: firebaseUser.uid,
+    const user = await this.identity.create(
+      {
+        actorId,
         role: Role.ADMIN,
-        auth_provider: 'email',
-        profile: {
-          create: {
-            first_name: firstName,
-            last_name: lastName,
-          },
-        },
+        email,
+        firstName,
+        lastName,
+        password: dto.password ?? this.generateSecureRandomPassword(),
+        fingerprint: [firstName, lastName],
+        key,
       },
-      include: { profile: true },
-    });
-
-    if (shouldSendInvitation) {
-      await this.sendInvitationEmail(email);
-    }
-
+      (tx, uid, id) =>
+        tx.user.create({
+          data: {
+            id,
+            email,
+            firebase_uid: uid,
+            role: Role.ADMIN,
+            auth_provider: 'email',
+            profile: { create: { first_name: firstName, last_name: lastName } },
+          },
+          include: { profile: true },
+        }),
+    );
+    if (!dto.password) await this.sendInvitationEmail(email);
     return this.serializeUserSummary(user);
   }
-
   async createClient(
     adminId: string,
     currentUserRole: string,
     dto: CreateClientDto,
+    key?: string,
   ) {
     const email = this.normalizeEmail(dto.email);
     const firstName = dto.first_name.trim();
     const lastName = dto.last_name.trim();
-
-    await this.assertEmailAvailable(email);
-
-    const shouldSendInvitation = !dto.password;
-    const firebaseUser = await this.createFirebaseEmailUser(
-      email,
-      dto.password ?? this.generateSecureRandomPassword(),
-      firstName,
-      lastName,
-    );
-
-    const user = await this.prisma.$transaction(async (tx) => {
-      const newUser = await tx.user.create({
-        data: {
-          email,
-          firebase_uid: firebaseUser.uid,
-          role: Role.CLIENT,
-          auth_provider: 'email',
-          profile: {
-            create: {
-              first_name: firstName,
-              last_name: lastName,
-              level: dto.level ?? 'PRINCIPIANTE',
-              main_goal: dto.main_goal ?? null,
+    const user = await this.identity.create(
+      {
+        actorId: adminId,
+        role: Role.CLIENT,
+        email,
+        firstName,
+        lastName,
+        password: dto.password ?? this.generateSecureRandomPassword(),
+        fingerprint: [
+          firstName,
+          lastName,
+          dto.level ?? 'PRINCIPIANTE',
+          dto.main_goal ?? null,
+        ],
+        key,
+      },
+      async (tx, uid, id) => {
+        const newUser = await tx.user.create({
+          data: {
+            id,
+            email,
+            firebase_uid: uid,
+            role: Role.CLIENT,
+            auth_provider: 'email',
+            profile: {
+              create: {
+                first_name: firstName,
+                last_name: lastName,
+                level: dto.level ?? 'PRINCIPIANTE',
+                main_goal: dto.main_goal ?? null,
+              },
             },
           },
-        },
-        include: { profile: true },
-      });
-
-      if (currentUserRole === Role.ADMIN) {
-        await tx.adminClientAssignment.create({
-          data: { admin_id: adminId, client_id: newUser.id },
+          include: { profile: true },
         });
-
-        await this.challengesService.syncGlobalChallengesForCreatorClient(
-          adminId,
-          newUser.id,
-          tx,
-        );
-      }
-
-      return newUser;
-    });
-
-    if (shouldSendInvitation) {
-      await this.sendInvitationEmail(email);
-    }
-
+        // Re-read under IdentityService's actor lock; do not trust a stale role.
+        const actor = await tx.user.findUniqueOrThrow({
+          where: { id: adminId },
+        });
+        if (actor.role === Role.ADMIN) {
+          await tx.adminClientAssignment.create({
+            data: { admin_id: adminId, client_id: newUser.id },
+          });
+          await this.challengesService.syncGlobalChallengesForCreatorClient(
+            adminId,
+            newUser.id,
+            tx,
+          );
+        }
+        return newUser;
+      },
+    );
+    if (!dto.password) await this.sendInvitationEmail(email);
     if (currentUserRole === Role.ADMIN) {
       await this.notifyClientAssignedToAdmins(
         adminId,
@@ -308,80 +308,77 @@ export class UsersService {
         this.buildClientNotificationName(user),
       );
     }
-
     return this.serializeUserSummary(user);
   }
-
-  async updateUser(id: string, dto: UpdateUserDto) {
-    const user = await this.getManageableUserOrFail(id, true);
+  async updateUser(
+    id: string,
+    dto: UpdateUserDto,
+    actorId: string,
+    key?: string,
+  ) {
     const email = this.normalizeEmail(dto.email);
     const firstName = dto.first_name.trim();
     const lastName = dto.last_name.trim();
-
-    await this.assertEmailAvailable(email, user.id);
-    await withLiveUsers(this.prisma, [id], () =>
-      this.updateFirebaseEmailUser(
-        user.firebase_uid,
-        email,
-        firstName,
-        lastName,
-      ),
-    );
-
-    const updatedUser = await this.prisma.user.update({
-      where: { id },
-      data: {
-        email,
-        profile: {
-          upsert: {
-            create: {
-              first_name: firstName,
-              last_name: lastName,
+    const user = await this.identity.change(
+      actorId,
+      id,
+      'SYNC',
+      [email, firstName, lastName],
+      async (tx) => {
+        if (
+          await tx.user.findFirst({
+            where: {
+              id: { not: id },
+              email: { equals: email, mode: 'insensitive' },
             },
-            update: {
-              first_name: firstName,
-              last_name: lastName,
+            select: { id: true },
+          })
+        )
+          throw new ConflictException('El email ya está registrado');
+        await tx.user.update({
+          where: { id },
+          data: {
+            email,
+            profile: {
+              upsert: {
+                create: { first_name: firstName, last_name: lastName },
+                update: { first_name: firstName, last_name: lastName },
+              },
             },
           },
-        },
+        });
       },
-      include: { profile: true },
-    });
-
-    return this.serializeUserSummary(updatedUser);
+      key,
+    );
+    return this.serializeUserSummary(user);
   }
-
   async updateUserStatus(
     currentUserId: string,
     id: string,
     dto: UpdateUserStatusDto,
+    key?: string,
   ) {
-    const user = await this.getManageableUserOrFail(id, true);
-
-    if (!dto.is_active && user.id === currentUserId) {
+    if (!dto.is_active && id === currentUserId)
       throw new ForbiddenException('No puedes desactivar tu propia cuenta');
-    }
-
-    await withLiveUsers(this.prisma, [id], async () => {
-      await admin
-        .auth()
-        .updateUser(user.firebase_uid, { disabled: !dto.is_active });
-
-      if (!dto.is_active) {
-        await admin.auth().revokeRefreshTokens(user.firebase_uid);
-      }
-    });
-
-    await this.prisma.user.update({
-      where: { id },
-      data: {
-        is_active: dto.is_active,
-        is_locked: dto.is_active ? user.is_locked : false,
-        login_attempts: dto.is_active ? user.login_attempts : 0,
-        locked_at: dto.is_active ? (user.locked_at ?? null) : null,
+    await this.identity.change(
+      currentUserId,
+      id,
+      'SYNC',
+      dto.is_active,
+      async (tx, user) => {
+        await tx.user.update({
+          where: { id },
+          data: {
+            is_active: dto.is_active,
+            is_locked: dto.is_active ? user.is_locked : false,
+            login_attempts: dto.is_active ? user.login_attempts : 0,
+            locked_at: dto.is_active ? user.locked_at : null,
+            ...(!dto.is_active ? { sessions_revoked_at: new Date() } : {}),
+          },
+        });
       },
-    });
-
+      key,
+    );
     return {
       message: dto.is_active
         ? 'Cuenta reactivada exitosamente'
@@ -1049,23 +1046,6 @@ export class UsersService {
     return user;
   }
 
-  private async assertEmailAvailable(email: string, ignoredUserId?: string) {
-    const existing = await this.prisma.user.findFirst({
-      where: {
-        email: {
-          equals: email,
-          mode: 'insensitive',
-        },
-        ...(ignoredUserId ? { id: { not: ignoredUserId } } : {}),
-      },
-      select: { id: true },
-    });
-
-    if (existing) {
-      throw new ConflictException('El email ya está registrado');
-    }
-  }
-
   private generateSecureRandomPassword(): string {
     return randomBytes(24).toString('base64url').slice(0, 32);
   }
@@ -1078,12 +1058,11 @@ export class UsersService {
 
     await this.sendPasswordResetEmail(email);
   }
-
   private async sendPasswordResetEmail(email: string): Promise<void> {
     const apiKey = process.env.FIREBASE_WEB_API_KEY;
     if (!apiKey) {
       this.logger.warn(
-        `FIREBASE_WEB_API_KEY no configurado — email de invitación no enviado a ${email}`,
+        'FIREBASE_WEB_API_KEY no configurado — invitación pendiente',
       );
       return;
     }
@@ -1099,19 +1078,16 @@ export class UsersService {
       );
 
       if (!response.ok) {
-        const body = await response.text();
-        this.logger.error(
-          `Firebase sendOobCode falló para ${email}: ${response.status} ${body}`,
-        );
+        this.logger.error(`Firebase sendOobCode falló: ${response.status}`);
         throw new InternalServerErrorException(
           'No se pudo enviar el email de invitación',
         );
       }
 
-      this.logger.log(`Email de invitación enviado a ${email}`);
+      this.logger.log('Email de invitación aceptado');
     } catch (err) {
       if (err instanceof InternalServerErrorException) throw err;
-      this.logger.error(`Error enviando email a ${email}: ${err}`);
+      this.logger.error('Error enviando invitación');
       throw new InternalServerErrorException(
         'No se pudo enviar el email de invitación',
       );
@@ -1145,47 +1121,6 @@ export class UsersService {
     return { message: 'Invitación reenviada' };
   }
 
-  private async createFirebaseEmailUser(
-    email: string,
-    password: string,
-    firstName: string,
-    lastName: string,
-  ) {
-    try {
-      return await admin.auth().createUser({
-        email,
-        password,
-        displayName: this.buildDisplayName(firstName, lastName),
-      });
-    } catch (err: any) {
-      if (err.code === 'auth/email-already-exists') {
-        throw new ConflictException('El email ya está registrado en Firebase');
-      }
-
-      throw err;
-    }
-  }
-
-  private async updateFirebaseEmailUser(
-    firebaseUid: string,
-    email: string,
-    firstName: string,
-    lastName: string,
-  ) {
-    try {
-      await admin.auth().updateUser(firebaseUid, {
-        email,
-        displayName: this.buildDisplayName(firstName, lastName),
-      });
-    } catch (err: any) {
-      if (err.code === 'auth/email-already-exists') {
-        throw new ConflictException('El email ya está registrado en Firebase');
-      }
-
-      throw err;
-    }
-  }
-
   private serializeUserSummary(user: ManagedUserRecord) {
     return {
       id: user.id,
@@ -1196,10 +1131,6 @@ export class UsersService {
       created_at: user.created_at,
       profile: user.profile,
     };
-  }
-
-  private buildDisplayName(firstName: string, lastName: string) {
-    return `${firstName} ${lastName}`.trim();
   }
 
   private buildClientNotificationName(

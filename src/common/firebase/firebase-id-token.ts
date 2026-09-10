@@ -15,6 +15,8 @@ export type VerifiedFirebaseIdToken = Pick<
   admin.auth.DecodedIdToken,
   'uid' | 'email'
 > & {
+  auth_time?: number;
+  exom_session_epoch?: string;
   firebase?: { sign_in_provider?: string };
 };
 
@@ -32,6 +34,7 @@ const rejectedIdTokenCodes = new Set([
   'auth/invalid-id-token',
   'auth/tenant-id-mismatch',
   'auth/user-disabled',
+  'auth/user-not-found',
 ]);
 
 const rejectedRestTokenCodes = new Set([
@@ -131,7 +134,7 @@ export async function verifyFirebaseIdTokenWithFallback({
 }): Promise<VerifiedFirebaseIdToken> {
   let adminVerificationError: unknown;
   try {
-    return await admin.auth().verifyIdToken(token);
+    return await admin.auth().verifyIdToken(token, true);
   } catch (error) {
     adminVerificationError = error;
     logger.error(

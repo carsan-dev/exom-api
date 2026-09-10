@@ -1,4 +1,12 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  HttpStatus,
+  Post,
+} from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto, SocialLoginDto, ForgotPasswordDto } from './dto/login.dto';
@@ -29,14 +37,15 @@ export class AuthController {
   socialLogin(@Body() dto: SocialLoginDto) {
     return this.authService.socialLogin(dto);
   }
-
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Solicitar reset de contraseña' })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     await this.authService.forgotPassword(dto.email);
-    return { message: 'Si el email existe, recibirás un enlace de recuperación' };
+    return {
+      message: 'Si el email existe, recibirás un enlace de recuperación',
+    };
   }
 
   @Get('me')
@@ -48,12 +57,14 @@ export class AuthController {
   getMe(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.getMe(user.id);
   }
-
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Cerrar sesión' })
-  async logout(@CurrentUser() user: AuthenticatedUser) {
-    await this.authService.logout(user.id);
+  async logout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Headers('Idempotency-Key') key?: string,
+  ) {
+    await this.authService.logout(user.id, key);
     return { message: 'Sesión cerrada exitosamente' };
   }
 }

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -86,16 +87,18 @@ export class UsersController {
   findAll(@Query() query: AdminUsersQueryDto) {
     return this.usersService.findAll(query);
   }
-
   @Post('users/admins')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Dar de alta un admin' })
   @ApiResponse({ status: 201, description: 'Admin creado correctamente' })
   @ApiResponse({ status: 409, description: 'El email ya está registrado' })
-  createAdmin(@Body() dto: CreateAdminDto) {
-    return this.usersService.createAdmin(dto);
+  createAdmin(
+    @Body() dto: CreateAdminDto,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Headers('Idempotency-Key') key?: string,
+  ) {
+    return this.usersService.createAdmin(dto, actor.id, key);
   }
-
   @Post('users')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'Dar de alta un cliente' })
@@ -104,10 +107,10 @@ export class UsersController {
   createClient(
     @CurrentUser() admin: AuthenticatedUser,
     @Body() dto: CreateClientDto,
+    @Headers('Idempotency-Key') key?: string,
   ) {
-    return this.usersService.createClient(admin.id, admin.role, dto);
+    return this.usersService.createClient(admin.id, admin.role, dto, key);
   }
-
   @Put('users/:id')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Actualizar datos básicos de un usuario' })
@@ -117,10 +120,14 @@ export class UsersController {
   })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
   @ApiResponse({ status: 409, description: 'El email ya está registrado' })
-  updateUser(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.updateUser(id, dto);
+  updateUser(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() actor: AuthenticatedUser,
+    @Headers('Idempotency-Key') key?: string,
+  ) {
+    return this.usersService.updateUser(id, dto, actor.id, key);
   }
-
   @Put('users/:id/status')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Activar o desactivar una cuenta' })
@@ -134,8 +141,9 @@ export class UsersController {
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: UpdateUserStatusDto,
+    @Headers('Idempotency-Key') key?: string,
   ) {
-    return this.usersService.updateUserStatus(admin.id, id, dto);
+    return this.usersService.updateUserStatus(admin.id, id, dto, key);
   }
 
   @Post('users/:id/resend-invitation')

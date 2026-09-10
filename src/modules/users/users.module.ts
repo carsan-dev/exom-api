@@ -1,3 +1,4 @@
+import { IdentityModule } from '../identity/identity.module';
 import { Module } from '@nestjs/common';
 import { ChallengesModule } from '../challenges/challenges.module';
 import { EmailModule } from '../email/email.module';
@@ -9,6 +10,7 @@ import { CalendarModule } from '../calendar/calendar.module';
 
 @Module({
   imports: [
+    IdentityModule,
     ChallengesModule,
     EmailModule,
     NotificationsModule,

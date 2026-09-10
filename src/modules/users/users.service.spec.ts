@@ -1,3 +1,6 @@
+import { IdentityService } from '../identity/identity.service';
+import { IdentityProvider } from '../identity/identity-provider';
+import type { Prisma } from '@prisma/client';
 import {
   BadRequestException,
   ForbiddenException,
@@ -13,21 +16,16 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import type { MetricsService } from '../metrics/metrics.service';
 import type { CalendarService } from '../calendar/calendar.service';
 
-const createUserMock = jest.fn();
-
-jest.mock('firebase-admin', () => ({
-  auth: () => ({
-    createUser: createUserMock,
-  }),
-}));
-
 describe('UsersService', () => {
   let service: UsersService;
+  let identity: IdentityService;
+  let createIdentity: jest.SpiedFunction<IdentityService['create']>;
   let prisma: {
     $queryRaw: jest.Mock;
     $transaction: jest.Mock;
     user: {
       findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
       findFirst: jest.Mock;
       findMany: jest.Mock;
       count: jest.Mock;
@@ -70,12 +68,12 @@ describe('UsersService', () => {
   };
 
   beforeEach(() => {
-    createUserMock.mockReset();
     prisma = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       $transaction: jest.fn(async (callback: any) => callback(prisma)),
       user: {
         findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ role: Role.ADMIN }),
         findFirst: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
@@ -124,12 +122,29 @@ describe('UsersService', () => {
       getWeekSummary: jest.fn(),
     };
 
+    identity = new IdentityService(
+      prisma as unknown as PrismaService,
+      new IdentityProvider(),
+    );
+    // This suite verifies the business callback. The identity transaction and
+    // Firebase failures run against real PostgreSQL in identity.concurrency.
+    createIdentity = jest
+      .spyOn(identity, 'create')
+      .mockImplementation((_input, persist) =>
+        persist(
+          prisma as unknown as Prisma.TransactionClient,
+          'firebase-client-1',
+          'client-1',
+        ),
+      );
     service = new UsersService(
       prisma as unknown as PrismaService,
       challengesService as unknown as ChallengesService,
       notifications as unknown as NotificationsService,
       metricsService as unknown as MetricsService,
       calendarService as unknown as CalendarService,
+      undefined,
+      identity,
     );
   });
 
@@ -145,7 +160,6 @@ describe('UsersService', () => {
     const createdAt = new Date('2024-03-01T10:00:00.000Z');
 
     prisma.user.findUnique.mockResolvedValue(null);
-    createUserMock.mockResolvedValue({ uid: 'firebase-client-1' });
     prisma.user.create.mockResolvedValue({
       id: 'client-1',
       email: dto.email,
@@ -184,13 +198,20 @@ describe('UsersService', () => {
       },
     });
 
-    expect(createUserMock).toHaveBeenCalledWith({
-      email: dto.email,
-      password: dto.password,
-      displayName: `${dto.first_name} ${dto.last_name}`,
-    });
+    expect(createIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: 'admin-1',
+        role: Role.CLIENT,
+        email: dto.email,
+        password: dto.password,
+        firstName: dto.first_name,
+        lastName: dto.last_name,
+      }),
+      expect.any(Function),
+    );
     expect(prisma.user.create).toHaveBeenCalledWith({
       data: {
+        id: 'client-1',
         email: dto.email,
         firebase_uid: 'firebase-client-1',
         role: Role.CLIENT,

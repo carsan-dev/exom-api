@@ -11,7 +11,6 @@ import { Request, Response } from 'express';
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
-
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -21,6 +20,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     let message = 'Error interno del servidor';
     let error = 'Internal Server Error';
     let code: string | undefined;
+    let recoveryReceipt: { operation_id: string } | undefined;
     let progressConflict:
       | { current_revision: number; current_progress: unknown }
       | undefined;
@@ -34,9 +34,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = (res as any).message || message;
         error = (res as any).error || error;
         code = (res as any).code;
-        // Only the owner-scoped progress conflict has an additional public
-        // contract. Never forward arbitrary exception properties or internals.
+        // Forward only explicitly public contracts, never arbitrary internals.
         const detail = res as Record<string, unknown>;
+        if (
+          (code === 'IDENTITY_RECOVERY_PENDING' ||
+            code === 'ACCOUNT_DELETION_PENDING') &&
+          typeof detail.operation_id === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+            detail.operation_id,
+          )
+        ) {
+          recoveryReceipt = { operation_id: detail.operation_id };
+        }
         if (
           code === 'PROGRESS_VERSION_CONFLICT' &&
           typeof detail.current_revision === 'number' &&
@@ -60,6 +69,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       message,
       error,
       ...(code && { code }),
+      ...recoveryReceipt,
       ...progressConflict,
       timestamp: new Date().toISOString(),
       path: request.url,

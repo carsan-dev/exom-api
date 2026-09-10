@@ -155,6 +155,8 @@ model User {
   role           Role         @default(CLIENT)
   auth_provider  AuthProvider @default(email)
   is_active      Boolean      @default(true)
+  identity_pending Boolean    @default(false)
+  sessions_revoked_at DateTime?
   is_archived    Boolean      @default(false)
   is_locked      Boolean      @default(false)
   login_attempts Int          @default(0)
@@ -989,6 +991,28 @@ model ClientDeletion {
   @@index([status, next_attempt_at])
   @@index([firebase_uid])
   @@map("client_deletions")
+}
+
+// Independent recovery metadata; never stores passwords, tokens or profiles.
+model IdentityOperation {
+  id              String   @id @default(uuid())
+  request_key     String   @unique
+  request_hash    String
+  user_id         String
+  actor_id        String
+  firebase_uid    String
+  kind            String
+  status          String   @default("PENDING")
+  firebase_owned  Boolean  @default(false)
+  attempts        Int      @default(0)
+  last_error      String?
+  next_attempt_at DateTime @default(now())
+  created_at      DateTime @default(now())
+  completed_at    DateTime?
+
+  @@index([status, next_attempt_at], map: "identity_operations_due")
+  @@index([user_id], map: "identity_operations_user")
+  @@map("identity_operations")
 }
 
 model ProgressOperation {

@@ -1,12 +1,22 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsBoolean,
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class CreateAdminDto {
   @ApiProperty()
   @IsEmail()
   email: string;
-
-  @ApiPropertyOptional({ minLength: 8, description: 'Si se omite, se envía email de invitación' })
+  @ApiPropertyOptional({
+    minLength: 8,
+    description: 'Si se omite, se envía email de invitación',
+  })
   @IsOptional()
   @IsString()
   @MinLength(8)
@@ -41,6 +51,7 @@ export class UpdateUserDto {
 
 export class UpdateUserStatusDto {
   @ApiProperty()
+  @Transform(({ obj }: { obj: { is_active: unknown } }) => obj.is_active)
   @IsBoolean()
   is_active: boolean;
 }

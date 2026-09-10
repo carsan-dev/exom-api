@@ -14,6 +14,12 @@ import { UploadsService } from '../uploads/uploads.service';
 
 @Injectable()
 export class DeletionIdentityService {
+  requiresDeletionDrainReview(): boolean {
+    // Previously minted custom tokens can create the UID again. Existing
+    // records do not prove that those credentials and in-flight RPCs drained.
+    return true;
+  }
+
   async remove(uid: string): Promise<void> {
     if (!admin.apps.length) throw new Error('IDENTITY_UNAVAILABLE');
     try {
@@ -57,7 +63,6 @@ export class ClientDeletionService {
     private readonly uploads: UploadsService,
     private readonly identity: DeletionIdentityService,
   ) {}
-
   async request(clientId: string, requesterId: string, self = false) {
     return this.prisma.$transaction(
       async (tx) => {
@@ -70,7 +75,8 @@ export class ClientDeletionService {
           if (
             requester?.role !== Role.SUPER_ADMIN ||
             !requester.is_active ||
-            requester.is_locked
+            requester.is_locked ||
+            requester.identity_pending
           ) {
             throw new ForbiddenException(
               'Solo un Super Admin puede eliminar clientes',
@@ -94,6 +100,19 @@ export class ClientDeletionService {
             'Esta acción solo permite eliminar clientes',
           );
 
+        // Login may have rebound a completed identity to another UID. Do not
+        // cancel that receipt and silently omit the previous external account.
+        if (
+          await tx.identityOperation.findFirst({
+            where: {
+              user_id: clientId,
+              firebase_uid: { not: user.firebase_uid },
+            },
+            select: { id: true },
+          })
+        )
+          throw this.ambiguous();
+
         const ownedIds = Prisma.sql`
           SELECT ${clientId}::text AS id
           UNION SELECT id FROM profiles WHERE user_id = ${clientId}
@@ -103,7 +122,9 @@ export class ClientDeletionService {
           UNION SELECT id FROM plan_assignments WHERE client_id = ${clientId}
           UNION SELECT id FROM day_progress WHERE client_id = ${clientId}
           UNION SELECT id FROM body_metrics WHERE client_id = ${clientId}
-          UNION SELECT id FROM auto_assignment_rules WHERE client_id = ${clientId}`;
+          UNION SELECT id FROM auto_assignment_rules WHERE client_id = ${clientId}
+          UNION SELECT operation_id FROM rir_cycle_versions WHERE client_id = ${clientId}
+          UNION SELECT id FROM identity_operations WHERE user_id = ${clientId}`;
 
         // Non-FK authorship indicates a previous administrative role. Shared
         // resources are never inferred to be owned by the current CLIENT.
@@ -177,6 +198,17 @@ export class ClientDeletionService {
         // FK cascades remove only this client's graph. Diet snapshot trigger
         // explicitly permits this cascade once the owning User is absent.
         await tx.user.delete({ where: { id: clientId } });
+        // Identity intents must not resurrect a deleted account or retain a
+        // fingerprint derived from its former email/profile. Keep only receipts.
+        await tx.identityOperation.updateMany({
+          where: { user_id: clientId },
+          data: {
+            status: 'CANCELLED',
+            request_hash: '',
+            completed_at: new Date(),
+            last_error: null,
+          },
+        });
         return operation;
       },
       { timeout: 30000 },
@@ -231,7 +263,6 @@ export class ClientDeletionService {
     });
     for (const operation of operations) await this.process(operation.id);
   }
-
   async process(id: string): Promise<void> {
     const token = randomUUID();
     const now = new Date();
@@ -256,9 +287,11 @@ export class ClientDeletionService {
     const operation = await this.prisma.clientDeletion.findUniqueOrThrow({
       where: { id },
     });
+    let pendingStep = 'FIREBASE_CLEANUP_PENDING';
     try {
       if (operation.firebase_uid)
         await this.identity.remove(operation.firebase_uid);
+      pendingStep = 'STORAGE_CLEANUP_PENDING';
       for (const key of operation.object_keys)
         await this.uploads.deleteAndVerifyForClientDeletion(key);
       if (operation.storage_review) {
@@ -267,6 +300,18 @@ export class ClientDeletionService {
           token,
           'BLOCKED',
           'UPLOAD_DRAIN_REVIEW_REQUIRED',
+        );
+        return;
+      }
+      if (
+        operation.firebase_uid &&
+        this.identity.requiresDeletionDrainReview()
+      ) {
+        await this.finishAttempt(
+          operation,
+          token,
+          'BLOCKED',
+          'AUTH_DRAIN_REVIEW_REQUIRED',
         );
         return;
       }
@@ -285,12 +330,7 @@ export class ClientDeletionService {
       });
     } catch {
       // Do not persist provider messages: they may contain URLs or credentials.
-      await this.finishAttempt(
-        operation,
-        token,
-        'PENDING',
-        'EXTERNAL_CLEANUP_PENDING',
-      );
+      await this.finishAttempt(operation, token, 'PENDING', pendingStep);
     }
   }
 
@@ -315,7 +355,6 @@ export class ClientDeletionService {
       },
     });
   }
-
   async deleteSelf(id: string) {
     const operation = await this.request(id, id, true);
     await this.process(operation.id);
@@ -325,7 +364,7 @@ export class ClientDeletionService {
       throw new ServiceUnavailableException({
         code: 'ACCOUNT_DELETION_PENDING',
         message:
-          'Tu cuenta ya no tiene acceso. La eliminación de sus archivos está pendiente de confirmación.',
+          'Tu cuenta ya no tiene acceso. Su eliminación está pendiente de confirmación.',
         operation_id: operation.id,
       });
     }

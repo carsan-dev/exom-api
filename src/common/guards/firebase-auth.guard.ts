@@ -27,7 +27,6 @@ export class FirebaseAuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {}
-
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -72,12 +71,36 @@ export class FirebaseAuthGuard implements CanActivate {
           firebase_uid: true,
           is_active: true,
           is_locked: true,
+          identity_pending: true,
+          sessions_revoked_at: true,
         },
       });
 
       if (!user) {
         throw new UnauthorizedException(
           'Tu cuenta no está autorizada. Contacta con tu entrenador.',
+        );
+      }
+
+      if (user.sessions_revoked_at && decoded.auth_time === undefined) {
+        throw new ServiceUnavailableException(
+          'No se pudo comprobar la antigüedad de la sesión',
+        );
+      }
+      if (
+        user.sessions_revoked_at &&
+        (decoded.exom_session_epoch !==
+          String(user.sessions_revoked_at.getTime()) ||
+          (decoded.auth_time !== undefined &&
+            decoded.auth_time <=
+              Math.floor(user.sessions_revoked_at.getTime() / 1000)))
+      ) {
+        throw new UnauthorizedException('Sesión revocada');
+      }
+
+      if (user.identity_pending) {
+        throw new ServiceUnavailableException(
+          'La identidad está pendiente de confirmación',
         );
       }
 

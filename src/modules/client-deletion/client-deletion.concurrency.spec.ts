@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import {
+  ConflictException,
   ForbiddenException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -104,6 +105,8 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
   });
   beforeEach(async () => {
     identity = new DeletionIdentityService();
+    // This isolated fixture has no previously minted Firebase credentials.
+    jest.spyOn(identity, 'requiresDeletionDrainReview').mockReturnValue(false);
     removeIdentity = jest
       .spyOn(identity, 'remove')
       .mockResolvedValue(undefined);
@@ -130,6 +133,9 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     await prisma.user.deleteMany({ where: { id: { in: users } } });
     await prisma.clientDeletion.deleteMany({
       where: { client_id: { in: users } },
+    });
+    await prisma.identityOperation.deleteMany({
+      where: { user_id: { in: users } },
     });
     await prisma.training.deleteMany({ where: { id: { in: trainings } } });
     await prisma.diet.deleteMany({ where: { id: { in: diets } } });
@@ -207,6 +213,29 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
           diet: { meals: [] },
         },
       });
+      // Creating actual progress above already materializes the protected day.
+      expect(
+        await prisma.rirProtectedDay.count({ where: { client_id: owner.id } }),
+      ).toBe(1);
+      await prisma.rirCycleVersion.create({
+        data: {
+          client_id: owner.id,
+          revision: 1,
+          operation_id: randomUUID(),
+          request: {},
+          effective_from: new Date('2026-09-01'),
+          starts_on: new Date('2026-09-01'),
+        },
+      });
+      await prisma.rirDayTarget.create({
+        data: {
+          client_id: owner.id,
+          date: new Date('2026-09-01'),
+          training_exercise_id: 'historical-occurrence',
+          training_id: training.id,
+          target_rir: 2,
+        },
+      });
     }
     const key = await evidence(a.id);
     const op = await service.request(a.id, adminId);
@@ -214,6 +243,14 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     expect(removeIdentity).not.toHaveBeenCalled();
     expect(await prisma.user.findUnique({ where: { id: a.id } })).toBeNull();
     expect(await prisma.profile.count({ where: { user_id: a.id } })).toBe(0);
+    for (const model of [
+      prisma.rirProtectedDay,
+      prisma.rirCycleVersion,
+      prisma.rirDayTarget,
+    ]) {
+      expect(await model.count({ where: { client_id: a.id } })).toBe(0);
+      expect(await model.count({ where: { client_id: b.id } })).toBe(1);
+    }
     expect(
       await prisma.feedbackMedia.count({ where: { client_id: a.id } }),
     ).toBe(0);
@@ -276,7 +313,82 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     await expect(
       service.request(a.id, ordinary.id, true),
     ).rejects.toBeInstanceOf(ForbiddenException);
+    await prisma.user.update({
+      where: { id: adminId },
+      data: { identity_pending: true },
+    });
+    await expect(service.request(a.id, adminId)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
     expect(await prisma.user.count({ where: { id: a.id } })).toBe(1);
+  });
+
+  it('preserves the client when an earlier identity operation points to a different Firebase account', async () => {
+    const a = await client();
+    await evidence(a.id);
+    const oldUid = `former-${randomUUID()}`;
+    const operation = await prisma.identityOperation.create({
+      data: {
+        request_key: randomUUID(),
+        request_hash: 'fixture',
+        user_id: a.id,
+        actor_id: adminId,
+        firebase_uid: oldUid,
+        kind: 'CREATE',
+        status: 'COMPLETED',
+        firebase_owned: true,
+      },
+    });
+    await expect(service.request(a.id, adminId)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(
+      await prisma.user.findUnique({ where: { id: a.id } }),
+    ).not.toBeNull();
+    expect(
+      await prisma.clientDeletion.findUnique({ where: { client_id: a.id } }),
+    ).toBeNull();
+    expect(
+      await prisma.identityOperation.findUnique({
+        where: { id: operation.id },
+      }),
+    ).toMatchObject({ firebase_uid: oldUid, status: 'COMPLETED' });
+    expect(
+      await prisma.managedUpload.count({ where: { owner_id: a.id } }),
+    ).toBe(1);
+    expect(removeIdentity).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending identity recovery and erases its request fingerprint without losing deletion inventory', async () => {
+    const a = await client();
+    const key = await evidence(a.id);
+    const identity = await prisma.identityOperation.create({
+      data: {
+        request_key: randomUUID(),
+        request_hash: 'synthetic-profile-fingerprint',
+        user_id: a.id,
+        actor_id: adminId,
+        firebase_uid: a.firebase_uid,
+        kind: 'SYNC',
+      },
+    });
+    await prisma.user.update({
+      where: { id: a.id },
+      data: { identity_pending: true },
+    });
+    const op = await service.request(a.id, adminId);
+    expect(
+      await prisma.identityOperation.findUnique({ where: { id: identity.id } }),
+    ).toMatchObject({
+      status: 'CANCELLED',
+      request_hash: '',
+      firebase_uid: a.firebase_uid,
+    });
+    expect(
+      await prisma.clientDeletion.findUnique({ where: { id: op.id } }),
+    ).toMatchObject({ object_keys: [key] });
+    await service.process(op.id);
+    expect(await service.get(op.id)).toMatchObject({ status: 'COMPLETED' });
   });
 
   it('deduplicates simultaneous requests and replay after a lost response', async () => {
@@ -334,7 +446,10 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       ).toMatchObject({
         status: 'PENDING',
         object_keys: [key],
-        last_error: 'EXTERNAL_CLEANUP_PENDING',
+        last_error:
+          stage === 'identity'
+            ? 'FIREBASE_CLEANUP_PENDING'
+            : 'STORAGE_CLEANUP_PENDING',
       });
       await service.recover();
       expect(await service.get(op.id)).toMatchObject({ attempts: 1 });
@@ -557,6 +672,32 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       (await prisma.clientDeletion.findUniqueOrThrow({ where: { id: op.id } }))
         .object_keys,
     ).toEqual([key]);
+  });
+
+  it('does not complete even without files while earlier Firebase credentials may recreate the account', async () => {
+    const a = await client();
+    const productionIdentity = new DeletionIdentityService();
+    const remove = jest
+      .spyOn(productionIdentity, 'remove')
+      .mockResolvedValue(undefined);
+    const worker = new ClientDeletionService(
+      prisma as PrismaService,
+      uploads,
+      productionIdentity,
+    );
+    const operation = await worker.request(a.id, adminId);
+    await worker.process(operation.id);
+    expect(await worker.get(operation.id)).toMatchObject({
+      status: 'BLOCKED',
+      last_error: 'AUTH_DRAIN_REVIEW_REQUIRED',
+      completed_at: null,
+    });
+    await due(operation.id);
+    await worker.recover();
+    expect(remove.mock.calls).toEqual([[a.firebase_uid], [a.firebase_uid]]);
+    expect(
+      await prisma.clientDeletion.findUnique({ where: { id: operation.id } }),
+    ).toMatchObject({ firebase_uid: a.firebase_uid });
   });
 
   it('self-delete shares the durable operation and never returns 2xx completion on external failure', async () => {

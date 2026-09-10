@@ -88,4 +88,73 @@ describe('FirebaseAuthGuard', () => {
       status: HttpStatus.LOCKED,
     });
   });
+
+  it('pauses authentication while a durable identity operation is pending', async () => {
+    verifyIdTokenMock.mockResolvedValue({ uid: 'fixture' });
+    prisma.user.findUnique.mockResolvedValue({
+      is_active: true,
+      identity_pending: true,
+    });
+    await expect(guard.canActivate(context())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+
+  it.each([99, 100])(
+    'rejects a revoked session with auth_time %s even before Firebase recovers',
+    async (auth_time) => {
+      verifyIdTokenMock.mockResolvedValue({ uid: 'fixture', auth_time });
+      prisma.user.findUnique.mockResolvedValue({
+        is_active: true,
+        sessions_revoked_at: new Date(100000),
+      });
+      await expect(guard.canActivate(context())).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    },
+  );
+
+  it('does not convert insufficient fallback claims into an invalid-session verdict', async () => {
+    verifyIdTokenMock.mockResolvedValue({ uid: 'fixture' });
+    prisma.user.findUnique.mockResolvedValue({
+      is_active: true,
+      sessions_revoked_at: new Date(100000),
+    });
+    await expect(guard.canActivate(context())).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+  });
+
+  it('accepts a newly authenticated session after revocation and recovery', async () => {
+    verifyIdTokenMock.mockResolvedValue({
+      uid: 'fixture',
+      auth_time: 101,
+      exom_session_epoch: '100000',
+    });
+    prisma.user.findUnique.mockResolvedValue({
+      is_active: true,
+      identity_pending: false,
+      sessions_revoked_at: new Date(100000),
+    });
+    await expect(guard.canActivate(context())).resolves.toBe(true);
+  });
+
+  it.each([undefined, '0', '99999'])(
+    'rejects a pre-revocation credential exchanged later (epoch %s)',
+    async (exom_session_epoch) => {
+      verifyIdTokenMock.mockResolvedValue({
+        uid: 'fixture',
+        auth_time: 101,
+        exom_session_epoch,
+      });
+      prisma.user.findUnique.mockResolvedValue({
+        is_active: true,
+        identity_pending: false,
+        sessions_revoked_at: new Date(100000),
+      });
+      await expect(guard.canActivate(context())).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    },
+  );
 });

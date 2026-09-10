@@ -1,3 +1,5 @@
+import { IdentityService } from '../identity/identity.service';
+import { IdentityProvider } from '../identity/identity-provider';
 import {
   ConflictException,
   HttpException,
@@ -35,11 +37,14 @@ export class AuthService {
   private readonly maxAttempts: number;
   private readonly firebaseWebApiKey?: string;
   private readonly firebaseAuthRestFallbackEnabled: boolean;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     @Optional() private readonly emailService?: EmailService,
+    private readonly identity: IdentityService = new IdentityService(
+      prisma,
+      new IdentityProvider(),
+    ),
   ) {
     this.maxAttempts = parseInt(this.config.get('LOGIN_MAX_ATTEMPTS', '3'));
     this.firebaseWebApiKey = this.config.get<string>('FIREBASE_WEB_API_KEY');
@@ -214,7 +219,6 @@ export class AuthService {
 
     return user;
   }
-
   async login(dto: LoginDto) {
     const normalizedEmail = dto.email.trim().toLowerCase();
 
@@ -226,6 +230,11 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
+
+    if (user.identity_pending)
+      throw new ServiceUnavailableException(
+        'La identidad está pendiente de confirmación',
+      );
 
     if (!user.is_active) {
       throw new UnauthorizedException('Cuenta inactiva');
@@ -263,9 +272,10 @@ export class AuthService {
         });
       }
 
-      const customToken = await admin
-        .auth()
-        .createCustomToken(user.firebase_uid);
+      const customToken = await this.issueCustomToken(
+        user.id,
+        user.firebase_uid,
+      );
 
       return {
         access_token: customToken,
@@ -314,7 +324,6 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
   }
-
   async socialLogin(dto: SocialLoginDto) {
     let decoded: VerifiedFirebaseIdToken;
     try {
@@ -352,6 +361,11 @@ export class AuthService {
       dto.provider,
     );
 
+    if (user.identity_pending)
+      throw new ServiceUnavailableException(
+        'La identidad está pendiente de confirmación',
+      );
+
     if (!user.is_active) {
       throw new UnauthorizedException('Cuenta inactiva');
     }
@@ -363,7 +377,7 @@ export class AuthService {
       );
     }
 
-    const customToken = await admin.auth().createCustomToken(user.firebase_uid);
+    const customToken = await this.issueCustomToken(user.id, user.firebase_uid);
 
     return {
       access_token: customToken,
@@ -440,15 +454,41 @@ export class AuthService {
       );
     }
   }
-
-  async logout(userId: string): Promise<void> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (user) {
-      try {
-        await admin.auth().revokeRefreshTokens(user.firebase_uid);
-      } catch (err) {
-        this.logger.warn(`Could not revoke tokens for ${userId}: ${err}`);
-      }
-    }
+  private issueCustomToken(
+    userId: string,
+    expectedUid: string,
+  ): Promise<string> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const rows = await tx.$queryRaw<
+          { id: string }[]
+        >`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+        if (!rows.length)
+          throw new UnauthorizedException('Cuenta no disponible');
+        const current = await tx.user.findUnique({ where: { id: userId } });
+        if (!current?.is_active || current.firebase_uid !== expectedUid)
+          throw new UnauthorizedException('Cuenta no disponible');
+        if (current.is_locked)
+          throw new HttpException(
+            'Cuenta bloqueada — contacta a tu entrenador',
+            HttpStatus.LOCKED,
+          );
+        if (current.identity_pending)
+          throw new ServiceUnavailableException(
+            'La identidad está pendiente de confirmación',
+          );
+        // Bind issuance to the locked DB cutoff. A custom token exchanged
+        // after logout must not acquire the authority of a newer session.
+        return admin.auth().createCustomToken(current.firebase_uid, {
+          exom_session_epoch: String(
+            current.sessions_revoked_at?.getTime() ?? 0,
+          ),
+        });
+      },
+      { timeout: 300000 },
+    );
+  }
+  async logout(userId: string, key?: string): Promise<void> {
+    await this.identity.revoke(userId, key);
   }
 }

@@ -10,6 +10,8 @@ import { MealsService } from '../meals/meals.service';
 import { ProgressService } from '../progress/progress.service';
 import { CalendarService } from '../calendar/calendar.service';
 import { UsersService } from '../users/users.service';
+import { IdentityService } from '../identity/identity.service';
+import { IdentityProvider } from '../identity/identity-provider';
 import { MetricsService } from '../metrics/metrics.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { AchievementsService } from '../achievements/achievements.service';
@@ -43,6 +45,8 @@ suite('Diet history PostgreSQL integrity', () => {
         ProgressService,
         CalendarService,
         UsersService,
+        IdentityService,
+        { provide: IdentityProvider, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         { provide: MetricsService, useValue: {} },
         { provide: UploadsService, useValue: {} },

@@ -45,7 +45,7 @@ describe('verifyFirebaseIdTokenWithFallback', () => {
       email: 'client@exom.dev',
     });
 
-    expect(verifyIdTokenMock).toHaveBeenCalledWith('id-token');
+    expect(verifyIdTokenMock).toHaveBeenCalledWith('id-token', true);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

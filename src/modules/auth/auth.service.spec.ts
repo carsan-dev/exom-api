@@ -22,6 +22,8 @@ jest.mock('firebase-admin', () => ({
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: {
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
     user: {
       findUnique: jest.Mock;
       findFirst: jest.Mock;
@@ -38,12 +40,18 @@ describe('AuthService', () => {
     global.fetch = jest.fn() as jest.Mock;
 
     prisma = {
+      $transaction: jest.fn(),
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'user-1' }]),
       user: {
         findUnique: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
       },
     };
+
+    prisma.$transaction.mockImplementation(
+      (work: (tx: typeof prisma) => Promise<unknown>) => work(prisma),
+    );
 
     config = {
       get: jest.fn().mockImplementation((key: string, fallback: string) => {
@@ -99,10 +107,19 @@ describe('AuthService', () => {
         avatar_url: null,
       },
     });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      firebase_uid: 'firebase-user-1',
+      is_active: true,
+      sessions_revoked_at: new Date(100000),
+    });
     createCustomTokenMock.mockResolvedValue('custom-token-1');
 
     const result = await service.login(dto);
 
+    expect(createCustomTokenMock).toHaveBeenCalledWith('firebase-user-1', {
+      exom_session_epoch: '100000',
+    });
     expect(result).toEqual({
       access_token: 'custom-token-1',
       user: {
@@ -117,6 +134,41 @@ describe('AuthService', () => {
       },
     });
   });
+
+  it.each(['password', 'social'])(
+    'does not mint a custom token after the %s login user has disappeared',
+    async (method) => {
+      const user = {
+        id: 'user-1',
+        firebase_uid: 'firebase-user-1',
+        email: 'fixture@example.test',
+        is_active: true,
+        is_locked: false,
+        role: 'CLIENT',
+        profile: null,
+      };
+      prisma.user.findFirst.mockResolvedValue(user);
+      prisma.user.findUnique.mockResolvedValue(null);
+      if (method === 'social')
+        prisma.user.findUnique.mockResolvedValueOnce(user);
+      prisma.user.update.mockResolvedValue(user);
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ localId: user.firebase_uid }),
+      });
+      verifyIdTokenMock.mockResolvedValue({
+        uid: user.firebase_uid,
+        firebase: { sign_in_provider: 'google.com' },
+      });
+      createCustomTokenMock.mockResolvedValue('must-not-be-issued');
+      const result =
+        method === 'social'
+          ? service.socialLogin({ token: 'fixture', provider: 'google' })
+          : service.login({ email: user.email, password: 'fixture' });
+      await expect(result).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(createCustomTokenMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('locks the account after the last failed attempt', async () => {
     const dto: LoginDto = {
@@ -245,7 +297,12 @@ describe('AuthService', () => {
           avatar_url: null,
         },
       })
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({
+        id: 'user-1',
+        firebase_uid: 'firebase-google-2',
+        is_active: true,
+      });
     prisma.user.update.mockResolvedValue({
       id: 'user-1',
       email: 'client@exom.dev',
