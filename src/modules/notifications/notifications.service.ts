@@ -1,5 +1,14 @@
+import { createHash } from 'node:crypto';
+import {
+  JobsService,
+  PermanentWorkError,
+  workContext,
+} from '../jobs/jobs.service';
+import { boundedMap } from '../jobs/bounded-map';
 import {
   BadRequestException,
+  OnModuleInit,
+  ServiceUnavailableException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -88,11 +97,51 @@ const weekdayLabels = [
 const timePattern = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 @Injectable()
-export class NotificationsService {
+export class NotificationsService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsService.name);
   private static readonly defaultChannelId = 'exom_high_importance';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobs: JobsService = new JobsService(prisma),
+  ) {}
+
+  onModuleInit() {
+    this.jobs.register('FCM', (work) => this.dispatchNotification(work.key));
+  }
+
+  async queueTemplate(
+    tx: Pick<Prisma.TransactionClient, 'notificationTemplate' | 'notification'>,
+    senderId: string,
+    recipients: string[],
+    templateKey: NotificationTemplateKey,
+    variables: TemplateVariables,
+    fallback: TemplateFallback,
+    data?: Record<string, string>,
+  ) {
+    const rendered = await this.resolveTemplate(
+      templateKey,
+      variables,
+      fallback,
+      tx,
+    );
+    if (!rendered) return;
+    for (const recipientId of [...new Set(recipients)]) {
+      await tx.notification.create({
+        data: {
+          sender_id: senderId,
+          recipient_id: recipientId,
+          title: rendered.title,
+          body: rendered.body,
+          data: this.buildPayloadData({
+            ...data,
+            ...(rendered.route ? { route: rendered.route } : {}),
+          }),
+          status: NotificationStatus.PENDING,
+        },
+      });
+    }
+  }
 
   private resolveRoute(data?: Record<string, string>): string | undefined {
     const directRoute = data?.route;
@@ -196,7 +245,9 @@ export class NotificationsService {
     }
 
     if (schedule.kind !== 'meal_daily' && normalizedTimes.length !== 1) {
-      throw new BadRequestException('Esta plantilla necesita exactamente una hora');
+      throw new BadRequestException(
+        'Esta plantilla necesita exactamente una hora',
+      );
     }
 
     return normalizedTimes;
@@ -224,7 +275,9 @@ export class NotificationsService {
 
     const nextWeekday = weekday ?? schedule.defaultWeekday ?? 0;
     if (nextWeekday < 0 || nextWeekday > 6) {
-      throw new BadRequestException('El día de la semana debe estar entre 0 y 6');
+      throw new BadRequestException(
+        'El día de la semana debe estar entre 0 y 6',
+      );
     }
 
     return nextWeekday;
@@ -239,7 +292,9 @@ export class NotificationsService {
       .map((time) => {
         const [hour, minute] = time.split(':');
         return `${Number(minute)} ${Number(hour)} * * ${
-          schedule.kind === 'weekly' ? weekday ?? schedule.defaultWeekday ?? 0 : '*'
+          schedule.kind === 'weekly'
+            ? (weekday ?? schedule.defaultWeekday ?? 0)
+            : '*'
         }`;
       })
       .join(', ');
@@ -394,9 +449,10 @@ export class NotificationsService {
     key: NotificationTemplateKey,
     variables: TemplateVariables,
     fallback?: TemplateFallback,
+    db: Pick<Prisma.TransactionClient, 'notificationTemplate'> = this.prisma,
   ) {
     const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(key);
-    const storedTemplate = await this.prisma.notificationTemplate.findUnique({
+    const storedTemplate = await db.notificationTemplate.findUnique({
       where: { key },
     });
     const enabled = storedTemplate?.enabled ?? true;
@@ -408,10 +464,11 @@ export class NotificationsService {
     const stringVariables = this.stringifyTemplateVariables(variables);
     const title =
       storedTemplate?.title ?? definition?.title ?? fallback?.title ?? '';
-    const body = storedTemplate?.body ?? definition?.body ?? fallback?.body ?? '';
+    const body =
+      storedTemplate?.body ?? definition?.body ?? fallback?.body ?? '';
     const route = storedTemplate
       ? storedTemplate.route
-      : definition?.route ?? fallback?.route ?? null;
+      : (definition?.route ?? fallback?.route ?? null);
 
     return {
       title: this.renderTemplateText(title, stringVariables) ?? '',
@@ -495,19 +552,48 @@ export class NotificationsService {
     data: Record<string, string> | undefined,
     status: NotificationStatus,
     error?: string,
+    db: Pick<Prisma.TransactionClient, 'notification'> = this.prisma,
+    requireClientRole = false,
   ) {
-    return this.prisma.notification.create({
+    const context = workContext.getStore();
+    const id = context
+      ? createHash('sha256')
+          .update(
+            JSON.stringify([
+              context.key,
+              recipientId,
+              data?.type,
+              data?.client_id,
+              data?.clientId,
+            ]),
+          )
+          .digest('hex')
+      : undefined;
+    const input = {
       data: {
+        ...(id ? { id } : {}),
         sender_id: senderId,
         recipient_id: recipientId,
         title,
         body,
         ...(data ? { data: data as Prisma.InputJsonObject } : {}),
         status,
+        requires_client_role: requireClientRole,
         ...(error ? { error } : {}),
       },
       include: notificationHistoryInclude,
-    });
+    };
+    if (id) {
+      await db.notification.createMany({
+        data: [input.data],
+        skipDuplicates: true,
+      });
+      return db.notification.findUniqueOrThrow({
+        where: { id },
+        include: notificationHistoryInclude,
+      });
+    }
+    return db.notification.create(input);
   }
 
   private async deliverToUser(
@@ -516,9 +602,10 @@ export class NotificationsService {
     title: string,
     body: string,
     data?: Record<string, string>,
-    options?: { requireClientRole?: boolean },
+    options?: { requireClientRole?: boolean; defer?: boolean },
+    db: Pick<Prisma.TransactionClient, 'user' | 'notification'> = this.prisma,
   ) {
-    const user = await this.prisma.user.findUnique({
+    const user = await db.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -540,7 +627,7 @@ export class NotificationsService {
     const payloadData = this.buildPayloadData(data);
 
     if (!user.is_active) {
-      this.logger.warn(`Skipping notification to inactive user ${user.email}`);
+      this.logger.warn('Skipping notification to inactive recipient');
 
       return this.createNotificationRecord(
         senderId,
@@ -550,11 +637,12 @@ export class NotificationsService {
         payloadData,
         NotificationStatus.FAILED,
         'Recipient inactive',
+        db,
       );
     }
 
     if (!user.fcm_token) {
-      this.logger.warn(`No FCM token registered for user ${user.email}`);
+      this.logger.warn('No FCM token registered for recipient');
 
       return this.createNotificationRecord(
         senderId,
@@ -564,6 +652,7 @@ export class NotificationsService {
         payloadData,
         NotificationStatus.FAILED,
         'No FCM token registered for this user',
+        db,
       );
     }
 
@@ -573,64 +662,115 @@ export class NotificationsService {
       title,
       body,
       payloadData,
-      NotificationStatus.SENT,
+      NotificationStatus.PENDING,
+      undefined,
+      db,
+      options?.requireClientRole ?? true,
     );
-
-    const fcmData = {
-      ...(payloadData ?? {}),
-      notification_id: record.id,
-    };
-
-    try {
-      const fcmToken = user.fcm_token;
-      const referenceIds = [
-        userId,
-        senderId,
-        ...(data?.client_id ? [data.client_id] : []),
-        ...(data?.clientId ? [data.clientId] : []),
-      ];
-      const messageId = await withLiveUsers(this.prisma, referenceIds, () =>
-        admin.messaging().send({
-          token: fcmToken,
-          notification: { title, body },
-          data: fcmData,
-          android: {
-            priority: 'high',
-            notification: {
-              channelId: NotificationsService.defaultChannelId,
-              sound: 'default',
-            },
-          },
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-            payload: {
-              aps: {
-                sound: 'default',
-              },
-            },
-          },
-        }),
+    if (options?.defer || options?.requireClientRole === false) return record;
+    // Preserve the legacy manual API: a successful response requires provider acceptance.
+    await this.jobs.runKey(record.id);
+    const current = await this.prisma.notification.findUniqueOrThrow({
+      where: { id: record.id },
+      include: notificationHistoryInclude,
+    });
+    if (current.status === NotificationStatus.PENDING) {
+      throw new ServiceUnavailableException(
+        'Notificación pendiente de envío. Revisa el historial más tarde; no repitas la solicitud.',
       );
-
-      this.logger.log(`FCM sent to ${user.email}: ${messageId}`);
-
-      return record;
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error ? error.message : 'Unexpected FCM error';
-      this.logger.error(`FCM error for ${user.email}: ${message}`);
-
-      return this.prisma.notification.update({
-        where: { id: record.id },
-        data: {
-          status: NotificationStatus.FAILED,
-          error: message,
-        },
-        include: notificationHistoryInclude,
-      });
     }
+    return current;
+  }
+
+  async dispatchNotification(id: string): Promise<void> {
+    const record = await this.prisma.notification.findUnique({ where: { id } });
+    if (!record || record.status === NotificationStatus.SENT) return;
+    const data = Object.fromEntries(
+      Object.entries(record.data ?? {}).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    );
+    const references = [
+      record.sender_id,
+      record.recipient_id,
+      ...[data.client_id, data.clientId].filter(Boolean),
+    ];
+    await withLiveUsers(this.prisma, references, async () => {
+      // Durable internal messages may outlive the assignment/role that selected
+      // their audience. Recheck it immediately before requesting provider delivery.
+      const clientId = data.client_id ?? data.clientId;
+      if (clientId && clientId !== record.recipient_id) {
+        try {
+          await this.assertAccessibleRecipientIds(record.recipient_id, [
+            clientId,
+          ]);
+        } catch (error) {
+          if (
+            error instanceof ForbiddenException ||
+            error instanceof NotFoundException
+          )
+            throw new PermanentWorkError('RECIPIENT_AUTHORIZATION_REVOKED');
+          throw error;
+        }
+      }
+      if (data.type === 'approval_pending') {
+        const reviewer = await this.prisma.user.findUnique({
+          where: { id: record.recipient_id },
+          select: { role: true },
+        });
+        if (reviewer?.role !== Role.SUPER_ADMIN)
+          throw new PermanentWorkError('RECIPIENT_AUTHORIZATION_REVOKED');
+      }
+      if (record.requires_client_role) {
+        try {
+          await this.assertAccessibleRecipientIds(record.sender_id, [
+            record.recipient_id,
+          ]);
+        } catch (error) {
+          if (
+            error instanceof ForbiddenException ||
+            error instanceof NotFoundException
+          )
+            throw new PermanentWorkError('AUTHORIZATION_REVOKED');
+          throw error;
+        }
+      }
+      const user = await this.prisma.user.findUnique({
+        where: { id: record.recipient_id },
+        select: { fcm_token: true, is_active: true },
+      });
+      if (!user?.is_active)
+        throw new PermanentWorkError('RECIPIENT_UNAVAILABLE');
+      if (!user.fcm_token) throw new PermanentWorkError('NO_FCM_TOKEN');
+      const messageId = await admin.messaging().send({
+        token: user.fcm_token,
+        notification: { title: record.title, body: record.body },
+        data: { ...data, notification_id: record.id },
+        android: {
+          priority: 'high',
+          notification: {
+            channelId: NotificationsService.defaultChannelId,
+            sound: 'default',
+          },
+        },
+        apns: {
+          headers: { 'apns-priority': '10' },
+          payload: { aps: { sound: 'default' } },
+        },
+      });
+      if (!messageId) throw new Error('PROVIDER_ACCEPTANCE_MISSING');
+      // The business/outbox transaction has already committed. This update is
+      // evidence of provider acceptance, never of device delivery or reading.
+      await this.prisma.notification.update({
+        where: { id },
+        data: {
+          status: NotificationStatus.SENT,
+          provider_message_id: messageId,
+          sent_at: new Date(),
+          error: null,
+        },
+      });
+    });
   }
 
   private async sendToRecipients(
@@ -639,23 +779,54 @@ export class NotificationsService {
     title: string,
     body: string,
     data?: Record<string, string>,
-    options?: { requireClientRole?: boolean },
+    options?: { requireClientRole?: boolean; defer?: boolean },
   ) {
-    const notifications = await Promise.all(
-      userIds.map((userId) =>
-        this.deliverToUser(senderId, userId, title, body, data, options),
-      ),
+    // Persist the complete audience before any provider call. A partial response
+    // or process crash cannot lose recipients that had not started sending yet.
+    const queuedRecords = await this.prisma.$transaction(
+      (tx) =>
+        boundedMap(userIds, (userId) =>
+          this.deliverToUser(
+            senderId,
+            userId,
+            title,
+            body,
+            data,
+            { ...options, defer: true },
+            tx,
+          ),
+        ),
+      { timeout: 30000 },
     );
+    const notifications =
+      options?.defer || options?.requireClientRole === false
+        ? queuedRecords
+        : await boundedMap(queuedRecords, async (record) => {
+            if (record.status !== NotificationStatus.PENDING) return record;
+            await this.jobs.runKey(record.id);
+            return this.prisma.notification.findUniqueOrThrow({
+              where: { id: record.id },
+              include: notificationHistoryInclude,
+            });
+          });
 
     const sent = notifications.filter(
       (notification) => notification.status === NotificationStatus.SENT,
     ).length;
-    const failed = notifications.length - sent;
+    const failed = notifications.filter(
+      (n) => n.status === NotificationStatus.FAILED,
+    ).length;
+    const queued = notifications.length - sent - failed;
+    if (queued && !options?.defer && options?.requireClientRole !== false)
+      throw new ServiceUnavailableException(
+        `Envíos aceptados: ${sent}; fallidos: ${failed}; pendientes: ${queued}. No repitas la solicitud; revisa el historial más tarde.`,
+      );
 
     return {
-      success: failed === 0,
+      success: failed === 0 && queued === 0,
       sent,
       failed,
+      ...(queued ? { queued } : {}),
     };
   }
 
@@ -689,6 +860,23 @@ export class NotificationsService {
 
     return this.sendToRecipients(senderId, recipientIds, title, body, data, {
       requireClientRole: true,
+    });
+  }
+
+  async queueAuthorizedNotifications(
+    senderId: string,
+    userIds: string[],
+    title: string,
+    body: string,
+    data?: Record<string, string>,
+  ) {
+    const recipients = await this.assertAccessibleRecipientIds(
+      senderId,
+      userIds,
+    );
+    return this.sendToRecipients(senderId, recipients, title, body, data, {
+      requireClientRole: true,
+      defer: true,
     });
   }
 
@@ -735,7 +923,11 @@ export class NotificationsService {
     fallback: TemplateFallback,
     data?: Record<string, string>,
   ) {
-    const rendered = await this.resolveTemplate(templateKey, variables, fallback);
+    const rendered = await this.resolveTemplate(
+      templateKey,
+      variables,
+      fallback,
+    );
 
     if (!rendered) {
       return { success: true, sent: 0, failed: 0 };
@@ -812,10 +1004,7 @@ export class NotificationsService {
     return this.serializeStoredTemplate(template);
   }
 
-  async updateTemplate(
-    key: string,
-    dto: UpdateNotificationTemplateDto,
-  ) {
+  async updateTemplate(key: string, dto: UpdateNotificationTemplateDto) {
     const definition = DEFAULT_NOTIFICATION_TEMPLATE_BY_KEY.get(
       key as NotificationTemplateKey,
     );
@@ -851,9 +1040,10 @@ export class NotificationsService {
     };
 
     if (!definition) {
-      const existingTemplate = await this.prisma.notificationTemplate.findUnique({
-        where: { key },
-      });
+      const existingTemplate =
+        await this.prisma.notificationTemplate.findUnique({
+          where: { key },
+        });
 
       if (!existingTemplate) {
         throw new NotFoundException('Notification template not found');
@@ -989,7 +1179,9 @@ export class NotificationsService {
     const where: Prisma.NotificationWhereInput = {
       sender_id: senderId,
       ...(query.recipient_id ? { recipient_id: query.recipient_id } : {}),
-      ...(query.status ? { status: query.status } : {}),
+      status: query.status ?? {
+        in: [NotificationStatus.SENT, NotificationStatus.FAILED],
+      },
       ...(search
         ? {
             OR: [
@@ -1028,6 +1220,7 @@ export class NotificationsService {
         where: {
           ...where,
           created_at: { gte: today },
+          status: NotificationStatus.SENT,
         },
       }),
       this.prisma.notification.count({
@@ -1067,6 +1260,33 @@ export class NotificationsService {
     return paginate(data, total, query);
   }
 
+  async getDeliveryWork() {
+    const where = { status: { in: ['PENDING', 'RUNNING', 'FAILED'] } };
+    const [counts, oldest] = await Promise.all([
+      this.prisma.durableWork.groupBy({
+        by: ['kind', 'status'],
+        where,
+        _count: true,
+      }),
+      this.prisma.durableWork.findMany({
+        where,
+        orderBy: [{ status: 'asc' }, { next_attempt_at: 'asc' }],
+        take: 100,
+        select: {
+          key: true,
+          kind: true,
+          status: true,
+          attempts: true,
+          created_at: true,
+          next_attempt_at: true,
+          lease_until: true,
+          last_error: true,
+        },
+      }),
+    ]);
+    return { counts, oldest };
+  }
+
   async getMyUnreadCount(recipientId: string) {
     const count = await this.prisma.notification.count({
       where: {
@@ -1094,6 +1314,7 @@ export class NotificationsService {
     const result = await this.prisma.notification.deleteMany({
       where: {
         recipient_id: recipientId,
+        status: { not: NotificationStatus.PENDING },
         read_at: {
           not: null,
         },

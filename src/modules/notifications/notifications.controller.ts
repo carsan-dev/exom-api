@@ -21,12 +21,28 @@ import {
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
+  @Get('delivery-work')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'Inspect pending and failed delivery work without private payloads',
+  })
+  deliveryWork() {
+    return this.notificationsService.getDeliveryWork();
+  }
+
   @Post('send')
   @RequiresApproval('notification.send', 'notification')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Send a notification to one or more users' })
-  @ApiResponse({ status: 201, description: 'Notificacion enviada y persistida correctamente' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 201,
+    description: 'Notificacion enviada y persistida correctamente',
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   send(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: SendNotificationDto,
@@ -53,18 +69,31 @@ export class NotificationsController {
   @Post('send-all')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Send a notification to all accessible clients' })
-  @ApiResponse({ status: 201, description: 'Notificaciones enviadas y persistidas correctamente' })
+  @ApiResponse({
+    status: 201,
+    description: 'Notificaciones enviadas y persistidas correctamente',
+  })
   sendToAll(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: SendToAllClientsDto,
   ) {
-    return this.notificationsService.sendToAllClients(user.id, dto.title, dto.body, dto.data);
+    return this.notificationsService.sendToAllClients(
+      user.id,
+      dto.title,
+      dto.body,
+      dto.data,
+    );
   }
 
   @Get('history')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Get notification history for the current admin session' })
-  @ApiResponse({ status: 200, description: 'Historial de notificaciones obtenido correctamente' })
+  @ApiOperation({
+    summary: 'Get notification history for the current admin session',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Historial de notificaciones obtenido correctamente',
+  })
   getHistory(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: NotificationQueryDto,
@@ -74,8 +103,13 @@ export class NotificationsController {
 
   @Get('stats')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Get notification delivery stats for the current admin session' })
-  @ApiResponse({ status: 200, description: 'Estadisticas de notificaciones obtenidas correctamente' })
+  @ApiOperation({
+    summary: 'Get notification delivery stats for the current admin session',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estadisticas de notificaciones obtenidas correctamente',
+  })
   getStats(@CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.getStats(user.id);
   }
@@ -83,7 +117,10 @@ export class NotificationsController {
   @Get('templates')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'List notification templates' })
-  @ApiResponse({ status: 200, description: 'Plantillas obtenidas correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Plantillas obtenidas correctamente',
+  })
   listTemplates() {
     return this.notificationsService.listTemplates();
   }
@@ -99,7 +136,10 @@ export class NotificationsController {
   @Patch('templates/:key')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update a notification template' })
-  @ApiResponse({ status: 200, description: 'Plantilla actualizada correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Plantilla actualizada correctamente',
+  })
   updateTemplate(
     @Param('key') key: string,
     @Body() dto: UpdateNotificationTemplateDto,
@@ -110,7 +150,10 @@ export class NotificationsController {
   @Patch('templates/:key/schedule')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update a scheduled notification template timing' })
-  @ApiResponse({ status: 200, description: 'Horario actualizado correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Horario actualizado correctamente',
+  })
   updateTemplateSchedule(
     @Param('key') key: string,
     @Body() dto: UpdateNotificationTemplateScheduleDto,
@@ -121,15 +164,23 @@ export class NotificationsController {
   @Delete('templates/:key')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Reset or delete a notification template' })
-  @ApiResponse({ status: 200, description: 'Plantilla restaurada correctamente' })
+  @ApiResponse({
+    status: 200,
+    description: 'Plantilla restaurada correctamente',
+  })
   resetTemplate(@Param('key') key: string) {
     return this.notificationsService.resetTemplate(key);
   }
 
   @Get('me')
   @Roles(Role.CLIENT)
-  @ApiOperation({ summary: 'List notifications received by the current client' })
-  @ApiResponse({ status: 200, description: 'Notificaciones obtenidas correctamente' })
+  @ApiOperation({
+    summary: 'List notifications received by the current client',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Notificaciones obtenidas correctamente',
+  })
   getMyNotifications(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: MyNotificationsQueryDto,
@@ -139,7 +190,9 @@ export class NotificationsController {
 
   @Get('me/unread-count')
   @Roles(Role.CLIENT)
-  @ApiOperation({ summary: 'Count unread notifications for the current client' })
+  @ApiOperation({
+    summary: 'Count unread notifications for the current client',
+  })
   @ApiResponse({ status: 200, description: 'Contador obtenido correctamente' })
   getMyUnreadCount(@CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.getMyUnreadCount(user.id);
@@ -148,8 +201,13 @@ export class NotificationsController {
   @Put('me/read-all')
   @HttpCode(200)
   @Roles(Role.CLIENT)
-  @ApiOperation({ summary: 'Mark all notifications as read for the current client' })
-  @ApiResponse({ status: 200, description: 'Notificaciones marcadas como leidas' })
+  @ApiOperation({
+    summary: 'Mark all notifications as read for the current client',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Notificaciones marcadas como leidas',
+  })
   markAllAsRead(@CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.markAllAsRead(user.id);
   }
@@ -166,12 +224,11 @@ export class NotificationsController {
   @Put(':id/read')
   @HttpCode(200)
   @Roles(Role.CLIENT)
-  @ApiOperation({ summary: 'Mark a notification as read for the current client' })
+  @ApiOperation({
+    summary: 'Mark a notification as read for the current client',
+  })
   @ApiResponse({ status: 200, description: 'Notificacion marcada como leida' })
-  markAsRead(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthenticatedUser,
-  ) {
+  markAsRead(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.markAsRead(user.id, id);
   }
 }

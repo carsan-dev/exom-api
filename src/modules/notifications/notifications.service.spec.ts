@@ -1,3 +1,4 @@
+import { JobsService } from '../jobs/jobs.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -38,7 +39,6 @@ function createNotification(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
 describe('NotificationsService', () => {
   let service: NotificationsService;
   let prisma: {
@@ -52,7 +52,13 @@ describe('NotificationsService', () => {
       findMany: jest.Mock;
     };
     notification: {
-      create: jest.Mock;
+      findUnique: jest.Mock;
+      findUniqueOrThrow: jest.Mock;
+      update: jest.Mock;
+      create: jest.Mock<
+        Promise<ReturnType<typeof createNotification>>,
+        [unknown]
+      >;
       deleteMany: jest.Mock;
     };
     notificationTemplate: {
@@ -96,7 +102,13 @@ describe('NotificationsService', () => {
         findMany: jest.fn(),
       },
       notification: {
-        create: jest.fn(),
+        findUnique: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn<
+          Promise<ReturnType<typeof createNotification>>,
+          [unknown]
+        >(),
         deleteMany: jest.fn(),
       },
       notificationTemplate: {
@@ -119,7 +131,39 @@ describe('NotificationsService', () => {
     prisma.notificationTemplate.findMany.mockResolvedValue([]);
     prisma.notificationTemplateSchedule.findMany.mockResolvedValue([]);
 
-    service = new NotificationsService(prisma as unknown as PrismaService);
+    let latest: ReturnType<typeof createNotification> | undefined;
+    prisma.user.findUnique.mockResolvedValue(clientUser);
+    const created = async () => {
+      const result = prisma.notification.create.mock.results.at(-1);
+      if (!result || result.type !== 'return')
+        throw Error('Notification fixture missing');
+      return result.value;
+    };
+    prisma.notification.findUnique.mockImplementation(async () => ({
+      ...(await created()),
+      status: NotificationStatus.PENDING,
+    }));
+    prisma.notification.update.mockImplementation(
+      async (args: {
+        data: Partial<ReturnType<typeof createNotification>>;
+      }) => {
+        latest = {
+          ...(await created()),
+          ...args.data,
+        };
+        return latest;
+      },
+    );
+    prisma.notification.findUniqueOrThrow.mockImplementation(
+      async () => latest ?? (await created()),
+    );
+    const jobs = {
+      runKey: jest.fn((id: string) => service.dispatchNotification(id)),
+    };
+    service = new NotificationsService(
+      prisma as unknown as PrismaService,
+      jobs as unknown as JobsService,
+    );
   });
 
   it('throws when the sender does not exist', async () => {
@@ -209,7 +253,7 @@ describe('NotificationsService', () => {
           type: 'recap_reminder',
         },
       ),
-    ).resolves.toEqual(sentNotification);
+    ).resolves.toMatchObject(sentNotification);
 
     expect(sendMock).toHaveBeenCalledWith({
       token: 'token-123',
@@ -251,7 +295,7 @@ describe('NotificationsService', () => {
             type: 'recap_reminder',
             route: '/recap',
           },
-          status: NotificationStatus.SENT,
+          status: NotificationStatus.PENDING,
         }),
       }),
     );
@@ -441,6 +485,7 @@ describe('NotificationsService', () => {
     prisma.user.findUnique.mockResolvedValueOnce(clientUser);
     prisma.notification.create.mockResolvedValue(
       createNotification({
+        status: NotificationStatus.PENDING,
         title: 'Tu entreno de hoy te espera',
         body: 'Abre la app y empieza cuando puedas.',
         data: {
@@ -464,8 +509,10 @@ describe('NotificationsService', () => {
         },
         { type: 'training_reminder' },
       ),
-    ).resolves.toEqual({ success: true, sent: 1, failed: 0 });
+    ).resolves.toEqual({ success: false, sent: 0, failed: 0, queued: 1 });
 
+    expect(sendMock).not.toHaveBeenCalled();
+    await service.dispatchNotification('notification-1');
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: {
@@ -669,6 +716,7 @@ describe('NotificationsService', () => {
     expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
       where: {
         recipient_id: 'client-1',
+        status: { not: NotificationStatus.PENDING },
         read_at: {
           not: null,
         },
@@ -716,6 +764,7 @@ describe('NotificationsService', () => {
     prisma.user.findUnique.mockResolvedValueOnce(clientUser);
     prisma.notification.create.mockResolvedValue(
       createNotification({
+        status: NotificationStatus.PENDING,
         title: 'Hola Ada',
         body: 'Entrena hoy',
         data: { source: 'template-test' },
@@ -736,8 +785,10 @@ describe('NotificationsService', () => {
         },
         { source: 'template-test' },
       ),
-    ).resolves.toEqual({ success: true, sent: 1, failed: 0 });
+    ).resolves.toEqual({ success: false, sent: 0, failed: 0, queued: 1 });
 
+    expect(sendMock).not.toHaveBeenCalled();
+    await service.dispatchNotification('notification-1');
     expect(sendMock).toHaveBeenCalledWith(
       expect.objectContaining({
         data: {

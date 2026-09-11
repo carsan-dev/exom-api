@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { JobsService, enqueueWork, workContext } from '../jobs/jobs.service';
+import { boundedMap } from '../jobs/bounded-map';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { MealType, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -28,46 +30,59 @@ const mealReminderSlots = [
 ];
 
 @Injectable()
-export class NotificationsSchedulerService {
+export class NotificationsSchedulerService implements OnModuleInit {
   private readonly logger = new Logger(NotificationsSchedulerService.name);
-  private readonly lastRunByScheduleKey = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly autoAssignmentMaterializer: AutoAssignmentMaterializerService,
+    private readonly jobs: JobsService = new JobsService(prisma),
   ) {}
+
+  onModuleInit() {
+    this.jobs.register('NOTIFICATION_SCHEDULE', async (work) => {
+      const payload = work.payload;
+      if (
+        !payload ||
+        typeof payload !== 'object' ||
+        Array.isArray(payload) ||
+        typeof payload.template !== 'string' ||
+        typeof payload.slot !== 'number'
+      )
+        throw new Error('Invalid schedule payload');
+      const key = [...NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY.keys()].find(
+        (key) => key === payload.template,
+      );
+      if (!key) throw new Error('Unknown schedule');
+      await this.runScheduledTemplate(key, payload.slot);
+    });
+  }
 
   private async reconcileDateForClients(
     clientIds: Iterable<string>,
     date: Date,
   ): Promise<void> {
     const pending = [...new Set(clientIds)];
-    let index = 0;
-    const workers = Array.from(
-      { length: Math.min(8, pending.length) },
-      async () => {
-        while (index < pending.length) {
-          const clientId = pending[index++];
-          try {
-            await this.autoAssignmentMaterializer.reconcile(clientId, {
-              start: date,
-              end: date,
-              dates: [date],
-            });
-          } catch (error: unknown) {
-            this.logger.warn(
-              `No se pudo reconciliar planificación de ${clientId}: ${String(error)}`,
-            );
-          }
-        }
-      },
+    await boundedMap(
+      pending,
+      (clientId) =>
+        this.autoAssignmentMaterializer.reconcile(clientId, {
+          start: date,
+          end: date,
+          dates: [date],
+        }),
+      8,
     );
-    await Promise.all(workers);
   }
 
   private todayUtcDate(): Date {
-    const now = new Date();
+    const payload = workContext.getStore()?.payload;
+    const value =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload.scheduledAt
+        : null;
+    const now = typeof value === 'string' ? new Date(value) : new Date();
     return new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
@@ -142,9 +157,7 @@ export class NotificationsSchedulerService {
   private async resolveSender(): Promise<string | null> {
     const id = await this.notifications.findSystemSenderId();
     if (!id) {
-      this.logger.warn(
-        'No system sender (SUPER_ADMIN) available; skipping cron',
-      );
+      throw new Error('SYSTEM_SENDER_UNAVAILABLE');
     }
     return id;
   }
@@ -200,13 +213,13 @@ export class NotificationsSchedulerService {
         continue;
       }
 
-      const runKey = `${localParts.dateKey}:${localParts.time}`;
-      if (this.lastRunByScheduleKey.get(key) === runKey) {
-        continue;
-      }
-      this.lastRunByScheduleKey.set(key, runKey);
-
-      await this.runScheduledTemplate(key, timeIndex);
+      const runKey = key + ':' + localParts.dateKey + ':' + localParts.time;
+      await enqueueWork(
+        this.prisma,
+        'schedule:' + runKey,
+        'NOTIFICATION_SCHEDULE',
+        { template: key, slot: timeIndex, scheduledAt: now.toISOString() },
+      );
     }
   }
 
@@ -495,20 +508,18 @@ export class NotificationsSchedulerService {
     if (pending.length === 0) return;
 
     this.logger.log(`[cron] warnStreakAtRisk → ${pending.length} clients`);
-    await Promise.all(
-      pending.map((streak) =>
-        this.notifications.sendInternalTemplate(
-          sender,
-          [streak.client_id],
-          'streak_at_risk',
-          { days: streak.current_days },
-          {
-            title: `No pierdas tu racha de ${streak.current_days} días`,
-            body: 'Registra tu progreso de hoy para mantenerla activa.',
-            route: '/',
-          },
-          { type: 'streak_at_risk' },
-        ),
+    await boundedMap(pending, (streak) =>
+      this.notifications.sendInternalTemplate(
+        sender,
+        [streak.client_id],
+        'streak_at_risk',
+        { days: streak.current_days },
+        {
+          title: `No pierdas tu racha de ${streak.current_days} días`,
+          body: 'Registra tu progreso de hoy para mantenerla activa.',
+          route: '/',
+        },
+        { type: 'streak_at_risk' },
       ),
     );
   }
@@ -689,36 +700,34 @@ export class NotificationsSchedulerService {
     this.logger.log(
       `[cron] weeklyClientSummaryToAdmin -> ${assignments.length} assignments`,
     );
-    await Promise.all(
-      assignments.map((assignment) => {
-        const summary = ensureSummary(assignment.client_id);
-        const clientName = this.buildClientName(assignment.client);
+    await boundedMap(assignments, (assignment) => {
+      const summary = ensureSummary(assignment.client_id);
+      const clientName = this.buildClientName(assignment.client);
 
-        return this.notifications.sendInternalTemplate(
-          sender,
-          [assignment.admin_id],
-          'admin_weekly_summary',
-          {
-            clientName,
-            clientId: assignment.client_id,
-            trainingsCompleted: summary.trainingsCompleted,
-            trainingsAssigned: summary.trainingsAssigned,
-            mealsCompleted: summary.mealsCompleted,
-            mealsAssigned: summary.mealsAssigned,
-          },
-          {
-            title: 'Resumen semanal de cliente',
-            body: `${clientName}: ${summary.trainingsCompleted}/${summary.trainingsAssigned} entrenos, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
-            route: `/admin/clients/${assignment.client_id}`,
-          },
-          {
-            type: 'weekly_summary',
-            client_id: assignment.client_id,
-            week_start: this.formatDate(start),
-            week_end: this.formatDate(end),
-          },
-        );
-      }),
-    );
+      return this.notifications.sendInternalTemplate(
+        sender,
+        [assignment.admin_id],
+        'admin_weekly_summary',
+        {
+          clientName,
+          clientId: assignment.client_id,
+          trainingsCompleted: summary.trainingsCompleted,
+          trainingsAssigned: summary.trainingsAssigned,
+          mealsCompleted: summary.mealsCompleted,
+          mealsAssigned: summary.mealsAssigned,
+        },
+        {
+          title: 'Resumen semanal de cliente',
+          body: `${clientName}: ${summary.trainingsCompleted}/${summary.trainingsAssigned} entrenos, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
+          route: `/admin/clients/${assignment.client_id}`,
+        },
+        {
+          type: 'weekly_summary',
+          client_id: assignment.client_id,
+          week_start: this.formatDate(start),
+          week_end: this.formatDate(end),
+        },
+      );
+    });
   }
 }
