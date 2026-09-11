@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { StreakCalculatorService } from './streak-calculator.service';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 
 @Injectable()
 export class StreakReconciliationService {
@@ -16,7 +16,6 @@ export class StreakReconciliationService {
     private readonly achievements: AchievementsService,
   ) {}
 
-  @Cron('5 0 * * *', { timeZone: 'UTC' })
   async reconcileActiveStreaks() {
     const streaks = await this.prisma.streak.findMany({
       where: { current_days: { gt: 0 } },
@@ -25,7 +24,10 @@ export class StreakReconciliationService {
     let changed = 0;
 
     for (const { client_id } of streaks) {
-      const result = await this.calculator.recalculateClient(client_id);
+      const result = await this.prisma.$transaction(async (tx) => {
+        await lockClientDayProgress(tx, client_id);
+        return this.calculator.recalculateClient(client_id, { db: tx });
+      });
       if (!result.changed) continue;
 
       changed += 1;

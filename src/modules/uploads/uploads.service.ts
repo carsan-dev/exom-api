@@ -16,7 +16,6 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { ConfigService } from '@nestjs/config';
-import { Cron } from '@nestjs/schedule';
 import {
   ManagedUploadPurpose,
   ManagedUploadStatus,
@@ -764,8 +763,8 @@ export class UploadsService {
     );
   }
 
-  @Cron('0 */30 * * * *')
   async purgeExpiredSessions(): Promise<number> {
+    let failed = false;
     const expired = await this.prisma.managedUpload.findMany({
       where: {
         OR: [
@@ -811,8 +810,10 @@ export class UploadsService {
         });
       } catch {
         // EXPIRED without object_deleted_at is durable cleanup work.
+        failed = true;
       }
     }
+    if (failed) throw new Error('UPLOAD_RETENTION_INCOMPLETE');
     return expired.length;
   }
 

@@ -9,5 +9,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [UploadsModule, NotificationsModule],
   controllers: [FeedbackController],
   providers: [FeedbackService, FeedbackRetentionService],
+  exports: [FeedbackRetentionService],
 })
 export class FeedbackModule {}

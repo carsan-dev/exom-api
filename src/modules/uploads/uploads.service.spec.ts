@@ -13,7 +13,6 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from './uploads.service';
 import { MultipartTransfer } from './multipart-transfer';
-
 describe('UploadsService', () => {
   const configValues: Record<string, string> = {
     NODE_ENV: 'production',
@@ -24,8 +23,8 @@ describe('UploadsService', () => {
     R2_SECRET_ACCESS_KEY: 'test-secret-key',
   };
   const config = {
-    get: jest.fn((key: string, fallback?: string) =>
-      configValues[key] ?? fallback,
+    get: jest.fn(
+      (key: string, fallback?: string) => configValues[key] ?? fallback,
     ),
   };
   const managedUpload = {
@@ -168,20 +167,22 @@ describe('UploadsService', () => {
 
     const settled = await Promise.allSettled([
       service.consumePrepared(
-        prisma as any,
+        prisma as unknown as import('@prisma/client').Prisma.TransactionClient,
         'client-1',
         'upload-1',
         [ManagedUploadPurpose.FEEDBACK_VIDEO],
       ),
       service.consumePrepared(
-        prisma as any,
+        prisma as unknown as import('@prisma/client').Prisma.TransactionClient,
         'client-1',
         'upload-1',
         [ManagedUploadPurpose.FEEDBACK_VIDEO],
       ),
     ]);
 
-    expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      settled.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
     const rejected = settled.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );
@@ -206,7 +207,7 @@ describe('UploadsService', () => {
     ).resolves.toMatchObject({ id: 'upload-1' });
     await expect(
       service.consumePrepared(
-        prisma as any,
+        prisma as unknown as import('@prisma/client').Prisma.TransactionClient,
         'client-1',
         'upload-1',
         [ManagedUploadPurpose.FEEDBACK_VIDEO],
@@ -246,7 +247,9 @@ describe('UploadsService', () => {
       header: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0]),
     });
 
-    await expect(service.completeSession('client-1', webm.id)).resolves.toMatchObject({
+    await expect(
+      service.completeSession('client-1', webm.id),
+    ).resolves.toMatchObject({
       content_type: 'video/webm',
     });
   });
@@ -268,10 +271,7 @@ describe('UploadsService', () => {
       select: { id: true },
     });
     expect(
-      service.referencesSame(
-        'r2://feedback-video/client-1/file.mp4',
-        signed,
-      ),
+      service.referencesSame('r2://feedback-video/client-1/file.mp4', signed),
     ).toBe(true);
   });
 
@@ -279,11 +279,15 @@ describe('UploadsService', () => {
     const failed = session(ManagedUploadStatus.FAILED);
     managedUpload.findMany.mockResolvedValue([failed]);
     managedUpload.updateMany.mockResolvedValue({ count: 1 });
-    jest.spyOn(service as any, 'deleteManagedObject').mockResolvedValue(undefined);
+    jest
+      .spyOn(service as any, 'deleteManagedObject')
+      .mockResolvedValue(undefined);
 
     await expect(service.purgeExpiredSessions()).resolves.toBe(1);
     expect(managedUpload.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: ManagedUploadStatus.EXPIRED } }),
+      expect.objectContaining({
+        data: { status: ManagedUploadStatus.EXPIRED },
+      }),
     );
   });
 
@@ -292,13 +296,19 @@ describe('UploadsService', () => {
     let transactionTail = Promise.resolve();
     prisma.$transaction.mockImplementation((callback) => {
       const run = transactionTail.then(() => callback(prisma));
-      transactionTail = run.then(() => undefined, () => undefined);
+      transactionTail = run.then(
+        () => undefined,
+        () => undefined,
+      );
       return run;
     });
     managedUpload.count.mockImplementation(() => Promise.resolve(active));
     managedUpload.create.mockImplementation(({ data }) => {
       active++;
-      return Promise.resolve({ ...session(ManagedUploadStatus.PENDING), ...data });
+      return Promise.resolve({
+        ...session(ManagedUploadStatus.PENDING),
+        ...data,
+      });
     });
 
     const results = await Promise.allSettled([
@@ -314,8 +324,12 @@ describe('UploadsService', () => {
       }),
     ]);
 
-    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === 'rejected'),
+    ).toHaveLength(1);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(3); // two quota locks and one URL-issuance fence
   });
   it('P4: a temporary object inspection failure preserves the pending session and object', async () => {
@@ -355,7 +369,9 @@ describe('UploadsService', () => {
       .fn()
       .mockRejectedValue(new Error('temporary delete failure'));
     Object.defineProperty(service, 'deleteManagedObject', { value: remove });
-    await service.purgeExpiredSessions();
+    await expect(service.purgeExpiredSessions()).rejects.toThrow(
+      'UPLOAD_RETENTION_INCOMPLETE',
+    );
     expect(remove).toHaveBeenCalledTimes(1);
     expect(managedUpload.updateMany).toHaveBeenCalledTimes(1);
   });

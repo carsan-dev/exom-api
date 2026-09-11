@@ -14,6 +14,6 @@ import { StreaksService } from './streaks.service';
     StreakCalculatorService,
     StreakReconciliationService,
   ],
-  exports: [StreakCalculatorService],
+  exports: [StreakCalculatorService, StreakReconciliationService],
 })
 export class StreaksModule {}

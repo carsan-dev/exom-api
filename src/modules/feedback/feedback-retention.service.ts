@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { FeedbackStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
@@ -16,7 +15,6 @@ export class FeedbackRetentionService {
     private readonly uploadsService: UploadsService,
   ) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async cleanupExpiredFeedbackMedia() {
     const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
@@ -40,6 +38,7 @@ export class FeedbackRetentionService {
     }
 
     let deletedCount = 0;
+    let failed = false;
 
     for (const item of expiredItems) {
       if (!item.media_url) {
@@ -59,13 +58,20 @@ export class FeedbackRetentionService {
 
         deletedCount += 1;
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.warn(`No se pudo borrar el archivo multimedia del feedback ${item.id}: ${message}`);
+        failed = true;
+        const message =
+          error instanceof Error ? error.message : 'Unknown error';
+        this.logger.warn(
+          `No se pudo borrar el archivo multimedia del feedback ${item.id}: ${message}`,
+        );
       }
     }
 
     if (deletedCount > 0) {
-      this.logger.log(`Retención de feedback ejecutada: ${deletedCount} archivo(s) eliminados`);
+      this.logger.log(
+        `Retención de feedback ejecutada: ${deletedCount} archivo(s) eliminados`,
+      );
     }
+    if (failed) throw new Error('FEEDBACK_RETENTION_INCOMPLETE');
   }
 }

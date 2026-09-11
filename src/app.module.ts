@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { JobsModule } from './modules/jobs/jobs.module';
+import { DomainWorkModule } from './modules/jobs/domain-work.module';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -35,6 +37,8 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    JobsModule,
+    DomainWorkModule,
     AuthModule,
     UsersModule,
     ProfileModule,
