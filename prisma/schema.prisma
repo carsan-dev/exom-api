@@ -118,6 +118,7 @@ enum MediaType {
 }
 
 enum NotificationStatus {
+  PENDING
   SENT
   FAILED
 }
@@ -180,6 +181,7 @@ model User {
   progressOperations ProgressOperation[]
   sentNotifications     Notification[] @relation("SentNotifications")
   receivedNotifications Notification[] @relation("ReceivedNotifications")
+  durableWork DurableWork[]
   approvalRequestsMade     ApprovalRequest[] @relation("ApprovalRequester")
   approvalRequestsReviewed ApprovalRequest[] @relation("ApprovalReviewer")
   planAssignmentsAsClient PlanAssignment[] @relation("PlanAssignmentClient")
@@ -235,7 +237,10 @@ model Notification {
   title        String
   body         String
   data         Json?
-  status       NotificationStatus @default(SENT)
+  status       NotificationStatus @default(PENDING)
+  provider_message_id String?
+  requires_client_role Boolean @default(false)
+  sent_at DateTime?
   error        String?
   read_at      DateTime?
   created_at   DateTime           @default(now())
@@ -246,6 +251,25 @@ model Notification {
   @@index([sender_id, created_at])
   @@index([recipient_id, read_at, created_at])
   @@map("notifications")
+}
+
+model DurableWork {
+  key String @id
+  kind String
+  payload Json
+  owner_id String?
+  owner User? @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  status String @default("PENDING")
+  attempts Int @default(0)
+  claim_token String?
+  lease_until DateTime?
+  next_attempt_at DateTime @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
+  last_error String?
+  created_at DateTime @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
+  completed_at DateTime?
+  @@index([status, next_attempt_at])
+  @@index([owner_id])
+  @@map("durable_work")
 }
 
 model NotificationTemplate {
@@ -299,6 +323,7 @@ model MobileAppConfig {
 }
 
 model ApprovalRequest {
+  execution_completed_at DateTime?
   id               String         @id @default(uuid())
   requester_id     String
   reviewer_id      String?

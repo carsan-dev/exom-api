@@ -6,6 +6,8 @@ import { Pool } from 'pg';
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
+  // Jobs pin a PostgreSQL transaction without Prisma's interactive callback deadline.
+  readonly postgresqlPool: Pool;
 
   constructor() {
     const connectionString = process.env.DATABASE_URL;
@@ -26,6 +28,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       adapter: new PrismaPg(pool),
       log: process.env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['error'],
     });
+    this.postgresqlPool = pool;
   }
 
   async onModuleInit() {
