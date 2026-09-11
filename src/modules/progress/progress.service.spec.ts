@@ -7,7 +7,6 @@ import { ProgressService } from './progress.service';
 import type { UploadsService } from '../uploads/uploads.service';
 import { FeedbackKind, MediaType } from '@prisma/client';
 import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
-
 describe('ProgressService', () => {
   let service: ProgressService;
   let prisma: {
@@ -821,18 +820,7 @@ describe('ProgressService', () => {
       'client-1',
       expect.objectContaining({ db: prisma }),
     );
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
-      'system-admin',
-      ['client-1'],
-      'streak_milestone',
-      { days: 7 },
-      {
-        title: '7 d\u00edas de racha!',
-        body: 'Sigue as\u00ed. Tu constancia est\u00e1 creciendo.',
-        route: '/',
-      },
-      { type: 'streak' },
-    );
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 
   it('replaces a completed meal variant with the selected sibling', async () => {

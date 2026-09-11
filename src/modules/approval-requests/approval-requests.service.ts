@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -165,8 +166,6 @@ export class ApprovalRequestsService {
         );
         return created;
       });
-
-      await this.notifySuperAdminsOfNewRequest(approvalRequest);
 
       return { approvalRequest, alreadyExists: false };
     } catch (error) {
@@ -355,7 +354,7 @@ export class ApprovalRequestsService {
         reviewer_id: reviewerId,
         resolved_at: new Date(),
         rejection_reason:
-          dto.action === 'reject' ? dto.rejection_reason ?? null : null,
+          dto.action === 'reject' ? (dto.rejection_reason ?? null) : null,
         failure_reason: null,
       },
     });
@@ -370,32 +369,30 @@ export class ApprovalRequestsService {
       await this.uploadsService.releaseApprovalUploads(id);
       const rejectedRequest = await this.getRequestOrThrow(id);
 
-      await this.notificationsService.sendInternalNotifications(
-        reviewerId,
-        [approvalRequest.requester_id],
-        'Solicitud rechazada',
-        `Tu solicitud para ${this.getActionLabel(approvalRequest.action_type)} fue rechazada: ${dto.rejection_reason}`,
-        { route: '/approval-requests', type: 'approval_rejected' },
-      );
-
       return rejectedRequest;
     }
 
+    let actionExecuted = false;
     try {
       await this.executeApprovedAction(approvalRequest, reviewerId);
-
-      await this.notificationsService.sendInternalNotifications(
-        reviewerId,
-        [approvalRequest.requester_id],
-        'Solicitud aprobada',
-        `Tu solicitud para ${this.getActionLabel(approvalRequest.action_type)} fue aprobada.`,
-        { route: '/approval-requests', type: 'approval_approved' },
-      );
+      actionExecuted = true;
+      // APPROVED alone predates action execution. Only this receipt permits the
+      // durable notification consumer to announce successful execution.
+      await this.prisma.approvalRequest.update({
+        where: { id },
+        data: { execution_completed_at: new Date() },
+      });
 
       return this.getRequestOrThrow(id);
     } catch (error) {
+      if (actionExecuted)
+        throw new ServiceUnavailableException(
+          'Acción ejecutada; confirmación de notificación pendiente. No repitas la acción.',
+        );
       const failureReason =
-        error instanceof Error ? error.message : 'Error inesperado al ejecutar la acción';
+        error instanceof Error
+          ? error.message
+          : 'Error inesperado al ejecutar la acción';
 
       const failedRequest = await this.prisma.approvalRequest.update({
         where: { id },
@@ -405,14 +402,6 @@ export class ApprovalRequestsService {
         },
         include: approvalRequestInclude,
       });
-
-      await this.notificationsService.sendInternalNotifications(
-        reviewerId,
-        [approvalRequest.requester_id, reviewerId],
-        'Falló la ejecución de la solicitud',
-        `La acción aprobada para ${this.getActionLabel(approvalRequest.action_type)} no pudo ejecutarse: ${failureReason}`,
-        { route: '/approval-requests', type: 'approval_failed' },
-      );
 
       return failedRequest;
     }
@@ -760,29 +749,6 @@ export class ApprovalRequestsService {
     return fullName || request.requester.email;
   }
 
-  private async notifySuperAdminsOfNewRequest(approvalRequest: ApprovalRequest) {
-    const populatedRequest = await this.getRequestOrThrow(approvalRequest.id);
-    const superAdmins = await this.prisma.user.findMany({
-      where: {
-        role: Role.SUPER_ADMIN,
-        is_active: true,
-      },
-      select: { id: true },
-    });
-
-    if (superAdmins.length === 0) {
-      return;
-    }
-
-    await this.notificationsService.sendInternalNotifications(
-      approvalRequest.requester_id,
-      superAdmins.map((user) => user.id),
-      'Nueva solicitud de aprobación',
-      `${this.getRequesterName(populatedRequest)} solicita ${this.getActionLabel(approvalRequest.action_type)}.`,
-      { route: '/approval-requests', type: 'approval_pending' },
-    );
-  }
-
   private async requiresOwnershipApproval(
     userId: string,
     resourceType: string,
@@ -1118,7 +1084,9 @@ export class ApprovalRequestsService {
           payload,
         );
       case 'training.delete':
-        return this.getService(TrainingsService).remove(approvalRequest.resource_id!);
+        return this.getService(TrainingsService).remove(
+          approvalRequest.resource_id!,
+        );
       case 'diet.update':
         return this.getService(DietsService).update(
           approvalRequest.resource_id!,
@@ -1127,7 +1095,9 @@ export class ApprovalRequestsService {
           approvalRequest.id,
         );
       case 'diet.delete':
-        return this.getService(DietsService).remove(approvalRequest.resource_id!);
+        return this.getService(DietsService).remove(
+          approvalRequest.resource_id!,
+        );
       case 'exercise.update':
         return this.getService(ExercisesService).update(
           approvalRequest.resource_id!,
@@ -1136,7 +1106,9 @@ export class ApprovalRequestsService {
           approvalRequest.id,
         );
       case 'exercise.delete':
-        return this.getService(ExercisesService).remove(approvalRequest.resource_id!);
+        return this.getService(ExercisesService).remove(
+          approvalRequest.resource_id!,
+        );
       case 'ingredient.update':
         return this.getService(IngredientsService).update(
           approvalRequest.resource_id!,
@@ -1187,14 +1159,16 @@ export class ApprovalRequestsService {
           approvalRequest.resource_id!,
           reviewerId,
           Role.SUPER_ADMIN,
-          payload as unknown as Parameters<ChallengesService['assignToClients']>[3],
+          payload as unknown as Parameters<
+            ChallengesService['assignToClients']
+          >[3],
         );
       case 'achievement.create':
         return this.getService(AchievementsService).create(
           payload as unknown as Parameters<AchievementsService['create']>[0],
           {
-          id: reviewerId,
-          role: Role.SUPER_ADMIN,
+            id: reviewerId,
+            role: Role.SUPER_ADMIN,
           },
         );
       case 'achievement.update':
@@ -1206,18 +1180,24 @@ export class ApprovalRequestsService {
       case 'achievement.grant':
         return this.getService(AchievementsService).grantToUser(
           approvalRequest.resource_id!,
-          payload as unknown as Parameters<AchievementsService['grantToUser']>[1],
+          payload as unknown as Parameters<
+            AchievementsService['grantToUser']
+          >[1],
           { id: reviewerId, role: Role.SUPER_ADMIN },
         );
       case 'achievement.revoke':
         return this.getService(AchievementsService).revokeFromUser(
           approvalRequest.resource_id!,
-          payload as unknown as Parameters<AchievementsService['revokeFromUser']>[1],
+          payload as unknown as Parameters<
+            AchievementsService['revokeFromUser']
+          >[1],
           { id: reviewerId, role: Role.SUPER_ADMIN },
         );
       case 'achievement.recompute':
         return this.getService(AchievementsService).recomputeAchievements(
-          payload as unknown as Parameters<AchievementsService['recomputeAchievements']>[0],
+          payload as unknown as Parameters<
+            AchievementsService['recomputeAchievements']
+          >[0],
           {
             id: reviewerId,
             role: Role.SUPER_ADMIN,
@@ -1229,19 +1209,23 @@ export class ApprovalRequestsService {
         const body = this.getStringField(payload, 'body');
 
         if (!title || !body) {
-          throw new BadRequestException('La notificación aprobada no tiene contenido válido');
+          throw new BadRequestException(
+            'La notificación aprobada no tiene contenido válido',
+          );
         }
 
         const data =
-          payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+          payload.data &&
+          typeof payload.data === 'object' &&
+          !Array.isArray(payload.data)
             ? (payload.data as Record<string, string>)
             : undefined;
         const singleRecipientId = this.getStringField(payload, 'user_id');
 
         if (singleRecipientId) {
-          return notificationsService.sendToUser(
+          return notificationsService.queueAuthorizedNotifications(
             reviewerId,
-            singleRecipientId,
+            [singleRecipientId],
             title,
             body,
             data,
@@ -1250,7 +1234,7 @@ export class ApprovalRequestsService {
 
         const recipientIds = this.getStringArrayField(payload, 'user_ids');
 
-        return notificationsService.sendToMultiple(
+        return notificationsService.queueAuthorizedNotifications(
           reviewerId,
           recipientIds,
           title,

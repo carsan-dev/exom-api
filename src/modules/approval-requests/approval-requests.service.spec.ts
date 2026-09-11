@@ -38,7 +38,6 @@ function createApprovalRequest(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
 describe('ApprovalRequestsService', () => {
   let service: ApprovalRequestsService;
   let prisma: {
@@ -109,7 +108,12 @@ describe('ApprovalRequestsService', () => {
     prisma.training.findUnique.mockResolvedValue({ created_by: 'admin-2' });
 
     await expect(
-      service.requiresApproval(adminUser, 'training.update', 'training', 'training-1'),
+      service.requiresApproval(
+        adminUser,
+        'training.update',
+        'training',
+        'training-1',
+      ),
     ).resolves.toBe(true);
   });
 
@@ -127,18 +131,29 @@ describe('ApprovalRequestsService', () => {
   });
 
   it('returns the existing pending request instead of creating a duplicate', async () => {
-    const existingRequest = createApprovalRequest({ requester: undefined, reviewer: undefined });
+    const existingRequest = createApprovalRequest({
+      requester: undefined,
+      reviewer: undefined,
+    });
     prisma.approvalRequest.findFirst.mockResolvedValue(existingRequest);
 
     await expect(
-      service.createRequest('admin-1', 'training.delete', 'training', 'training-1', {}),
+      service.createRequest(
+        'admin-1',
+        'training.delete',
+        'training',
+        'training-1',
+        {},
+      ),
     ).resolves.toEqual({
       approvalRequest: existingRequest,
       alreadyExists: true,
     });
 
     expect(prisma.approvalRequest.create).not.toHaveBeenCalled();
-    expect(notificationsService.sendInternalNotifications).not.toHaveBeenCalled();
+    expect(
+      notificationsService.sendInternalNotifications,
+    ).not.toHaveBeenCalled();
   });
 
   it('merges assign targets into an existing pending challenge request', async () => {
@@ -266,13 +281,10 @@ describe('ApprovalRequestsService', () => {
     prisma.approvalRequest.findFirst.mockResolvedValue(existingRequest);
 
     await expect(
-      service.createRequest(
-        'admin-1',
-        'meal.create',
-        'meal',
-        undefined,
-        { diet_id: 'diet-1', name: 'Nueva comida' },
-      ),
+      service.createRequest('admin-1', 'meal.create', 'meal', undefined, {
+        diet_id: 'diet-1',
+        name: 'Nueva comida',
+      }),
     ).resolves.toEqual({
       approvalRequest: existingRequest,
       alreadyExists: true,
@@ -290,12 +302,20 @@ describe('ApprovalRequestsService', () => {
   });
 
   it('creates a new request and notifies active super admins', async () => {
-    const createdRequest = createApprovalRequest({ requester: undefined, reviewer: undefined });
+    const createdRequest = createApprovalRequest({
+      requester: undefined,
+      reviewer: undefined,
+    });
 
     prisma.approvalRequest.findFirst.mockResolvedValue(null);
     prisma.approvalRequest.create.mockResolvedValue(createdRequest);
-    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest());
-    prisma.user.findMany.mockResolvedValue([{ id: 'super-1' }, { id: 'super-2' }]);
+    prisma.approvalRequest.findUnique.mockResolvedValue(
+      createApprovalRequest(),
+    );
+    prisma.user.findMany.mockResolvedValue([
+      { id: 'super-1' },
+      { id: 'super-2' },
+    ]);
 
     await expect(
       service.createRequest(
@@ -319,17 +339,14 @@ describe('ApprovalRequestsService', () => {
           resource_type: 'training',
           resource_id: 'training-1',
           payload: { foo: 'bar' },
-          request_reason: 'Necesito corregir un contenido que pertenece a otra cartera',
+          request_reason:
+            'Necesito corregir un contenido que pertenece a otra cartera',
         }),
       }),
     );
-    expect(notificationsService.sendInternalNotifications).toHaveBeenCalledWith(
-      'admin-1',
-      ['super-1', 'super-2'],
-      'Nueva solicitud de aprobación',
-      expect.any(String),
-      { route: '/approval-requests', type: 'approval_pending' },
-    );
+    expect(
+      notificationsService.sendInternalNotifications,
+    ).not.toHaveBeenCalled();
   });
 
   it('reserves every nested managed upload in the creation transaction', async () => {
@@ -339,22 +356,18 @@ describe('ApprovalRequestsService', () => {
     });
     prisma.approvalRequest.findFirst.mockResolvedValue(null);
     prisma.approvalRequest.create.mockResolvedValue(createdRequest);
-    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest());
+    prisma.approvalRequest.findUnique.mockResolvedValue(
+      createApprovalRequest(),
+    );
     prisma.user.findMany.mockResolvedValue([]);
 
-    await service.createRequest(
-      'admin-1',
-      'diet.update',
-      'diet',
-      'diet-1',
-      {
-        image_upload_id: 'upload-1',
-        meals: [
-          { upload_id: 'upload-2' },
-          { variants: [{ image_upload_id: 'upload-1' }] },
-        ],
-      },
-    );
+    await service.createRequest('admin-1', 'diet.update', 'diet', 'diet-1', {
+      image_upload_id: 'upload-1',
+      meals: [
+        { upload_id: 'upload-2' },
+        { variants: [{ image_upload_id: 'upload-1' }] },
+      ],
+    });
 
     expect(uploadsService.reserveForApproval).toHaveBeenCalledWith(
       prisma,
@@ -366,15 +379,23 @@ describe('ApprovalRequestsService', () => {
   });
 
   it('returns a business-safe detail for admins', async () => {
-    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest({
-      payload: { name: 'Entrenamiento ajustado', notes: 'solo visible en payload tecnico' },
-    }));
+    prisma.approvalRequest.findUnique.mockResolvedValue(
+      createApprovalRequest({
+        payload: {
+          name: 'Entrenamiento ajustado',
+          notes: 'solo visible en payload tecnico',
+        },
+      }),
+    );
     prisma.training.findUnique.mockResolvedValue({
       id: 'training-1',
       name: 'Entrenamiento base',
     });
 
-    const detail = await service.findOne('approval-1', { id: 'admin-1', role: Role.ADMIN });
+    const detail = await service.findOne('approval-1', {
+      id: 'admin-1',
+      role: Role.ADMIN,
+    });
 
     expect(detail).toEqual(
       expect.objectContaining({
@@ -388,9 +409,11 @@ describe('ApprovalRequestsService', () => {
   });
 
   it('keeps the technical detail for super admins', async () => {
-    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest({
-      payload: { name: 'Entrenamiento ajustado' },
-    }));
+    prisma.approvalRequest.findUnique.mockResolvedValue(
+      createApprovalRequest({
+        payload: { name: 'Entrenamiento ajustado' },
+      }),
+    );
     prisma.training.findUnique.mockResolvedValue({
       id: 'training-1',
       name: 'Entrenamiento base',
@@ -435,13 +458,9 @@ describe('ApprovalRequestsService', () => {
     ).resolves.toEqual(approvedRequest);
 
     expect(trainingsService.remove).toHaveBeenCalledWith('training-1');
-    expect(notificationsService.sendInternalNotifications).toHaveBeenCalledWith(
-      'super-1',
-      ['admin-1'],
-      'Solicitud aprobada',
-      'Tu solicitud para eliminar entrenamiento fue aprobada.',
-      { route: '/approval-requests', type: 'approval_approved' },
-    );
+    expect(
+      notificationsService.sendInternalNotifications,
+    ).not.toHaveBeenCalled();
   });
 
   it('orders approval requests with pending first before pagination', async () => {
@@ -482,7 +501,9 @@ describe('ApprovalRequestsService', () => {
 
   it('trims and validates the request reason before persisting it', async () => {
     await expect(
-      service.validateRequestReason('   Necesito revisar este cambio con detalle   '),
+      service.validateRequestReason(
+        '   Necesito revisar este cambio con detalle   ',
+      ),
     ).resolves.toBe('Necesito revisar este cambio con detalle');
 
     await expect(service.validateRequestReason('corta')).rejects.toThrow();
@@ -507,26 +528,26 @@ describe('ApprovalRequestsService', () => {
       }),
     ).resolves.toEqual(rejectedRequest);
 
-    expect(notificationsService.sendInternalNotifications).toHaveBeenCalledWith(
-      'super-1',
-      ['admin-1'],
-      'Solicitud rechazada',
-      'Tu solicitud para eliminar entrenamiento fue rechazada: No cumple con la política interna',
-      { route: '/approval-requests', type: 'approval_rejected' },
-    );
+    expect(
+      notificationsService.sendInternalNotifications,
+    ).not.toHaveBeenCalled();
     expect(uploadsService.releaseApprovalUploads).toHaveBeenCalledWith(
       'approval-1',
     );
   });
 
   it('prevents concurrent resolutions with an atomic update', async () => {
-    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest());
+    prisma.approvalRequest.findUnique.mockResolvedValue(
+      createApprovalRequest(),
+    );
     prisma.approvalRequest.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(
       service.resolve('approval-1', 'super-1', { action: 'approve' }),
     ).rejects.toThrow(
-      new ConflictException('La solicitud ya fue resuelta por otro administrador'),
+      new ConflictException(
+        'La solicitud ya fue resuelta por otro administrador',
+      ),
     );
   });
 
@@ -540,7 +561,9 @@ describe('ApprovalRequestsService', () => {
       remove: jest.fn().mockRejectedValue(new Error('Training not found')),
     };
 
-    prisma.approvalRequest.findUnique.mockResolvedValue(createApprovalRequest());
+    prisma.approvalRequest.findUnique.mockResolvedValue(
+      createApprovalRequest(),
+    );
     prisma.approvalRequest.updateMany.mockResolvedValue({ count: 1 });
     prisma.approvalRequest.update.mockResolvedValue(failedRequest);
     moduleRef.get.mockImplementation((token) =>
@@ -560,13 +583,9 @@ describe('ApprovalRequestsService', () => {
         },
       }),
     );
-    expect(notificationsService.sendInternalNotifications).toHaveBeenCalledWith(
-      'super-1',
-      ['admin-1', 'super-1'],
-      'Falló la ejecución de la solicitud',
-      'La acción aprobada para eliminar entrenamiento no pudo ejecutarse: Training not found',
-      { route: '/approval-requests', type: 'approval_failed' },
-    );
+    expect(
+      notificationsService.sendInternalNotifications,
+    ).not.toHaveBeenCalled();
     expect(uploadsService.releaseApprovalUploads).not.toHaveBeenCalled();
   });
 
@@ -636,9 +655,9 @@ describe('ApprovalRequestsService', () => {
         service.resolve('approval-1', 'super-1', { action: 'approve' }),
       ).resolves.toEqual(resolvedRequest);
 
-      expect(mealsService[methodName as keyof typeof mealsService]).toHaveBeenCalledWith(
-        ...expectedArgs,
-      );
+      expect(
+        mealsService[methodName as keyof typeof mealsService],
+      ).toHaveBeenCalledWith(...expectedArgs);
     },
   );
 });

@@ -225,7 +225,7 @@ const url = process.env.TEST_DATABASE_URL;
       const planning = new AssignmentsService(
         db as unknown as PrismaService,
         {
-          sendInternalTemplate: jest.fn().mockResolvedValue(undefined),
+          queueTemplate: jest.fn().mockResolvedValue(undefined),
         } as unknown as NotificationsService,
         new AutoAssignmentMaterializerService(
           db as unknown as PrismaService,

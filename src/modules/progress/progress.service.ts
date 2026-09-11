@@ -471,30 +471,6 @@ export class ProgressService {
     }
   }
 
-  private async notifyStreakMilestone(clientId: string, days: number) {
-    try {
-      const senderId = await this.notifications.findSystemSenderId(clientId);
-      if (!senderId) return;
-
-      await this.notifications.sendInternalTemplate(
-        senderId,
-        [clientId],
-        'streak_milestone',
-        { days },
-        {
-          title: `${days} días de racha!`,
-          body: 'Sigue así. Tu constancia está creciendo.',
-          route: '/',
-        },
-        { type: 'streak' },
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to send streak milestone notification to ${clientId}: ${(err as Error).message}`,
-      );
-    }
-  }
-
   async getDayProgress(clientId: string, dateStr: string) {
     const date = this.parseDate(dateStr);
 
@@ -1205,16 +1181,11 @@ export class ProgressService {
   ) {
     const today = new Date();
     const asOf = date.getTime() > today.getTime() ? date : today;
-    const result = await this.streakCalculator.recalculateClient(clientId, {
+    await this.streakCalculator.recalculateClient(clientId, {
       asOf,
       db: tx,
     });
 
-    if (
-      result.currentDays !== result.previousCurrentDays &&
-      [7, 30, 100, 365].includes(result.currentDays)
-    ) {
-      await this.notifyStreakMilestone(clientId, result.currentDays);
-    }
+    // Milestone intent is persisted by the streak trigger in this transaction.
   }
 }

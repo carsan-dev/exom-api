@@ -34,7 +34,6 @@ function createAssignment(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
 describe('AssignmentsService', () => {
   let service: AssignmentsService;
   let prisma: {
@@ -68,7 +67,7 @@ describe('AssignmentsService', () => {
     $transaction: jest.Mock;
     $queryRaw: jest.Mock;
   };
-  let notifications: { sendInternalTemplate: jest.Mock };
+  let notifications: { queueTemplate: jest.Mock };
   let lastSetVideoPolicy: {
     monthsForDates: jest.Mock;
     reconcile: jest.Mock;
@@ -161,7 +160,7 @@ describe('AssignmentsService', () => {
     };
 
     notifications = {
-      sendInternalTemplate: jest.fn().mockResolvedValue({
+      queueTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 0,
         failed: 0,
@@ -246,7 +245,9 @@ describe('AssignmentsService', () => {
     ]);
 
     await expect(service.getCatalogOptions()).resolves.toEqual({
-      trainings: [expect.objectContaining({ id: 'training-1', exercises_count: 8 })],
+      trainings: [
+        expect.objectContaining({ id: 'training-1', exercises_count: 8 }),
+      ],
       diets: [expect.objectContaining({ id: 'diet-1', meals_count: 5 })],
     });
     expect(prisma.training.findMany).toHaveBeenCalledWith(
@@ -287,7 +288,10 @@ describe('AssignmentsService', () => {
   });
 
   it('allows a super admin to bulk-assign without admin-client relation', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.training.findFirst.mockResolvedValue({ id: 'training-1' });
     prisma.planAssignment.upsert.mockResolvedValue(createAssignment());
     prisma.planAssignment.findMany.mockResolvedValue([createAssignment()]);
@@ -322,7 +326,8 @@ describe('AssignmentsService', () => {
         }),
       }),
     );
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+    expect(notifications.queueTemplate).toHaveBeenCalledWith(
+      expect.anything(),
       'super-admin-1',
       ['client-1'],
       'plan_training_assigned',
@@ -337,7 +342,10 @@ describe('AssignmentsService', () => {
   });
 
   it('rejects getWeek for an admin when the client is not assigned', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue(null);
 
     await expect(
@@ -345,13 +353,18 @@ describe('AssignmentsService', () => {
         client_id: 'client-1',
         week_start: '2026-03-30',
       }),
-    ).rejects.toThrow(new ForbiddenException('Este cliente no está asignado a ti'));
+    ).rejects.toThrow(
+      new ForbiddenException('Este cliente no está asignado a ti'),
+    );
 
     expect(prisma.planAssignment.findMany).not.toHaveBeenCalled();
   });
 
   it('returns a normalized 7-day response for the client weekly view', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.planAssignment.findMany.mockResolvedValue([
       createAssignment(),
       createAssignment({
@@ -440,7 +453,10 @@ describe('AssignmentsService', () => {
   });
 
   it('returns a normalized monthly response for admin planning', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.planAssignment.findMany.mockResolvedValue([
       createAssignment(),
@@ -497,7 +513,10 @@ describe('AssignmentsService', () => {
   });
 
   it('batch assigns unique days with per-day combinations', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.diet.findFirst.mockResolvedValue({ id: 'diet-1' });
     prisma.planAssignment.upsert
@@ -609,7 +628,8 @@ describe('AssignmentsService', () => {
         }),
       }),
     );
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+    expect(notifications.queueTemplate).toHaveBeenCalledWith(
+      expect.anything(),
       'admin-1',
       ['client-1'],
       'plan_diet_assigned',
@@ -624,7 +644,10 @@ describe('AssignmentsService', () => {
   });
 
   it('creates a weekly auto-assignment rule and deactivates the previous active rule', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.training.findFirst.mockResolvedValue({ id: 'training-1' });
     prisma.diet.findFirst.mockResolvedValue({ id: 'diet-1' });
@@ -704,7 +727,10 @@ describe('AssignmentsService', () => {
   });
 
   it('materializes active auto-assignments for an empty future week', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.autoAssignmentRule.findMany.mockResolvedValue([
       {
@@ -776,7 +802,10 @@ describe('AssignmentsService', () => {
   });
 
   it('reconciles already materialized weeks when an auto rule changes', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.training.findFirst.mockResolvedValue({ id: 'training-new' });
     prisma.autoAssignmentRule.findUnique.mockResolvedValue({
@@ -812,9 +841,7 @@ describe('AssignmentsService', () => {
     prisma.autoAssignmentRule.update.mockResolvedValue(updatedRule);
     prisma.autoAssignmentRule.findMany.mockResolvedValue([updatedRule]);
     prisma.planAssignment.findMany
-      .mockResolvedValueOnce([
-        { date: new Date('2026-04-06T00:00:00.000Z') },
-      ])
+      .mockResolvedValueOnce([{ date: new Date('2026-04-06T00:00:00.000Z') }])
       .mockResolvedValueOnce([
         {
           id: 'auto-1',
@@ -853,7 +880,10 @@ describe('AssignmentsService', () => {
   });
 
   it('does not overwrite existing assignments when materializing an auto rule', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.autoAssignmentRule.findMany.mockResolvedValue([
       {
@@ -873,8 +903,9 @@ describe('AssignmentsService', () => {
       },
     ]);
     prisma.planAssignment.findMany
-      .mockResolvedValueOnce([{
-        date: new Date('2026-04-06T00:00:00.000Z'),
+      .mockResolvedValueOnce([
+        {
+          date: new Date('2026-04-06T00:00:00.000Z'),
           auto_assignment_rule_id: null,
         },
       ])
@@ -895,7 +926,10 @@ describe('AssignmentsService', () => {
   });
 
   it('does not materialize inactive rules after deactivation', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.autoAssignmentRule.findUnique.mockResolvedValue({
       id: 'rule-1',
@@ -914,9 +948,7 @@ describe('AssignmentsService', () => {
       days: [],
     });
     prisma.planAssignment.findMany
-      .mockResolvedValueOnce([
-        { date: new Date('2026-04-06T00:00:00.000Z') },
-      ])
+      .mockResolvedValueOnce([{ date: new Date('2026-04-06T00:00:00.000Z') }])
       .mockResolvedValueOnce([
         {
           id: 'auto-1',
@@ -930,7 +962,9 @@ describe('AssignmentsService', () => {
         },
       ]);
 
-    await expect(service.deactivateAutoRule(adminUser, 'rule-1')).resolves.toMatchObject({
+    await expect(
+      service.deactivateAutoRule(adminUser, 'rule-1'),
+    ).resolves.toMatchObject({
       id: 'rule-1',
       is_active: false,
     });
@@ -950,7 +984,10 @@ describe('AssignmentsService', () => {
   });
 
   it('rejects copyWeek when source and target weeks are the same', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
 
     await expect(
@@ -960,7 +997,9 @@ describe('AssignmentsService', () => {
         target_week_start: '2026-03-30',
       }),
     ).rejects.toThrow(
-      new BadRequestException('La semana de origen y destino no puede ser la misma'),
+      new BadRequestException(
+        'La semana de origen y destino no puede ser la misma',
+      ),
     );
 
     expect(prisma.planAssignment.findMany).not.toHaveBeenCalled();
@@ -987,9 +1026,9 @@ describe('AssignmentsService', () => {
 
     await expect(
       service.copySelection(adminUser, {
-      client_id: 'client-1',
-      source_dates: ['2026-04-01', '2026-03-30', '2026-04-01'],
-      target_start_date: '2026-04-06',
+        client_id: 'client-1',
+        source_dates: ['2026-04-01', '2026-03-30', '2026-04-01'],
+        target_start_date: '2026-04-06',
       }),
     ).resolves.toEqual({
       copied_count: 1,
@@ -1100,7 +1139,10 @@ describe('AssignmentsService', () => {
 
   it('copyWeek notifies with the first active copied target date', async () => {
     prisma.training.findFirst.mockResolvedValue({ id: 'training-1' });
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.planAssignment.findMany.mockResolvedValue([
       createAssignment({
@@ -1134,7 +1176,8 @@ describe('AssignmentsService', () => {
       days: [],
     });
 
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+    expect(notifications.queueTemplate).toHaveBeenCalledWith(
+      expect.anything(),
       'admin-1',
       ['client-1'],
       'plan_training_assigned',
@@ -1244,7 +1287,10 @@ describe('AssignmentsService', () => {
       .mockResolvedValueOnce(source)
       .mockResolvedValueOnce(source)
       .mockResolvedValueOnce(null);
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.training.findFirst.mockResolvedValue({ id: 'training-1' });
     prisma.planAssignment.findUniqueOrThrow.mockResolvedValue(source);
@@ -1356,8 +1402,8 @@ describe('AssignmentsService', () => {
         date: initialDate,
       })
       .mockResolvedValueOnce({
-      id: 'assignment-1',
-      client_id: 'client-1',
+        id: 'assignment-1',
+        client_id: 'client-1',
         date: lockedDate,
       });
     prisma.user.findUnique.mockResolvedValue({
@@ -1462,7 +1508,10 @@ describe('AssignmentsService', () => {
       { id: 'assignment-1', client_id: 'client-1', date: firstDate },
       { id: 'assignment-2', client_id: 'client-1', date: secondDate },
     ]);
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.planAssignment.upsert.mockResolvedValue({});
 
@@ -1511,23 +1560,29 @@ describe('AssignmentsService', () => {
     ]);
 
     await expect(
-      service.deleteAssignments(adminUser, ['assignment-1', 'missing-assignment']),
+      service.deleteAssignments(adminUser, [
+        'assignment-1',
+        'missing-assignment',
+      ]),
     ).rejects.toThrow('Una o varias asignaciones no existen');
 
     expect(prisma.planAssignment.upsert).not.toHaveBeenCalled();
   });
 
   it('persists up to five training ids in the requested order', async () => {
-    prisma.user.findUnique.mockResolvedValue({ id: 'client-1', role: Role.CLIENT });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'client-1',
+      role: Role.CLIENT,
+    });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
     prisma.training.findFirst.mockImplementation(({ where }) =>
       Promise.resolve({ id: where.id }),
     );
-    prisma.planAssignment.upsert.mockResolvedValue(createAssignment({
-      trainings: [
-        { position: 0, training: createAssignment().training },
-      ],
-    }));
+    prisma.planAssignment.upsert.mockResolvedValue(
+      createAssignment({
+        trainings: [{ position: 0, training: createAssignment().training }],
+      }),
+    );
     prisma.planAssignment.findMany.mockResolvedValue([createAssignment()]);
 
     await service.bulkAssign(adminUser, {
@@ -1570,12 +1625,14 @@ describe('AssignmentsService', () => {
     });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
 
-    await expect(service.bulkAssign(adminUser, {
-      client_id: 'client-1',
-      dates: ['2026-08-04'],
-      training_ids: ['training-1', 'training-1'],
-      is_rest_day: false,
-    })).rejects.toThrow('No puedes repetir un entrenamiento');
+    await expect(
+      service.bulkAssign(adminUser, {
+        client_id: 'client-1',
+        dates: ['2026-08-04'],
+        training_ids: ['training-1', 'training-1'],
+        is_rest_day: false,
+      }),
+    ).rejects.toThrow('No puedes repetir un entrenamiento');
 
     await expect(
       service.bulkAssign(adminUser, {

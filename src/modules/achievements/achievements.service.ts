@@ -1,3 +1,4 @@
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import {
   BadRequestException,
   ForbiddenException,
@@ -597,23 +598,11 @@ export class AchievementsService {
             where: {
               user_id: userId,
               achievement_id: { in: achievementIdsToRevoke },
+              unlock_source: AchievementUnlockSource.AUTOMATIC,
             },
           })
         : Promise.resolve({ count: 0 }),
     ]);
-
-    if (createdAchievements.count > 0) {
-      await this.notifyAchievementsUnlocked(
-        userId,
-        achievementIdsToGrant.map((achievementId) => {
-          const achievement = achievements.find((a) => a.id === achievementId);
-          return {
-            id: achievementId,
-            name: achievement?.name ?? 'Logro desbloqueado',
-          };
-        }),
-      );
-    }
 
     return {
       granted: createdAchievements.count,
@@ -709,52 +698,6 @@ export class AchievementsService {
     });
 
     return new Set(existing.map((row) => row.user_id));
-  }
-
-  private async notifyAchievementsUnlocked(
-    userId: string,
-    achievements: Array<{ id: string; name: string }>,
-    senderId?: string,
-  ) {
-    if (achievements.length === 0) {
-      return;
-    }
-
-    try {
-      const resolvedSenderId =
-        senderId ?? (await this.notifications.findSystemSenderId(userId));
-
-      if (!resolvedSenderId) {
-        this.logger.warn(
-          `Skipping achievement notification for ${userId}: no sender available`,
-        );
-        return;
-      }
-
-      await Promise.all(
-        achievements.map((achievement) =>
-          this.notifications.sendInternalTemplate(
-            resolvedSenderId,
-            [userId],
-            'achievement_unlocked',
-            { achievementName: achievement.name },
-            {
-              title: 'Logro desbloqueado',
-              body: achievement.name,
-              route: '/achievements',
-            },
-            {
-              type: 'achievement',
-              achievement_id: achievement.id,
-            },
-          ),
-        ),
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to send achievement notification to ${userId}: ${(err as Error).message}`,
-      );
-    }
   }
 
   async findAll(filters: AchievementFiltersDto) {
@@ -973,11 +916,6 @@ export class AchievementsService {
     }
 
     await this.assertClientIdsVisibleToAdmin(userIds, admin);
-    const existingUserIds = await this.resolveExistingAchievementUserIds(
-      achievementId,
-      userIds,
-    );
-    const newUserIds = userIds.filter((userId) => !existingUserIds.has(userId));
 
     if (userIds.length === 1) {
       const [userId] = userIds;
@@ -998,14 +936,6 @@ export class AchievementsService {
           unlock_source: AchievementUnlockSource.MANUAL,
         },
       });
-
-      if (newUserIds.includes(userId)) {
-        await this.notifyAchievementsUnlocked(
-          userId,
-          [{ id: achievementId, name: achievement.name }],
-          admin.id,
-        );
-      }
 
       return userAchievement;
     }
@@ -1028,16 +958,6 @@ export class AchievementsService {
             unlock_source: AchievementUnlockSource.MANUAL,
           },
         }),
-      ),
-    );
-
-    await Promise.all(
-      newUserIds.map((userId) =>
-        this.notifyAchievementsUnlocked(
-          userId,
-          [{ id: achievementId, name: achievement.name }],
-          admin.id,
-        ),
       ),
     );
 
@@ -1142,7 +1062,25 @@ export class AchievementsService {
     userId: string,
     prisma: PrismaClientLike = this.prisma,
     achievementIds?: string[],
-  ) {
+  ): Promise<{
+    user_id: string;
+    evaluated: number;
+    granted: number;
+    revoked: number;
+  }> {
+    if (prisma === this.prisma) {
+      return this.prisma.$transaction(
+        async (tx) => {
+          await lockClientDayProgress(tx, userId);
+          return this.evaluateAutomaticAchievementsForUser(
+            userId,
+            tx,
+            achievementIds,
+          );
+        },
+        { maxWait: 5000, timeout: 30000 },
+      );
+    }
     const achievements = await this.resolveAutomaticAchievements(
       achievementIds,
       prisma,

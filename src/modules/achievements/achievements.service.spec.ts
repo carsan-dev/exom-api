@@ -3,10 +3,11 @@ import { AchievementUnlockSource } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { AchievementsService } from './achievements.service';
-
 describe('AchievementsService', () => {
   let service: AchievementsService;
   let prisma: {
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
     achievement: {
       create: jest.Mock;
       findMany: jest.Mock;
@@ -51,6 +52,11 @@ describe('AchievementsService', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(
+        (callback: (tx: typeof prisma) => Promise<unknown>) =>
+          callback({ ...prisma }),
+      ),
+      $queryRaw: jest.fn().mockResolvedValue([]),
       achievement: {
         create: jest.fn(),
         findMany: jest.fn(),
@@ -254,23 +260,10 @@ describe('AchievementsService', () => {
       where: {
         user_id: 'client-1',
         achievement_id: { in: ['ach-streak'] },
+        unlock_source: 'AUTOMATIC',
       },
     });
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
-      'system-admin',
-      ['client-1'],
-      'achievement_unlocked',
-      { achievementName: 'Tres entrenos' },
-      {
-        title: 'Logro desbloqueado',
-        body: 'Tres entrenos',
-        route: '/achievements',
-      },
-      {
-        type: 'achievement',
-        achievement_id: 'ach-training',
-      },
-    );
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 
   it('counts a combined training day for every included type', async () => {
@@ -622,22 +615,8 @@ describe('AchievementsService', () => {
         unlock_source: AchievementUnlockSource.MANUAL,
       },
     });
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledTimes(2);
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
-      'admin-1',
-      ['client-1'],
-      'achievement_unlocked',
-      { achievementName: 'Logro manual' },
-      {
-        title: 'Logro desbloqueado',
-        body: 'Logro manual',
-        route: '/achievements',
-      },
-      {
-        type: 'achievement',
-        achievement_id: 'ach-1',
-      },
-    );
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 
   it('prevents revoking an achievement from a client outside the admin visibility', async () => {

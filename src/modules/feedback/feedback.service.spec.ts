@@ -3,7 +3,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { FeedbackService } from './feedback.service';
 import type { UploadsService } from '../uploads/uploads.service';
-
 describe('FeedbackService', () => {
   let service: FeedbackService;
   let prisma: {
@@ -17,7 +16,7 @@ describe('FeedbackService', () => {
     };
   };
   let notifications: {
-    sendInternalTemplate: jest.Mock;
+    queueTemplate: jest.Mock;
   };
   let uploadsService: {
     prepareForConsumption: jest.Mock;
@@ -36,7 +35,7 @@ describe('FeedbackService', () => {
       },
     };
     notifications = {
-      sendInternalTemplate: jest.fn().mockResolvedValue({
+      queueTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -147,7 +146,8 @@ describe('FeedbackService', () => {
         },
       },
     });
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+    expect(notifications.queueTemplate).toHaveBeenCalledWith(
+      expect.anything(),
       'client-1',
       ['admin-1', 'admin-2'],
       'admin_feedback_submitted',
@@ -185,7 +185,7 @@ describe('FeedbackService', () => {
     ).resolves.toMatchObject({ id: 'feedback-existing' });
 
     expect(prisma.feedbackMedia.create).not.toHaveBeenCalled();
-    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
+    expect(notifications.queueTemplate).not.toHaveBeenCalled();
   });
 
   it('returns the winner when concurrent client upload ids race', async () => {
@@ -213,6 +213,6 @@ describe('FeedbackService', () => {
     ).resolves.toEqual(existing);
 
     expect(prisma.feedbackMedia.findUnique).toHaveBeenCalledTimes(2);
-    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
+    expect(notifications.queueTemplate).not.toHaveBeenCalled();
   });
 });

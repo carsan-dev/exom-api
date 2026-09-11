@@ -4,11 +4,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { ChallengesService } from './challenges.service';
-
 describe('ChallengesService', () => {
   let service: ChallengesService;
   let prisma: {
     $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
     challenge: {
       findUnique: jest.Mock;
       create: jest.Mock;
@@ -32,7 +32,11 @@ describe('ChallengesService', () => {
 
   beforeEach(() => {
     prisma = {
-      $transaction: jest.fn((callback) => callback(prisma)),
+      $transaction: jest.fn(
+        (callback: (tx: typeof prisma) => Promise<unknown>) =>
+          callback({ ...prisma }),
+      ),
+      $queryRaw: jest.fn().mockResolvedValue([]),
       challenge: {
         findUnique: jest.fn(),
         create: jest.fn(),
@@ -72,7 +76,7 @@ describe('ChallengesService', () => {
 
   it('re-evaluates achievements after loading my challenges', async () => {
     prisma.challengeClient.findMany.mockResolvedValue([{ id: 'assignment-1' }]);
-    jest
+    const recalculate = jest
       .spyOn(service, 'recalculateAutomaticProgress')
       .mockResolvedValue(undefined);
 
@@ -80,7 +84,7 @@ describe('ChallengesService', () => {
       { id: 'assignment-1' },
     ]);
 
-    expect(service.recalculateAutomaticProgress).toHaveBeenCalledWith('client-1');
+    expect(recalculate).toHaveBeenCalledWith('client-1');
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
     ).toHaveBeenCalledWith('client-1', prisma as unknown as PrismaService);
@@ -107,21 +111,7 @@ describe('ChallengesService', () => {
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
     ).toHaveBeenCalledWith('client-1', prisma as unknown as PrismaService);
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
-      'admin-1',
-      ['client-1'],
-      'challenge_completed',
-      { challengeName: '5 comidas limpias' },
-      {
-        title: 'Reto completado: 5 comidas limpias',
-        body: 'Buen trabajo. Has completado el reto.',
-        route: '/challenges',
-      },
-      {
-        type: 'challenge',
-        challenge_id: 'challenge-1',
-      },
-    );
+    expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 
   it('allows challenges without a deadline', async () => {

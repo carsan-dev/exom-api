@@ -1,3 +1,4 @@
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import {
   BadRequestException,
   ForbiddenException,
@@ -110,96 +111,40 @@ export class ChallengesService {
     return senderId ?? this.notifications.findSystemSenderId(recipientId);
   }
 
-  private async notifyChallengeAssigned(
-    senderId: string | null | undefined,
-    clientId: string,
-    challenge: ChallengeNotificationData,
-  ) {
-    try {
-      const resolvedSenderId = await this.resolveNotificationSender(
-        senderId,
-        clientId,
-      );
-      if (!resolvedSenderId) return;
-
-      await this.notifications.sendInternalTemplate(
-        resolvedSenderId,
-        [clientId],
-        'challenge_assigned',
-        { challengeName: challenge.title },
-        {
-          title: `Nuevo reto: ${challenge.title}`,
-          body: 'Tienes un nuevo reto disponible.',
-          route: '/challenges',
-        },
-        {
-          type: 'challenge',
-          challenge_id: challenge.id,
-        },
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to send challenge assignment notification to ${clientId}: ${(err as Error).message}`,
-      );
-    }
-  }
-
-  private async notifyChallengeCompleted(
-    senderId: string | null | undefined,
-    clientId: string,
-    challenge: ChallengeNotificationData,
-  ) {
-    try {
-      const resolvedSenderId = await this.resolveNotificationSender(
-        senderId,
-        clientId,
-      );
-      if (!resolvedSenderId) return;
-
-      await this.notifications.sendInternalTemplate(
-        resolvedSenderId,
-        [clientId],
-        'challenge_completed',
-        { challengeName: challenge.title },
-        {
-          title: `Reto completado: ${challenge.title}`,
-          body: 'Buen trabajo. Has completado el reto.',
-          route: '/challenges',
-        },
-        {
-          type: 'challenge',
-          challenge_id: challenge.id,
-        },
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to send challenge completion notification to ${clientId}: ${(err as Error).message}`,
-      );
-    }
-  }
-
   private normalizeDate(date: Date) {
-    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    return new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
   }
 
   private isBeforeToday(date: Date) {
-    return this.normalizeDate(date).getTime() < this.normalizeDate(new Date()).getTime();
+    return (
+      this.normalizeDate(date).getTime() <
+      this.normalizeDate(new Date()).getTime()
+    );
   }
 
-  private assertDeadlineIsAssignable(deadline: Date | string | null | undefined) {
+  private assertDeadlineIsAssignable(
+    deadline: Date | string | null | undefined,
+  ) {
     if (!deadline) {
       return;
     }
 
-    const deadlineDate = deadline instanceof Date ? deadline : new Date(deadline);
+    const deadlineDate =
+      deadline instanceof Date ? deadline : new Date(deadline);
 
     if (this.isBeforeToday(deadlineDate)) {
-      throw new BadRequestException('La fecha límite del reto no puede estar vencida');
+      throw new BadRequestException(
+        'La fecha límite del reto no puede estar vencida',
+      );
     }
   }
 
   private normalizeEndOfDay(date: Date) {
-    const normalized = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const normalized = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
     normalized.setUTCHours(23, 59, 59, 999);
     return normalized;
   }
@@ -218,7 +163,10 @@ export class ChallengesService {
     return value >= start.getTime() && value <= end.getTime();
   }
 
-  private calculateCompletionRate(assignedClients: number, completedClients: number) {
+  private calculateCompletionRate(
+    assignedClients: number,
+    completedClients: number,
+  ) {
     if (assignedClients === 0) {
       return 0;
     }
@@ -568,7 +516,10 @@ export class ChallengesService {
       ...assignment,
       progress_rate:
         targetValue > 0
-          ? Math.min(Math.round((assignment.current_value / targetValue) * 100), 100)
+          ? Math.min(
+              Math.round((assignment.current_value / targetValue) * 100),
+              100,
+            )
           : 0,
     };
   }
@@ -657,7 +608,7 @@ export class ChallengesService {
   ) {
     const targetClientIds = [...new Set(creatorScopeClientIds)];
     const targetClientIdSet = new Set(targetClientIds);
-    const [challenge, existingAssignments] = await Promise.all([
+    const [, existingAssignments] = await Promise.all([
       prisma.challenge.findUnique({
         where: { id: challengeId },
         select: { id: true, title: true, created_by: true },
@@ -679,8 +630,7 @@ export class ChallengesService {
     const globalClientIdsToDelete = existingAssignments
       .filter(
         (assignment) =>
-          assignment.assignment_source ===
-            ChallengeAssignmentSource.GLOBAL &&
+          assignment.assignment_source === ChallengeAssignmentSource.GLOBAL &&
           !targetClientIdSet.has(assignment.client_id),
       )
       .map((assignment) => assignment.client_id);
@@ -696,18 +646,6 @@ export class ChallengesService {
         })),
         skipDuplicates: true,
       });
-
-      if (challenge) {
-        await Promise.all(
-          clientIdsToCreate.map((clientId) =>
-            this.notifyChallengeAssigned(
-              challenge.created_by,
-              clientId,
-              challenge,
-            ),
-          ),
-        );
-      }
     }
 
     if (globalClientIdsToDelete.length > 0) {
@@ -742,7 +680,7 @@ export class ChallengesService {
       return existingAssignment;
     }
 
-    const [challenge, createdAssignment] = await Promise.all([
+    const [, createdAssignment] = await Promise.all([
       prisma.challenge.findUnique({
         where: { id: challengeId },
         select: { id: true, title: true, created_by: true },
@@ -761,14 +699,6 @@ export class ChallengesService {
       }),
     ]);
 
-    if (challenge) {
-      await this.notifyChallengeAssigned(
-        challenge.created_by,
-        clientId,
-        challenge,
-      );
-    }
-
     return createdAssignment;
   }
 
@@ -778,16 +708,6 @@ export class ChallengesService {
     senderId: string,
     prisma: PrismaClientLike = this.prisma,
   ) {
-    const existingAssignment = await prisma.challengeClient.findUnique({
-      where: {
-        challenge_id_client_id: {
-          challenge_id: challenge.id,
-          client_id: clientId,
-        },
-      },
-      select: { id: true },
-    });
-
     await prisma.challengeClient.upsert({
       where: {
         challenge_id_client_id: {
@@ -806,10 +726,6 @@ export class ChallengesService {
         assignment_source: ChallengeAssignmentSource.MANUAL,
       },
     });
-
-    if (!existingAssignment) {
-      await this.notifyChallengeAssigned(senderId, clientId, challenge);
-    }
   }
 
   private async refreshManualAssignments(
@@ -817,7 +733,7 @@ export class ChallengesService {
     targetValue: number,
     prisma: PrismaClientLike = this.prisma,
   ) {
-    const [challenge, assignments] = await Promise.all([
+    const [, assignments] = await Promise.all([
       prisma.challenge.findUnique({
         where: { id: challengeId },
         select: { id: true, title: true, created_by: true },
@@ -848,18 +764,10 @@ export class ChallengesService {
           data: {
             is_completed: isCompleted,
             completed_at: isCompleted
-              ? assignment.completed_at ?? new Date()
+              ? (assignment.completed_at ?? new Date())
               : null,
           },
         });
-
-        if (challenge && isCompleted && !assignment.is_completed) {
-          await this.notifyChallengeCompleted(
-            challenge.created_by,
-            assignment.client_id,
-            challenge,
-          );
-        }
       }),
     );
   }
@@ -887,10 +795,16 @@ export class ChallengesService {
     challenge: AdminChallengeRecord,
     prisma: PrismaClientLike = this.prisma,
   ) {
-    const { assignedClients, completedClients } =
-      await this.getChallengeCounts(challenge.id, prisma);
+    const { assignedClients, completedClients } = await this.getChallengeCounts(
+      challenge.id,
+      prisma,
+    );
 
-    return this.serializeChallenge(challenge, assignedClients, completedClients);
+    return this.serializeChallenge(
+      challenge,
+      assignedClients,
+      completedClients,
+    );
   }
 
   private evaluateAutomaticProgress(
@@ -950,7 +864,10 @@ export class ChallengesService {
     adminRole: string,
     query: ChallengesQueryDto,
   ) {
-    const visibleClientIds = await this.resolveVisibleClientIds(adminId, adminRole);
+    const visibleClientIds = await this.resolveVisibleClientIds(
+      adminId,
+      adminRole,
+    );
     const where = this.buildAdminChallengeWhere(
       adminId,
       adminRole,
@@ -958,21 +875,35 @@ export class ChallengesService {
       visibleClientIds,
     );
 
-    const [challenges, total, totalWeekly, totalMainGoal, totalAutomatic, totalGlobal] =
-      await Promise.all([
-        this.prisma.challenge.findMany({
-          where,
-          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-          skip: query.skip,
-          take: query.limit,
-          select: ADMIN_CHALLENGE_SELECT,
-        }),
-        this.prisma.challenge.count({ where }),
-        this.prisma.challenge.count({ where: { AND: [where, { type: ChallengeType.WEEKLY }] } }),
-        this.prisma.challenge.count({ where: { AND: [where, { type: ChallengeType.MAIN_GOAL }] } }),
-        this.prisma.challenge.count({ where: { AND: [where, { is_manual: false }] } }),
-        this.prisma.challenge.count({ where: { AND: [where, { is_global: true }] } }),
-      ]);
+    const [
+      challenges,
+      total,
+      totalWeekly,
+      totalMainGoal,
+      totalAutomatic,
+      totalGlobal,
+    ] = await Promise.all([
+      this.prisma.challenge.findMany({
+        where,
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        skip: query.skip,
+        take: query.limit,
+        select: ADMIN_CHALLENGE_SELECT,
+      }),
+      this.prisma.challenge.count({ where }),
+      this.prisma.challenge.count({
+        where: { AND: [where, { type: ChallengeType.WEEKLY }] },
+      }),
+      this.prisma.challenge.count({
+        where: { AND: [where, { type: ChallengeType.MAIN_GOAL }] },
+      }),
+      this.prisma.challenge.count({
+        where: { AND: [where, { is_manual: false }] },
+      }),
+      this.prisma.challenge.count({
+        where: { AND: [where, { is_global: true }] },
+      }),
+    ]);
 
     const challengeIds = challenges.map((challenge) => challenge.id);
     const { assignedCounts, completedCounts } =
@@ -1023,7 +954,9 @@ export class ChallengesService {
       adminRole !== Role.SUPER_ADMIN &&
       !visibleClientIds.includes(query.client_id)
     ) {
-      throw new ForbiddenException('Este cliente no está visible para este admin');
+      throw new ForbiddenException(
+        'Este cliente no está visible para este admin',
+      );
     }
 
     const clientScopeWhere = this.buildVisibleChallengeClientWhere(
@@ -1043,32 +976,30 @@ export class ChallengesService {
       ...clientScopeWhere,
     };
 
-    const [assignments, total, assignedClients, completedClients] = await Promise.all([
-      this.prisma.challengeClient.findMany({
-        where: assignmentsWhere,
-        orderBy: [{ is_completed: 'asc' }, { assigned_at: 'desc' }],
-        skip: query.skip,
-        take: query.limit,
-        select: CHALLENGE_CLIENT_SELECT,
-      }),
-      this.prisma.challengeClient.count({ where: assignmentsWhere }),
-      this.prisma.challengeClient.count({ where: summaryWhere }),
-      this.prisma.challengeClient.count({
-        where: {
-          ...summaryWhere,
-          is_completed: true,
-        },
-      }),
-    ]);
+    const [assignments, total, assignedClients, completedClients] =
+      await Promise.all([
+        this.prisma.challengeClient.findMany({
+          where: assignmentsWhere,
+          orderBy: [{ is_completed: 'asc' }, { assigned_at: 'desc' }],
+          skip: query.skip,
+          take: query.limit,
+          select: CHALLENGE_CLIENT_SELECT,
+        }),
+        this.prisma.challengeClient.count({ where: assignmentsWhere }),
+        this.prisma.challengeClient.count({ where: summaryWhere }),
+        this.prisma.challengeClient.count({
+          where: {
+            ...summaryWhere,
+            is_completed: true,
+          },
+        }),
+      ]);
 
     return {
       ...this.serializeChallenge(challenge, assignedClients, completedClients),
       assignments: paginate(
         assignments.map((assignment) =>
-          this.serializeChallengeAssignment(
-            assignment,
-            challenge.target_value,
-          ),
+          this.serializeChallengeAssignment(assignment, challenge.target_value),
         ),
         total,
         query,
@@ -1125,7 +1056,10 @@ export class ChallengesService {
         );
 
         if (challenge.is_global) {
-          const assignedClientIds = await this.getAssignedClientIds(challenge.id, tx);
+          const assignedClientIds = await this.getAssignedClientIds(
+            challenge.id,
+            tx,
+          );
           await Promise.all(
             assignedClientIds.map((clientId) =>
               this.evaluateAchievementsForClient(clientId, tx),
@@ -1145,7 +1079,12 @@ export class ChallengesService {
     dto: UpdateChallengeDto,
   ) {
     return this.prisma.$transaction(async (tx) => {
-      const challenge = await this.assertChallengeAccess(id, adminId, adminRole, tx);
+      const challenge = await this.assertChallengeAccess(
+        id,
+        adminId,
+        adminRole,
+        tx,
+      );
       const updatedChallenge = await tx.challenge.update({
         where: { id },
         data: this.buildUpdateChallengeData(challenge, dto),
@@ -1159,7 +1098,11 @@ export class ChallengesService {
       await this.syncGlobalAssignments(id, creatorScopeClientIds, tx);
 
       if (updatedChallenge.is_manual) {
-        await this.refreshManualAssignments(id, updatedChallenge.target_value, tx);
+        await this.refreshManualAssignments(
+          id,
+          updatedChallenge.target_value,
+          tx,
+        );
         const assignedClientIds = await this.getAssignedClientIds(id, tx);
         await Promise.all(
           assignedClientIds.map((clientId) =>
@@ -1218,7 +1161,11 @@ export class ChallengesService {
       );
 
       if (challenge.is_manual) {
-        await this.refreshManualAssignments(challengeId, challenge.target_value, tx);
+        await this.refreshManualAssignments(
+          challengeId,
+          challenge.target_value,
+          tx,
+        );
         await Promise.all(
           clientIds.map((clientId) =>
             this.evaluateAchievementsForClient(clientId, tx),
@@ -1296,7 +1243,9 @@ export class ChallengesService {
         where: {
           client_id: clientId,
           assignment_source: ChallengeAssignmentSource.GLOBAL,
-          challenge_id: { in: globalChallenges.map((challenge) => challenge.id) },
+          challenge_id: {
+            in: globalChallenges.map((challenge) => challenge.id),
+          },
         },
       });
 
@@ -1305,7 +1254,11 @@ export class ChallengesService {
 
     await Promise.all(
       globalChallenges.map((challenge) =>
-        this.materializeGlobalAssignmentForClient(challenge.id, clientId, prisma),
+        this.materializeGlobalAssignmentForClient(
+          challenge.id,
+          clientId,
+          prisma,
+        ),
       ),
     );
 
@@ -1314,14 +1267,24 @@ export class ChallengesService {
       .map((challenge) => challenge.id);
 
     if (automaticChallengeIds.length > 0) {
-      await this.recalculateAutomaticProgress(clientId, prisma, automaticChallengeIds);
+      await this.recalculateAutomaticProgress(
+        clientId,
+        prisma,
+        automaticChallengeIds,
+      );
     }
 
-    const manualChallenges = globalChallenges.filter((challenge) => challenge.is_manual);
+    const manualChallenges = globalChallenges.filter(
+      (challenge) => challenge.is_manual,
+    );
 
     await Promise.all(
       manualChallenges.map((challenge) =>
-        this.refreshManualAssignments(challenge.id, challenge.target_value, prisma),
+        this.refreshManualAssignments(
+          challenge.id,
+          challenge.target_value,
+          prisma,
+        ),
       ),
     );
 
@@ -1332,7 +1295,16 @@ export class ChallengesService {
     clientId: string,
     prisma: PrismaClientLike = this.prisma,
     challengeIds?: string[],
-  ) {
+  ): Promise<void> {
+    if (prisma === this.prisma) {
+      return this.prisma.$transaction(
+        async (tx) => {
+          await lockClientDayProgress(tx, clientId);
+          return this.recalculateAutomaticProgress(clientId, tx, challengeIds);
+        },
+        { maxWait: 5000, timeout: 30000 },
+      );
+    }
     const assignments = await prisma.challengeClient.findMany({
       where: {
         client_id: clientId,
@@ -1359,15 +1331,21 @@ export class ChallengesService {
       return;
     }
 
-    const earliestAssignedAt = assignments.reduce((currentEarliest, assignment) => {
-      const assignedAt = this.normalizeDate(assignment.assigned_at);
+    const earliestAssignedAt = assignments.reduce(
+      (currentEarliest, assignment) => {
+        const assignedAt = this.normalizeDate(assignment.assigned_at);
 
-      if (!currentEarliest || assignedAt.getTime() < currentEarliest.getTime()) {
-        return assignedAt;
-      }
+        if (
+          !currentEarliest ||
+          assignedAt.getTime() < currentEarliest.getTime()
+        ) {
+          return assignedAt;
+        }
 
-      return currentEarliest;
-    }, null as Date | null);
+        return currentEarliest;
+      },
+      null as Date | null,
+    );
 
     if (!earliestAssignedAt) {
       return;
@@ -1424,18 +1402,10 @@ export class ChallengesService {
             current_value: currentValue,
             is_completed: isCompleted,
             completed_at: isCompleted
-              ? assignment.completed_at ?? new Date()
+              ? (assignment.completed_at ?? new Date())
               : null,
           },
         });
-
-        if (isCompleted && !assignment.is_completed) {
-          await this.notifyChallengeCompleted(
-            assignment.challenge.created_by,
-            assignment.client_id,
-            assignment.challenge,
-          );
-        }
       }),
     );
   }
@@ -1477,19 +1447,9 @@ export class ChallengesService {
       data: {
         current_value: dto.current_value,
         is_completed: isCompleted,
-        completed_at: isCompleted
-          ? record.completed_at ?? new Date()
-          : null,
+        completed_at: isCompleted ? (record.completed_at ?? new Date()) : null,
       },
     });
-
-    if (isCompleted && !record.is_completed) {
-      await this.notifyChallengeCompleted(
-        record.challenge.created_by,
-        clientId,
-        record.challenge,
-      );
-    }
 
     await this.evaluateAchievementsForClient(clientId);
 
