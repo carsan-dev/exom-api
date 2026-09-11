@@ -8,9 +8,11 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { EmailService } from '../email/email.service';
 
 const createCustomTokenMock = jest.fn();
 const verifyIdTokenMock = jest.fn();
+const queueEmailMock = jest.fn();
 
 jest.mock('firebase-admin', () => ({
   auth: () => ({
@@ -18,7 +20,6 @@ jest.mock('firebase-admin', () => ({
     verifyIdToken: verifyIdTokenMock,
   }),
 }));
-
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: {
@@ -37,6 +38,7 @@ describe('AuthService', () => {
   beforeEach(() => {
     createCustomTokenMock.mockReset();
     verifyIdTokenMock.mockReset();
+    queueEmailMock.mockReset().mockResolvedValue(undefined);
     global.fetch = jest.fn() as jest.Mock;
 
     prisma = {
@@ -64,6 +66,7 @@ describe('AuthService', () => {
     service = new AuthService(
       prisma as unknown as PrismaService,
       config as unknown as ConfigService,
+      { sendPasswordActionEmail: queueEmailMock } as unknown as EmailService,
     );
   });
 
@@ -367,35 +370,20 @@ describe('AuthService', () => {
     );
   });
 
-  it('sends a password reset email through Firebase Auth', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-    });
-
+  it('queues a normalized password reset without contacting a provider', async () => {
     await expect(
       service.forgotPassword('  CLIENT@EXOM.DEV  '),
     ).resolves.toBeUndefined();
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=test-web-api-key',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }),
+    expect(queueEmailMock).toHaveBeenCalledWith(
+      'client@exom.dev',
+      'password-reset',
     );
-    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
-    expect(JSON.parse(request.body)).toEqual({
-      requestType: 'PASSWORD_RESET',
-      email: 'client@exom.dev',
-    });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('does not reveal password reset delivery failures', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: () => Promise.resolve('EMAIL_NOT_FOUND'),
-    });
+    queueEmailMock.mockRejectedValue(Error('queue unavailable'));
 
     await expect(
       service.forgotPassword('missing@exom.dev'),

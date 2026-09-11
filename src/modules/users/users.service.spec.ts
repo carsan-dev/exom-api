@@ -15,7 +15,6 @@ import { ChallengesService } from '../challenges/challenges.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { MetricsService } from '../metrics/metrics.service';
 import type { CalendarService } from '../calendar/calendar.service';
-
 describe('UsersService', () => {
   let service: UsersService;
   let identity: IdentityService;
@@ -55,7 +54,7 @@ describe('UsersService', () => {
     syncGlobalChallengesForCreatorClient: jest.Mock;
   };
   let notifications: {
-    sendInternalTemplate: jest.Mock;
+    queueTemplate: jest.Mock;
     sendToUser: jest.Mock;
   };
   let metricsService: {
@@ -106,7 +105,7 @@ describe('UsersService', () => {
         .mockResolvedValue(undefined),
     };
     notifications = {
-      sendInternalTemplate: jest.fn().mockResolvedValue({
+      queueTemplate: jest.fn().mockResolvedValue({
         success: true,
         sent: 1,
         failed: 0,
@@ -230,7 +229,8 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.create).toHaveBeenCalledWith({
       data: { admin_id: 'admin-1', client_id: 'client-1' },
     });
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+    expect(notifications.queueTemplate).toHaveBeenCalledWith(
+      expect.anything(),
       'admin-1',
       ['admin-1'],
       'admin_client_assigned',
@@ -802,7 +802,8 @@ describe('UsersService', () => {
     expect(prisma.adminClientAssignment.createMany).toHaveBeenCalledWith({
       data: [{ admin_id: 'admin-3', client_id: 'client-1' }],
     });
-    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+    expect(notifications.queueTemplate).toHaveBeenCalledWith(
+      expect.anything(),
       'super-admin-1',
       ['admin-2', 'admin-3'],
       'admin_client_assigned',

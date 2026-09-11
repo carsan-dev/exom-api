@@ -1,3 +1,4 @@
+import { enqueueWork } from '../jobs/jobs.service';
 import {
   BadRequestException,
   Injectable,
@@ -222,8 +223,8 @@ export class UsersService {
         fingerprint: [firstName, lastName],
         key,
       },
-      (tx, uid, id) =>
-        tx.user.create({
+      async (tx, uid, id) => {
+        const created = await tx.user.create({
           data: {
             id,
             email,
@@ -233,9 +234,18 @@ export class UsersService {
             profile: { create: { first_name: firstName, last_name: lastName } },
           },
           include: { profile: true },
-        }),
+        });
+        if (!dto.password)
+          await enqueueWork(
+            tx,
+            `email:invitation:${id}`,
+            'EMAIL',
+            { kind: 'invitation' },
+            id,
+          );
+        return created;
+      },
     );
-    if (!dto.password) await this.sendInvitationEmail(email);
     return this.serializeUserSummary(user);
   }
   async createClient(
@@ -296,18 +306,26 @@ export class UsersService {
             tx,
           );
         }
+        if (!dto.password)
+          await enqueueWork(
+            tx,
+            `email:invitation:${id}`,
+            'EMAIL',
+            { kind: 'invitation' },
+            id,
+          );
+        if (actor.role === Role.ADMIN)
+          await this.notifyClientAssignedToAdmins(
+            tx,
+            adminId,
+            [adminId],
+            newUser.id,
+            this.buildClientNotificationName(newUser),
+          );
         return newUser;
       },
     );
-    if (!dto.password) await this.sendInvitationEmail(email);
-    if (currentUserRole === Role.ADMIN) {
-      await this.notifyClientAssignedToAdmins(
-        adminId,
-        [adminId],
-        user.id,
-        this.buildClientNotificationName(user),
-      );
-    }
+
     return this.serializeUserSummary(user);
   }
   async updateUser(
@@ -932,19 +950,19 @@ export class UsersService {
         },
       });
 
+      await this.notifyClientAssignedToAdmins(
+        tx,
+        currentUserId,
+        syncResult.assignedAdminIds,
+        clientId,
+        this.buildClientNotificationName(client),
+      );
       return {
         response: this.serializeClientAssignments(clientId, assignments),
         assignedAdminIds: syncResult.assignedAdminIds,
         clientName: this.buildClientNotificationName(client),
       };
     });
-
-    await this.notifyClientAssignedToAdmins(
-      currentUserId,
-      result.assignedAdminIds,
-      clientId,
-      result.clientName,
-    );
 
     return result.response;
   }
@@ -1056,42 +1074,7 @@ export class UsersService {
       return;
     }
 
-    await this.sendPasswordResetEmail(email);
-  }
-  private async sendPasswordResetEmail(email: string): Promise<void> {
-    const apiKey = process.env.FIREBASE_WEB_API_KEY;
-    if (!apiKey) {
-      this.logger.warn(
-        'FIREBASE_WEB_API_KEY no configurado — invitación pendiente',
-      );
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
-        },
-      );
-
-      if (!response.ok) {
-        this.logger.error(`Firebase sendOobCode falló: ${response.status}`);
-        throw new InternalServerErrorException(
-          'No se pudo enviar el email de invitación',
-        );
-      }
-
-      this.logger.log('Email de invitación aceptado');
-    } catch (err) {
-      if (err instanceof InternalServerErrorException) throw err;
-      this.logger.error('Error enviando invitación');
-      throw new InternalServerErrorException(
-        'No se pudo enviar el email de invitación',
-      );
-    }
+    throw new InternalServerErrorException('EMAIL_WORKER_UNAVAILABLE');
   }
 
   async resendInvitation(
@@ -1151,6 +1134,7 @@ export class UsersService {
   }
 
   private async notifyClientAssignedToAdmins(
+    tx: Prisma.TransactionClient,
     senderId: string,
     adminIds: string[],
     clientId: string,
@@ -1161,27 +1145,22 @@ export class UsersService {
       return;
     }
 
-    try {
-      await this.notifications.sendInternalTemplate(
-        senderId,
-        uniqueAdminIds,
-        'admin_client_assigned',
-        { clientName, clientId },
-        {
-          title: 'Cliente asignado',
-          body: `${clientName} te ha sido asignado`,
-          route: `/admin/clients/${clientId}`,
-        },
-        {
-          type: 'client_assigned',
-          client_id: clientId,
-        },
-      );
-    } catch (err) {
-      this.logger.warn(
-        `Failed to send client assignment notification for ${clientId}: ${(err as Error).message}`,
-      );
-    }
+    await this.notifications.queueTemplate(
+      tx,
+      senderId,
+      uniqueAdminIds,
+      'admin_client_assigned',
+      { clientName, clientId },
+      {
+        title: 'Cliente asignado',
+        body: `${clientName} te ha sido asignado`,
+        route: `/admin/clients/${clientId}`,
+      },
+      {
+        type: 'client_assigned',
+        client_id: clientId,
+      },
+    );
   }
 
   private normalizeEmail(email: string) {

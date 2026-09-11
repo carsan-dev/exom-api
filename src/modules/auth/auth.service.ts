@@ -418,40 +418,11 @@ export class AuthService {
           'password-reset',
         );
       } else {
-        await this.sendPasswordResetEmail(normalizedEmail);
+        throw new ServiceUnavailableException('EMAIL_WORKER_UNAVAILABLE');
       }
-    } catch (err) {
-      // Do not reveal whether the email exists.
-      this.logger.warn(`Password reset request failed silently: ${err}`);
-    }
-  }
-
-  private async sendPasswordResetEmail(email: string) {
-    if (!this.firebaseWebApiKey) {
-      this.logger.warn('FIREBASE_WEB_API_KEY is not configured');
-      return;
-    }
-
-    const response = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${this.firebaseWebApiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestType: 'PASSWORD_RESET',
-          email,
-        }),
-      },
-    );
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      this.logger.error(
-        `Firebase password reset email failed: ${response.status} ${body}`,
-      );
-      throw new InternalServerErrorException(
-        'No se pudo enviar el email de recuperaci\u00f3n.',
-      );
+    } catch {
+      // Do not reveal whether the email exists or log provider payloads.
+      this.logger.warn('Password reset intent could not be queued');
     }
   }
   private issueCustomToken(
