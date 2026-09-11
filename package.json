@@ -15,7 +15,7 @@
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "identity:diagnose": "ts-node src/scripts/diagnose-identities.ts",
-    "test:concurrency": "jest --runInBand src/modules/progress/progress.concurrency.spec.ts src/modules/assignments/planning-progress.concurrency.spec.ts src/modules/diets/diet-history.concurrency.spec.ts src/modules/uploads/uploads.concurrency.spec.ts",
+    "test:concurrency": "jest --runInBand --testPathPatterns=concurrency",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",

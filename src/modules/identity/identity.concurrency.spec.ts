@@ -102,9 +102,14 @@ const url = process.env.TEST_DATABASE_URL;
         'SHOW data_directory',
       );
       if (
-        !result.rows[0].data_directory
-          .replaceAll('\\', '/')
-          .endsWith('/EXOM/phase4-20260906/pgdata')
+        ![
+          '/EXOM/phase4-20260906/pgdata',
+          '/EXOM/docs/operations/phase6-20260911/pgdata',
+        ].some((directory) =>
+          result.rows[0].data_directory
+            .replaceAll('\\', '/')
+            .endsWith(directory),
+        )
       )
         throw Error('Unexpected cluster');
       prisma = new PrismaClient({ adapter: new PrismaPg(pool) });

@@ -24,7 +24,6 @@ import {
 
 const url = process.env.TEST_DATABASE_URL;
 const suite = url ? describe : describe.skip;
-
 suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
   let pool: Pool;
   let prisma: PrismaClient;
@@ -102,9 +101,12 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       'SHOW data_directory',
     );
     if (
-      !result.rows[0].data_directory
-        .replaceAll('\\', '/')
-        .endsWith('/EXOM/phase4-20260906/pgdata')
+      ![
+        '/EXOM/phase4-20260906/pgdata',
+        '/EXOM/docs/operations/phase6-20260911/pgdata',
+      ].some((directory) =>
+        result.rows[0].data_directory.replaceAll('\\', '/').endsWith(directory),
+      )
     )
       throw new Error('Unexpected cluster');
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });

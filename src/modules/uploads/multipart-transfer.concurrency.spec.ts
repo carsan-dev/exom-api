@@ -88,9 +88,12 @@ const url = process.env.TEST_DATABASE_URL;
         )
       ).rows[0];
       if (
-        !identity.directory
-          .replaceAll('\\', '/')
-          .endsWith('/EXOM/phase4-20260906/pgdata')
+        ![
+          '/EXOM/phase4-20260906/pgdata',
+          '/EXOM/docs/operations/phase6-20260911/pgdata',
+        ].some((directory) =>
+          identity.directory.replaceAll('\\', '/').endsWith(directory),
+        )
       )
         throw Error('WRONG_CLUSTER');
       db = new PrismaClient({ adapter: new PrismaPg(pool) });
