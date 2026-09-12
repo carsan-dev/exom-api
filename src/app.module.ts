@@ -1,3 +1,4 @@
+import { HealthController, HealthService } from './health/health.controller';
 import { Module } from '@nestjs/common';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { DomainWorkModule } from './modules/jobs/domain-work.module';
@@ -34,7 +35,10 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      ignoreEnvFile: process.env.NODE_ENV === 'test',
+    }),
     ScheduleModule.forRoot(),
     PrismaModule,
     JobsModule,
@@ -62,7 +66,9 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
     ApprovalRequestsModule,
     PublicConfigModule,
   ],
+  controllers: [HealthController],
   providers: [
+    HealthService,
     {
       provide: APP_GUARD,
       useClass: FirebaseAuthGuard,

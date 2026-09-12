@@ -1,0 +1,59 @@
+name: API CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'feature/**', 'fix/**', 'phase9/**']
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: API quality and PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: exom_ci
+          POSTGRES_PASSWORD: exom_ci_disposable
+          POSTGRES_DB: exom_ci
+          PGDATA: /var/lib/postgresql/exom-ci-data
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U exom_ci -d exom_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://exom_ci:exom_ci_disposable@127.0.0.1:5432/exom_ci
+      DATABASE_URL: postgresql://exom_ci:exom_ci_disposable@127.0.0.1:5432/exom_ci
+      PRISMA_DATABASE_URL: postgresql://exom_ci:exom_ci_disposable@127.0.0.1:5432/exom_ci
+      DATABASE_SSL_MODE: disable
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.21.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run prisma:generate
+      - run: npm exec -- prisma validate
+      - run: npm run prisma:format:check
+      - run: npm run lint -- --no-fix
+      - run: npm run build
+      - name: Verify disposable database before migrations
+        run: node scripts/test-database.cjs
+      - run: npm exec -- prisma migrate deploy
+      - run: node --test scripts/test-database.test.cjs
+      - run: npm test -- --runInBand
+      - run: npm run test:concurrency
+      - run: npm run test:e2e
+      - name: Build the reviewed Docker source
+        run: docker build --tag exom-api:${{ github.sha }} .
+      - name: Smoke test the runner
+        run: node scripts/smoke-docker.cjs exom-api:${{ github.sha }}
