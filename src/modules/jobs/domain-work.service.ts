@@ -11,6 +11,8 @@ import {
   RetryWorkError,
 } from './jobs.service';
 import { APPROVAL_ACTION_LABELS } from '../approval-requests/approval-rules';
+import { aggregateScope } from '../../common/progress/aggregate-scope';
+import { StreakCalculatorService } from '../streaks/streak-calculator.service';
 
 @Injectable()
 export class DomainWorkService implements OnModuleInit {
@@ -20,6 +22,9 @@ export class DomainWorkService implements OnModuleInit {
     private readonly challenges: ChallengesService,
     private readonly achievements: AchievementsService,
     private readonly notifications: NotificationsService,
+    private readonly streakCalculator: StreakCalculatorService = new StreakCalculatorService(
+      prisma,
+    ),
   ) {}
 
   onModuleInit() {
@@ -121,8 +126,22 @@ export class DomainWorkService implements OnModuleInit {
           { id: string }[]
         >`SELECT id FROM users WHERE id=${owner} FOR KEY SHARE`;
         if (!users.length) return;
-        await this.challenges.recalculateAutomaticProgress(owner, tx);
-        await this.achievements.evaluateAutomaticAchievementsForUser(owner, tx);
+        const rules = aggregateScope(work.payload);
+        if (!rules || rules.includes('STREAK_DAYS')) {
+          await this.streakCalculator.recalculateClient(owner, { db: tx });
+        }
+        await this.challenges.recalculateAutomaticProgress(
+          owner,
+          tx,
+          undefined,
+          rules,
+        );
+        await this.achievements.evaluateAutomaticAchievementsForUser(
+          owner,
+          tx,
+          undefined,
+          rules ? [...rules, 'CHALLENGES_COMPLETED'] : undefined,
+        );
         // Grants/transitions create notification intents in this same transaction.
       },
       { maxWait: 5000, timeout: 30000 },

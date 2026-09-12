@@ -1,3 +1,9 @@
+import {
+  affectedProgressRules,
+  AggregateRule,
+  hasProgressActivity,
+  ProgressActivity,
+} from '../../common/progress/aggregate-scope';
 import { progressCommand } from '../../common/progress/progress-command';
 import {
   BadRequestException,
@@ -627,6 +633,7 @@ export class ProgressService {
       }
     }
     const date = this.parseDate(dto.date);
+    let affected: AggregateRule[] = [];
     const progress = await this.withLockedDayProgress(
       clientId,
       date,
@@ -782,21 +789,39 @@ export class ProgressService {
           },
         });
 
-        await this.updateStreak(clientId, date, tx);
+        const streak = await this.updateStreak(
+          clientId,
+          date,
+          tx,
+          existing,
+          result,
+        );
+        affected = affectedProgressRules(existing, result, streak.changed);
         return result;
       },
     );
 
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(
-      clientId,
-    );
+    if (affected.length) {
+      await this.challengesService.recalculateAutomaticProgress(
+        clientId,
+        undefined,
+        undefined,
+        affected,
+      );
+      await this.achievementsService.evaluateAutomaticAchievementsForUser(
+        clientId,
+        undefined,
+        undefined,
+        [...affected, 'CHALLENGES_COMPLETED'],
+      );
+    }
 
     return progress;
   }
 
   async completeTraining(clientId: string, dto: CompleteTrainingDto) {
     const date = this.parseDate(dto.date);
+    let affected: AggregateRule[] = [];
     const progress = await this.withLockedDayProgress(
       clientId,
       date,
@@ -962,21 +987,39 @@ export class ProgressService {
           },
         });
 
-        await this.updateStreak(clientId, date, tx);
+        const streak = await this.updateStreak(
+          clientId,
+          date,
+          tx,
+          existing,
+          result,
+        );
+        affected = affectedProgressRules(existing, result, streak.changed);
         return result;
       },
     );
 
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(
-      clientId,
-    );
+    if (affected.length) {
+      await this.challengesService.recalculateAutomaticProgress(
+        clientId,
+        undefined,
+        undefined,
+        affected,
+      );
+      await this.achievementsService.evaluateAutomaticAchievementsForUser(
+        clientId,
+        undefined,
+        undefined,
+        [...affected, 'CHALLENGES_COMPLETED'],
+      );
+    }
 
     return progress;
   }
 
   async markMealCompleted(clientId: string, dto: MarkMealDto) {
     const date = this.parseDate(dto.date);
+    let affected: AggregateRule[] = [];
     const progress = await this.withLockedDayProgress(
       clientId,
       date,
@@ -1032,21 +1075,39 @@ export class ProgressService {
           },
         });
 
-        await this.updateStreak(clientId, date, tx);
+        const streak = await this.updateStreak(
+          clientId,
+          date,
+          tx,
+          existing,
+          result,
+        );
+        affected = affectedProgressRules(existing, result, streak.changed);
         return result;
       },
     );
 
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(
-      clientId,
-    );
+    if (affected.length) {
+      await this.challengesService.recalculateAutomaticProgress(
+        clientId,
+        undefined,
+        undefined,
+        affected,
+      );
+      await this.achievementsService.evaluateAutomaticAchievementsForUser(
+        clientId,
+        undefined,
+        undefined,
+        [...affected, 'CHALLENGES_COMPLETED'],
+      );
+    }
 
     return progress;
   }
 
   async unmarkExercise(clientId: string, dateStr: string, exerciseId: string) {
     const date = this.parseDate(dateStr);
+    let affected: AggregateRule[] = [];
     const progress = await this.withLockedDayProgress(
       clientId,
       date,
@@ -1113,21 +1174,39 @@ export class ProgressService {
           },
         });
 
-        await this.updateStreak(clientId, date, tx);
+        const streak = await this.updateStreak(
+          clientId,
+          date,
+          tx,
+          existing,
+          result,
+        );
+        affected = affectedProgressRules(existing, result, streak.changed);
         return result;
       },
     );
 
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(
-      clientId,
-    );
+    if (affected.length) {
+      await this.challengesService.recalculateAutomaticProgress(
+        clientId,
+        undefined,
+        undefined,
+        affected,
+      );
+      await this.achievementsService.evaluateAutomaticAchievementsForUser(
+        clientId,
+        undefined,
+        undefined,
+        [...affected, 'CHALLENGES_COMPLETED'],
+      );
+    }
 
     return progress;
   }
 
   async unmarkMeal(clientId: string, dateStr: string, mealId: string) {
     const date = this.parseDate(dateStr);
+    let affected: AggregateRule[] = [];
     const progress = await this.withLockedDayProgress(
       clientId,
       date,
@@ -1161,15 +1240,32 @@ export class ProgressService {
           data: { meals_completed: filtered },
         });
 
-        await this.updateStreak(clientId, date, tx);
+        const streak = await this.updateStreak(
+          clientId,
+          date,
+          tx,
+          existing,
+          result,
+        );
+        affected = affectedProgressRules(existing, result, streak.changed);
         return result;
       },
     );
 
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(
-      clientId,
-    );
+    if (affected.length) {
+      await this.challengesService.recalculateAutomaticProgress(
+        clientId,
+        undefined,
+        undefined,
+        affected,
+      );
+      await this.achievementsService.evaluateAutomaticAchievementsForUser(
+        clientId,
+        undefined,
+        undefined,
+        [...affected, 'CHALLENGES_COMPLETED'],
+      );
+    }
 
     return progress;
   }
@@ -1178,12 +1274,20 @@ export class ProgressService {
     clientId: string,
     date: Date,
     tx?: TransactionClient,
+    previous?: ProgressActivity | null,
+    current?: ProgressActivity,
   ) {
     const today = new Date();
     const asOf = date.getTime() > today.getTime() ? date : today;
-    await this.streakCalculator.recalculateClient(clientId, {
+    return this.streakCalculator.recalculateClient(clientId, {
       asOf,
       db: tx,
+      unchangedActivitySince:
+        previous &&
+        current &&
+        hasProgressActivity(previous) === hasProgressActivity(current)
+          ? previous.updated_at
+          : undefined,
     });
 
     // Milestone intent is persisted by the streak trigger in this transaction.

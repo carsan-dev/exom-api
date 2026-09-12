@@ -9,7 +9,7 @@ const { JobsService } = require('./jobs.service');
   const url = new URL(process.env.TEST_DATABASE_URL);
   if (
     url.hostname !== '127.0.0.1' ||
-    url.port !== '55437' ||
+    !['55437', '55447'].includes(url.port) ||
     url.pathname !== '/exom_review'
   )
     throw Error('Not isolated');
@@ -17,7 +17,7 @@ const { JobsService } = require('./jobs.service');
   const result = await pool.query('SHOW data_directory');
   if (
     resolve(result.rows[0].data_directory) !==
-    resolve(process.cwd(), '../docs/operations/phase6-20260911/pgdata')
+    resolve(process.cwd(), new URL(process.env.TEST_DATABASE_URL ?? '').port === '55447' ? '../docs/operations/phase7-20260912/pgdata' : '../docs/operations/phase6-20260911/pgdata')
   )
     throw Error('Wrong cluster');
   const db = new PrismaClient({ adapter: new PrismaPg(pool) });

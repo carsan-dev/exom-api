@@ -18,6 +18,7 @@ import {
   loadDietHistory,
 } from '../../common/progress/diet-history';
 import { ChallengesService } from '../challenges/challenges.service';
+import { STREAK_PUBLIC_SELECT } from '../streaks/streak-public';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
@@ -751,7 +752,7 @@ export class UsersService {
           orderBy: [{ date: 'desc' }, { created_at: 'desc' }],
           take: 10,
         },
-        streak: true,
+        streak: { select: STREAK_PUBLIC_SELECT },
       },
     });
 

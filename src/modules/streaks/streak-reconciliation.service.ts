@@ -31,8 +31,18 @@ export class StreakReconciliationService {
       if (!result.changed) continue;
 
       changed += 1;
-      await this.challenges.recalculateAutomaticProgress(client_id);
-      await this.achievements.evaluateAutomaticAchievementsForUser(client_id);
+      await this.challenges.recalculateAutomaticProgress(
+        client_id,
+        undefined,
+        undefined,
+        ['STREAK_DAYS'],
+      );
+      await this.achievements.evaluateAutomaticAchievementsForUser(
+        client_id,
+        undefined,
+        undefined,
+        ['STREAK_DAYS', 'CHALLENGES_COMPLETED'],
+      );
     }
 
     if (changed > 0) {

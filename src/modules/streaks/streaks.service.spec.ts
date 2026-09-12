@@ -2,10 +2,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { StreaksService } from './streaks.service';
-
 describe('StreaksService', () => {
   let service: StreaksService;
   let prisma: {
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock;
     streak: {
       upsert: jest.Mock;
     };
@@ -19,6 +20,10 @@ describe('StreaksService', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn((fn: (tx: typeof prisma) => Promise<unknown>) =>
+        fn(prisma),
+      ),
+      $queryRaw: jest.fn().mockResolvedValue([]),
       streak: {
         upsert: jest.fn(),
       },
@@ -38,7 +43,10 @@ describe('StreaksService', () => {
   });
 
   it('re-evaluates achievements after resetting a streak', async () => {
-    prisma.streak.upsert.mockResolvedValue({ client_id: 'client-1', current_days: 0 });
+    prisma.streak.upsert.mockResolvedValue({
+      client_id: 'client-1',
+      current_days: 0,
+    });
 
     await expect(
       service.resetStreak('super-admin', 'SUPER_ADMIN', 'client-1'),
@@ -46,9 +54,15 @@ describe('StreaksService', () => {
 
     expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
       'client-1',
+      undefined,
+      undefined,
+      ['STREAK_DAYS'],
     );
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
-    ).toHaveBeenCalledWith('client-1');
+    ).toHaveBeenCalledWith('client-1', undefined, undefined, [
+      'STREAK_DAYS',
+      'CHALLENGES_COMPLETED',
+    ]);
   });
 });

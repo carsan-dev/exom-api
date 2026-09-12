@@ -74,7 +74,7 @@ const url = process.env.TEST_DATABASE_URL;
       const target = new URL(url!);
       if (
         target.hostname !== '127.0.0.1' ||
-        target.port !== '55437' ||
+        !['55437', '55447'].includes(target.port) ||
         target.pathname !== '/exom_review'
       )
         throw Error('ISOLATED_DB_REQUIRED');
@@ -91,6 +91,7 @@ const url = process.env.TEST_DATABASE_URL;
         ![
           '/EXOM/phase4-20260906/pgdata',
           '/EXOM/docs/operations/phase6-20260911/pgdata',
+          '/EXOM/docs/operations/phase7-20260912/pgdata',
         ].some((directory) =>
           identity.directory.replaceAll('\\', '/').endsWith(directory),
         )

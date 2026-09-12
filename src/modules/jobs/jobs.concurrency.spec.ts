@@ -38,7 +38,6 @@ function gate() {
   });
   return { promise, release };
 }
-
 integration('P6 PostgreSQL durable jobs and delivery', () => {
   let db: PrismaClient;
   let other: PrismaClient;
@@ -111,7 +110,12 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
         { data_directory: string }[]
       >`SHOW data_directory`;
       expect(resolve(identity.data_directory)).toBe(
-        resolve(process.cwd(), '../docs/operations/phase6-20260911/pgdata'),
+        resolve(
+          process.cwd(),
+          new URL(process.env.TEST_DATABASE_URL ?? '').port === '55447'
+            ? '../docs/operations/phase7-20260912/pgdata'
+            : '../docs/operations/phase6-20260911/pgdata',
+        ),
       );
       Object.assign(client, { postgresqlPool: pools[index] });
     }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, PrismaClient, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 
 type StreakDb = Omit<
   PrismaClient,
@@ -43,6 +44,7 @@ export class StreakCalculatorService {
       asOf?: Date;
       rebuildLongest?: boolean;
       db?: StreakDb;
+      unchangedActivitySince?: Date;
     } = {},
   ): Promise<StreakRecalculationResult> {
     const db = options.db ?? this.prisma;
@@ -50,6 +52,22 @@ export class StreakCalculatorService {
     const existing = await db.streak.findUnique({
       where: { client_id: clientId },
     });
+    if (
+      existing &&
+      !options.rebuildLongest &&
+      existing.source_revision === existing.calculated_revision &&
+      options.unchangedActivitySince &&
+      existing.calculated_for_date?.getTime() === asOf.getTime() &&
+      (!existing.tracking_started_at ||
+        options.unchangedActivitySince >= existing.tracking_started_at)
+    ) {
+      return {
+        currentDays: existing.current_days,
+        longestDays: existing.longest_days,
+        previousCurrentDays: existing.current_days,
+        changed: false,
+      };
+    }
     const trackingStartedAt = existing?.tracking_started_at ?? undefined;
     const trackingStartedDate = trackingStartedAt
       ? this.utcDate(trackingStartedAt)
@@ -122,20 +140,32 @@ export class StreakCalculatorService {
         ? calculatedLongest
         : Math.max(existing?.longest_days ?? 0, calculatedLongest);
 
-    await db.streak.upsert({
-      where: { client_id: clientId },
-      create: {
-        client_id: clientId,
-        current_days: currentDays,
-        longest_days: longestDays,
-        last_active_date: lastActiveDate,
-      },
-      update: {
-        current_days: currentDays,
-        longest_days: longestDays,
-        last_active_date: lastActiveDate,
-      },
-    });
+    const unchanged =
+      existing &&
+      existing.current_days === currentDays &&
+      existing.longest_days === longestDays &&
+      existing.last_active_date?.getTime() === lastActiveDate?.getTime() &&
+      existing.source_revision === existing.calculated_revision &&
+      existing.calculated_for_date?.getTime() === asOf.getTime();
+    if (!unchanged)
+      await db.streak.upsert({
+        where: { client_id: clientId },
+        create: {
+          client_id: clientId,
+          current_days: currentDays,
+          longest_days: longestDays,
+          last_active_date: lastActiveDate,
+          calculated_revision: 0,
+          calculated_for_date: asOf,
+        },
+        update: {
+          current_days: currentDays,
+          longest_days: longestDays,
+          last_active_date: lastActiveDate,
+          calculated_revision: existing?.source_revision ?? 0,
+          calculated_for_date: asOf,
+        },
+      });
 
     return {
       currentDays,
@@ -177,9 +207,13 @@ export class StreakCalculatorService {
     const clientIds = users.map((user) => user.id);
 
     for (const clientId of clientIds) {
-      await this.recalculateClient(clientId, {
-        asOf,
-        rebuildLongest: true,
+      await this.prisma.$transaction(async (tx) => {
+        await lockClientDayProgress(tx, clientId);
+        await this.recalculateClient(clientId, {
+          asOf,
+          rebuildLongest: true,
+          db: tx,
+        });
       });
     }
 

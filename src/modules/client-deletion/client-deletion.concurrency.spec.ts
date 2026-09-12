@@ -89,7 +89,7 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     const target = new URL(url!);
     if (
       target.hostname !== '127.0.0.1' ||
-      target.port !== '55437' ||
+      !['55437', '55447'].includes(target.port) ||
       target.pathname !== '/exom_review'
     )
       throw new Error('Identified isolated DB required');
@@ -104,6 +104,7 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       ![
         '/EXOM/phase4-20260906/pgdata',
         '/EXOM/docs/operations/phase6-20260911/pgdata',
+        '/EXOM/docs/operations/phase7-20260912/pgdata',
       ].some((directory) =>
         result.rows[0].data_directory.replaceAll('\\', '/').endsWith(directory),
       )

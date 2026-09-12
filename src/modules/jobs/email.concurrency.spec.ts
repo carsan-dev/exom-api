@@ -30,7 +30,7 @@ const url = process.env.TEST_DATABASE_URL;
       const target = new URL(url!);
       if (
         target.hostname !== '127.0.0.1' ||
-        target.port !== '55437' ||
+        !['55437', '55447'].includes(target.port) ||
         target.pathname !== '/exom_review'
       )
         throw Error('Local phase6 DB required');
@@ -40,7 +40,12 @@ const url = process.env.TEST_DATABASE_URL;
         { data_directory: string }[]
       >`SHOW data_directory`;
       expect(resolve(identity.data_directory)).toBe(
-        resolve(process.cwd(), '../docs/operations/phase6-20260911/pgdata'),
+        resolve(
+          process.cwd(),
+          new URL(process.env.TEST_DATABASE_URL ?? '').port === '55447'
+            ? '../docs/operations/phase7-20260912/pgdata'
+            : '../docs/operations/phase6-20260911/pgdata',
+        ),
       );
       Object.assign(db, { postgresqlPool: pool });
       isolated = true;

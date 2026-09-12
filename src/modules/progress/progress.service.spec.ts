@@ -108,7 +108,7 @@ describe('ProgressService', () => {
 
     updateStreakSpy = jest
       .spyOn(service as any, 'updateStreak')
-      .mockResolvedValue(undefined);
+      .mockResolvedValue({ changed: true });
   });
 
   it('re-evaluates achievements after completing training', async () => {
@@ -122,11 +122,28 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await expect(
       service.completeTraining('client-1', { date: '2026-04-04' }),
-    ).resolves.toEqual({ id: 'progress-1' });
+    ).resolves.toEqual(expect.objectContaining({ id: 'progress-1' }));
 
     expect(autoAssignmentMaterializer.reconcile).toHaveBeenCalledWith(
       'client-1',
@@ -139,10 +156,17 @@ describe('ProgressService', () => {
 
     expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
       'client-1',
+      undefined,
+      undefined,
+      ['TRAINING_DAYS', 'STREAK_DAYS'],
     );
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
-    ).toHaveBeenCalledWith('client-1');
+    ).toHaveBeenCalledWith('client-1', undefined, undefined, [
+      'TRAINING_DAYS',
+      'STREAK_DAYS',
+      'CHALLENGES_COMPLETED',
+    ]);
   });
 
   it('stores per-set reps and weight when completing an exercise', async () => {
@@ -153,7 +177,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.markExerciseCompleted('client-1', {
       date: '2026-06-22',
@@ -189,7 +230,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.markExerciseCompleted('client-1', {
       date: '2026-06-22',
@@ -240,7 +298,24 @@ describe('ProgressService', () => {
       training_completed: true,
       trainings_completed: ['training-1'],
     });
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.markExerciseCompleted('client-1', {
       date: '2026-06-22',
@@ -307,7 +382,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.markExerciseCompleted('client-1', {
       date: '2026-06-22',
@@ -339,7 +431,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await expect(
       service.markExerciseCompleted('client-1', {
@@ -362,7 +471,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.markExerciseCompleted('client-1', {
       date: '2026-07-01',
@@ -674,7 +800,24 @@ describe('ProgressService', () => {
       meals_completed: [],
       notes: null,
     });
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.markExerciseCompleted('client-1', {
       date: '2026-06-22',
@@ -711,7 +854,24 @@ describe('ProgressService', () => {
       meals_completed: [],
       notes: null,
     });
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.completeTraining('client-1', { date: '2026-06-22' });
 
@@ -751,8 +911,11 @@ describe('ProgressService', () => {
       training_completed: true,
       trainings_completed: [],
     });
-    prisma.dayProgress.upsert.mockImplementation((input: unknown) =>
-      Promise.resolve(input),
+    prisma.dayProgress.upsert.mockImplementation(
+      (input: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) => Promise.resolve({ ...input, ...input.create, ...input.update }),
     );
 
     const result: unknown = await service.completeTraining('client-1', {
@@ -804,7 +967,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
     streakCalculator.recalculateClient.mockResolvedValue({
       currentDays: 7,
       longestDays: 7,
@@ -814,7 +994,7 @@ describe('ProgressService', () => {
 
     await expect(
       service.completeTraining('client-1', { date: '2026-04-08' }),
-    ).resolves.toEqual({ id: 'progress-1' });
+    ).resolves.toEqual(expect.objectContaining({ id: 'progress-1' }));
 
     expect(streakCalculator.recalculateClient).toHaveBeenCalledWith(
       'client-1',
@@ -895,7 +1075,24 @@ describe('ProgressService', () => {
       diet: null,
     });
     prisma.dayProgress.findUnique.mockResolvedValue(null);
-    prisma.dayProgress.upsert.mockResolvedValue({ id: 'progress-1' });
+    prisma.dayProgress.upsert.mockImplementation(
+      ({
+        create,
+        update,
+      }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) =>
+        Promise.resolve({
+          id: 'progress-1',
+          training_completed: false,
+          exercises_completed: [],
+          meals_completed: [],
+          updated_at: new Date(),
+          ...create,
+          ...update,
+        }),
+    );
 
     await service.completeTraining('client-1', {
       date: '2026-08-04',

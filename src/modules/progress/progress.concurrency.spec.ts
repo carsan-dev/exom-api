@@ -20,7 +20,6 @@ interface CompletedExercise {
   completed_at: string;
   sets?: Array<{ set_number: number; reps?: number; rir?: number }>;
 }
-
 describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
   const suffix = `${process.pid}-${Date.now()}`;
   const clientId = `progress-client-${suffix}`;
@@ -73,7 +72,7 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
                 currentDays: 1,
                 longestDays: 1,
                 previousCurrentDays: 1,
-                changed: false,
+                changed: failure === 'challenge',
               }),
       } as unknown as StreakCalculatorService,
       {

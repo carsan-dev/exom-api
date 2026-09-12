@@ -22,7 +22,7 @@ suite('F005 archive PostgreSQL integration', () => {
     const target = new URL(url!);
     if (
       target.hostname !== '127.0.0.1' ||
-      target.port !== '55437' ||
+      !['55437', '55447'].includes(target.port) ||
       target.pathname !== '/exom_review'
     )
       throw new Error('Isolated archive test database required');
