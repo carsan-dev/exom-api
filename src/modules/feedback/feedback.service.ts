@@ -25,29 +25,21 @@ export class FeedbackService {
     private readonly uploadsService: UploadsService,
   ) {}
 
-  private async resolveAccessibleClientIds(
+  private accessibleFeedbackWhere(
     currentUserId: string,
     currentUserRole: string,
-  ) {
-    if (currentUserRole === Role.SUPER_ADMIN) {
-      const clients = await this.prisma.user.findMany({
-        where: { role: Role.CLIENT },
-        select: { id: true },
-      });
-
-      return clients.map((client) => client.id);
-    }
-
-    if (currentUserRole !== Role.ADMIN) {
-      return [];
-    }
-
-    const clientAssignments = await this.prisma.adminClientAssignment.findMany({
-      where: { admin_id: currentUserId, is_active: true },
-      select: { client_id: true },
-    });
-
-    return clientAssignments.map((assignment) => assignment.client_id);
+  ): Prisma.FeedbackMediaWhereInput {
+    if (currentUserRole === Role.SUPER_ADMIN)
+      return { client: { is: { role: Role.CLIENT } } };
+    if (currentUserRole === Role.ADMIN)
+      return {
+        client: {
+          is: {
+            clientOf: { some: { admin_id: currentUserId, is_active: true } },
+          },
+        },
+      };
+    return { id: { in: [] } };
   }
 
   async create(clientId: string, dto: CreateFeedbackDto) {
@@ -166,32 +158,16 @@ export class FeedbackService {
     currentUserRole: string,
     query: AdminFeedbackQueryDto,
   ) {
-    const accessibleClientIds = await this.resolveAccessibleClientIds(
-      currentUserId,
-      currentUserRole,
-    );
-
-    if (accessibleClientIds.length === 0) {
-      return paginate([], 0, query);
-    }
-
-    if (query.client_id && !accessibleClientIds.includes(query.client_id)) {
-      return paginate([], 0, query);
-    }
-
-    const filteredClientIds = query.client_id
-      ? [query.client_id]
-      : accessibleClientIds;
-
-    const where = {
-      client_id: { in: filteredClientIds },
+    const where: Prisma.FeedbackMediaWhereInput = {
+      ...this.accessibleFeedbackWhere(currentUserId, currentUserRole),
+      ...(query.client_id ? { client_id: query.client_id } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
 
     const [data, total] = await Promise.all([
       this.prisma.feedbackMedia.findMany({
         where,
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
         skip: query.skip,
         take: query.limit,
         include: {
@@ -213,28 +189,24 @@ export class FeedbackService {
   }
 
   async getStats(currentUserId: string, currentUserRole: string) {
-    const accessibleClientIds = await this.resolveAccessibleClientIds(
+    const accessible = this.accessibleFeedbackWhere(
       currentUserId,
       currentUserRole,
     );
 
-    if (accessibleClientIds.length === 0) {
-      return { total: 0, pending: 0, reviewed: 0 };
-    }
-
     const [total, pending, reviewed] = await Promise.all([
       this.prisma.feedbackMedia.count({
-        where: { client_id: { in: accessibleClientIds } },
+        where: accessible,
       }),
       this.prisma.feedbackMedia.count({
         where: {
-          client_id: { in: accessibleClientIds },
+          ...accessible,
           status: FeedbackStatus.PENDING,
         },
       }),
       this.prisma.feedbackMedia.count({
         where: {
-          client_id: { in: accessibleClientIds },
+          ...accessible,
           status: FeedbackStatus.REVIEWED,
         },
       }),
@@ -247,7 +219,7 @@ export class FeedbackService {
     const [data, total] = await Promise.all([
       this.prisma.feedbackMedia.findMany({
         where: { client_id: clientId },
-        orderBy: { created_at: 'desc' },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
         skip: pagination.skip,
         take: pagination.limit,
         include: {
@@ -276,12 +248,13 @@ export class FeedbackService {
       throw new NotFoundException('Feedback not found');
     }
 
-    const accessibleClientIds = await this.resolveAccessibleClientIds(
-      currentUserId,
-      currentUserRole,
-    );
-
-    if (!accessibleClientIds.includes(feedback.client_id)) {
+    const accessible = await this.prisma.feedbackMedia.count({
+      where: {
+        id: feedback.id,
+        ...this.accessibleFeedbackWhere(currentUserId, currentUserRole),
+      },
+    });
+    if (!accessible) {
       throw new ForbiddenException(
         'No tienes permisos para responder este feedback',
       );

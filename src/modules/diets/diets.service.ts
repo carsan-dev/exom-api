@@ -1,13 +1,11 @@
-﻿import {
+import { dietPage } from '../../common/catalog-page';
+import { inPageOrder } from '../../common/query-page';
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  CatalogColorType,
-  ManagedUploadPurpose,
-  Prisma,
-} from '@prisma/client';
+import { CatalogColorType, ManagedUploadPurpose, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   historicalDietFor,
@@ -89,14 +87,6 @@ const dietListSelect = {
     },
   },
 };
-
-function normalizeSearchText(value: string) {
-  return value
-    .toLocaleLowerCase('es-ES')
-    .normalize('NFD')
-    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
-    .normalize('NFC');
-}
 
 function getDateRange(
   from?: string,
@@ -578,22 +568,21 @@ export class DietsService {
     };
 
     if (normalizedSearch) {
-      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
-      const diets = await this.prisma.diet.findMany({
-        where,
-        orderBy: this.getDietOrderBy(sortBy, sortDir),
-        select: dietListSelect,
-      });
-
-      const filteredDiets = diets.filter((diet) =>
-        normalizeSearchText(diet.name).includes(normalizedSearchTerm),
+      return this.prisma.$transaction(
+        async (tx) => {
+          const page = await dietPage(tx, query, sortBy, sortDir);
+          const rows = await tx.diet.findMany({
+            where: { id: { in: page.ids } },
+            select: dietListSelect,
+          });
+          return paginate(
+            this.serializeDietList(inPageOrder(page.ids, rows)),
+            page.total,
+            query,
+          );
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
       );
-
-      const pageData = this.serializeDietList(
-        filteredDiets.slice(skip, skip + pageSize),
-      );
-
-      return paginate(pageData, filteredDiets.length, query);
     }
 
     const [data, total] = await Promise.all([

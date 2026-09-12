@@ -189,6 +189,7 @@ model User {
   autoAssignmentRulesAsClient AutoAssignmentRule[] @relation("AutoAssignmentRuleClient")
   autoAssignmentRulesAsAdmin  AutoAssignmentRule[] @relation("AutoAssignmentRuleAdmin")
 
+  @@index([role, created_at, id])
   @@map("users")
 }
 
@@ -250,6 +251,7 @@ model Notification {
 
   @@index([sender_id, created_at])
   @@index([recipient_id, read_at, created_at])
+  @@index([recipient_id, created_at, id])
   @@map("notifications")
 }
 
@@ -465,6 +467,7 @@ model TrainingExercise {
 
   @@unique([training_id, order])
   @@index([block_id, position_in_block])
+  @@index([exercise_id, training_id])
   @@map("training_exercises")
 }
 
@@ -966,6 +969,7 @@ model FeedbackMedia {
   trainingExercise TrainingExercise? @relation(fields: [training_exercise_id], references: [id], onDelete: SetNull)
 
   @@index([status, reviewed_at, media_deleted_at])
+  @@index([client_id, created_at, id])
   @@index([client_id, assignment_date, training_id, training_exercise_id])
   @@unique([client_id, client_upload_id])
   @@map("feedback_media")

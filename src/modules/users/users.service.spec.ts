@@ -854,7 +854,7 @@ describe('UsersService', () => {
           is_locked: false,
           created_at: new Date('2024-03-02T10:00:00.000Z'),
           profile: null,
-          clientOf: [],
+          _count: { clientOf: 0 },
         },
       },
     ]);
@@ -909,17 +909,20 @@ describe('UsersService', () => {
             is_archived: true,
             created_at: true,
             profile: true,
-            clientOf: {
-              where: {
-                is_active: true,
-                admin: {
-                  is: {
-                    role: Role.ADMIN,
+            _count: {
+              select: {
+                clientOf: {
+                  where: {
                     is_active: true,
+                    admin: {
+                      is: {
+                        role: Role.ADMIN,
+                        is_active: true,
+                      },
+                    },
                   },
                 },
               },
-              select: { id: true },
             },
           },
         },
@@ -973,7 +976,7 @@ describe('UsersService', () => {
         is_locked: false,
         created_at: new Date('2024-03-02T10:00:00.000Z'),
         profile: null,
-        clientOf: [],
+        _count: { clientOf: 0 },
       },
     ]);
     prisma.user.count.mockResolvedValue(1);
@@ -1016,17 +1019,20 @@ describe('UsersService', () => {
         is_archived: true,
         created_at: true,
         profile: true,
-        clientOf: {
-          where: {
-            is_active: true,
-            admin: {
-              is: {
-                role: Role.ADMIN,
+        _count: {
+          select: {
+            clientOf: {
+              where: {
                 is_active: true,
+                admin: {
+                  is: {
+                    role: Role.ADMIN,
+                    is_active: true,
+                  },
+                },
               },
             },
           },
-          select: { id: true },
         },
       },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }],

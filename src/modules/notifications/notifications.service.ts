@@ -477,7 +477,10 @@ export class NotificationsService implements OnModuleInit {
     };
   }
 
-  private async resolveAccessibleClientIds(senderId: string) {
+  private async resolveAccessibleClientIds(
+    senderId: string,
+    clientIds?: string[],
+  ) {
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },
       select: { id: true, role: true },
@@ -489,7 +492,10 @@ export class NotificationsService implements OnModuleInit {
 
     if (sender.role === Role.SUPER_ADMIN) {
       const clients = await this.prisma.user.findMany({
-        where: { role: Role.CLIENT },
+        where: {
+          role: Role.CLIENT,
+          ...(clientIds ? { id: { in: clientIds } } : {}),
+        },
         select: { id: true },
       });
 
@@ -505,6 +511,7 @@ export class NotificationsService implements OnModuleInit {
     const assignments = await this.prisma.adminClientAssignment.findMany({
       where: {
         admin_id: senderId,
+        ...(clientIds ? { client_id: { in: clientIds } } : {}),
         is_active: true,
         client: {
           is: {
@@ -530,7 +537,10 @@ export class NotificationsService implements OnModuleInit {
       );
     }
 
-    const accessibleClientIds = await this.resolveAccessibleClientIds(senderId);
+    const accessibleClientIds = await this.resolveAccessibleClientIds(
+      senderId,
+      uniqueUserIds,
+    );
     const inaccessibleUserIds = uniqueUserIds.filter(
       (userId) => !accessibleClientIds.includes(userId),
     );

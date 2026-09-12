@@ -259,35 +259,22 @@ export class ChallengesService {
 
   private buildVisibleChallengeClientWhere(
     adminRole: string,
-    visibleClientIds: string[],
+    adminId: string,
   ): Prisma.ChallengeClientWhereInput {
-    if (adminRole === Role.SUPER_ADMIN) {
-      return {};
-    }
-
-    return {
-      client_id: { in: visibleClientIds },
-    };
+    if (adminRole === Role.SUPER_ADMIN) return {};
+    if (adminRole === Role.ADMIN)
+      return {
+        client: {
+          is: { clientOf: { some: { admin_id: adminId, is_active: true } } },
+        },
+      };
+    return { client_id: { in: [] } };
   }
 
   private buildCompletionStatusWhere(
     status: ChallengeCompletionStatus,
-    adminRole: string,
-    visibleClientIds: string[],
+    visibleClientFilter: Prisma.ChallengeClientWhereInput,
   ): Prisma.ChallengeWhereInput {
-    if (adminRole !== Role.SUPER_ADMIN && visibleClientIds.length === 0) {
-      if (status === 'NOT_ASSIGNED') {
-        return {};
-      }
-
-      return { id: { in: [] } };
-    }
-
-    const visibleClientFilter =
-      adminRole === Role.SUPER_ADMIN
-        ? {}
-        : { client_id: { in: visibleClientIds } };
-
     if (status === 'NOT_ASSIGNED') {
       return { clients: { none: visibleClientFilter } };
     }
@@ -322,7 +309,7 @@ export class ChallengesService {
     adminId: string,
     adminRole: string,
     query: ChallengesQueryDto,
-    visibleClientIds: string[],
+    visibleClientFilter: Prisma.ChallengeClientWhereInput,
   ): Prisma.ChallengeWhereInput {
     const baseWhere: Prisma.ChallengeWhereInput = {
       ...(adminRole === Role.ADMIN ? { created_by: adminId } : {}),
@@ -358,8 +345,7 @@ export class ChallengesService {
         baseWhere,
         this.buildCompletionStatusWhere(
           query.completion_status,
-          adminRole,
-          visibleClientIds,
+          visibleClientFilter,
         ),
       ],
     };
@@ -454,8 +440,7 @@ export class ChallengesService {
 
   private async getAssignmentCountsByChallenge(
     challengeIds: string[],
-    adminRole: string,
-    visibleClientIds: string[],
+    clientScopeWhere: Prisma.ChallengeClientWhereInput,
   ) {
     if (challengeIds.length === 0) {
       return {
@@ -463,11 +448,6 @@ export class ChallengesService {
         completedCounts: new Map<string, number>(),
       };
     }
-
-    const clientScopeWhere = this.buildVisibleChallengeClientWhere(
-      adminRole,
-      visibleClientIds,
-    );
 
     const [assignedGroups, completedGroups] = await Promise.all([
       this.prisma.challengeClient.groupBy({
@@ -872,15 +852,15 @@ export class ChallengesService {
     adminRole: string,
     query: ChallengesQueryDto,
   ) {
-    const visibleClientIds = await this.resolveVisibleClientIds(
-      adminId,
+    const visibleClientFilter = this.buildVisibleChallengeClientWhere(
       adminRole,
+      adminId,
     );
     const where = this.buildAdminChallengeWhere(
       adminId,
       adminRole,
       query,
-      visibleClientIds,
+      visibleClientFilter,
     );
 
     const [
@@ -917,8 +897,7 @@ export class ChallengesService {
     const { assignedCounts, completedCounts } =
       await this.getAssignmentCountsByChallenge(
         challengeIds,
-        adminRole,
-        visibleClientIds,
+        visibleClientFilter,
       );
 
     return {
@@ -952,24 +931,25 @@ export class ChallengesService {
     adminRole: string,
     query: ChallengeAssignmentsQueryDto,
   ) {
-    const [challenge, visibleClientIds] = await Promise.all([
-      this.assertChallengeAccess(id, adminId, adminRole),
-      this.resolveVisibleClientIds(adminId, adminRole),
-    ]);
-
+    const challenge = await this.assertChallengeAccess(id, adminId, adminRole);
     if (
       query.client_id &&
       adminRole !== Role.SUPER_ADMIN &&
-      !visibleClientIds.includes(query.client_id)
+      !(await this.prisma.adminClientAssignment.count({
+        where: {
+          admin_id: adminId,
+          client_id: query.client_id,
+          is_active: true,
+        },
+      }))
     ) {
       throw new ForbiddenException(
         'Este cliente no está visible para este admin',
       );
     }
-
     const clientScopeWhere = this.buildVisibleChallengeClientWhere(
       adminRole,
-      visibleClientIds,
+      adminId,
     );
     const assignmentsWhere: Prisma.ChallengeClientWhereInput = {
       challenge_id: id,
@@ -988,7 +968,11 @@ export class ChallengesService {
       await Promise.all([
         this.prisma.challengeClient.findMany({
           where: assignmentsWhere,
-          orderBy: [{ is_completed: 'asc' }, { assigned_at: 'desc' }],
+          orderBy: [
+            { is_completed: 'asc' },
+            { assigned_at: 'desc' },
+            { id: 'desc' },
+          ],
           skip: query.skip,
           take: query.limit,
           select: CHALLENGE_CLIENT_SELECT,

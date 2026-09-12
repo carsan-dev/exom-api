@@ -15,7 +15,7 @@ import {
   ADMIN_RECAP_STATUSES,
   AdminRecapQueryDto,
 } from './dto/admin-recap-query.dto';
-import { RecapStatus, Role } from '@prisma/client';
+import { Prisma, RecapStatus, Role } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
 type ClientFeedbackUpdate = {
@@ -98,29 +98,19 @@ export class RecapsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  private async resolveAccessibleClientIds(
-    currentUserId: string,
-    currentUserRole: string,
-  ) {
-    if (currentUserRole === Role.SUPER_ADMIN) {
-      const clients = await this.prisma.user.findMany({
-        where: { role: Role.CLIENT },
-        select: { id: true },
-      });
-
-      return clients.map((client) => client.id);
-    }
-
-    if (currentUserRole !== Role.ADMIN) {
-      return [];
-    }
-
-    const assignments = await this.prisma.adminClientAssignment.findMany({
-      where: { admin_id: currentUserId, is_active: true },
-      select: { client_id: true },
-    });
-
-    return assignments.map((assignment) => assignment.client_id);
+  private accessibleRecapWhere(
+    adminId: string,
+    role: string,
+  ): Prisma.WeeklyRecapWhereInput {
+    if (role === Role.SUPER_ADMIN)
+      return { client: { is: { role: Role.CLIENT } } };
+    if (role === Role.ADMIN)
+      return {
+        client: {
+          is: { clientOf: { some: { admin_id: adminId, is_active: true } } },
+        },
+      };
+    return { id: { in: [] } };
   }
 
   private async assertAdminRecapAccess(
@@ -394,7 +384,7 @@ export class RecapsService {
     const [data, total] = await Promise.all([
       this.prisma.weeklyRecap.findMany({
         where: { client_id: clientId },
-        orderBy: { week_start_date: 'desc' },
+        orderBy: [{ week_start_date: 'desc' }, { id: 'desc' }],
         skip: pagination.skip,
         take: pagination.limit,
         select: CLIENT_RECAP_SELECT,
@@ -454,17 +444,8 @@ export class RecapsService {
   }
 
   async getStats(adminId: string, adminRole: string) {
-    const accessibleClientIds = await this.resolveAccessibleClientIds(
-      adminId,
-      adminRole,
-    );
-
-    if (accessibleClientIds.length === 0) {
-      return { total: 0, submitted: 0, reviewed: 0, archived: 0 };
-    }
-
-    const where = {
-      client_id: { in: accessibleClientIds },
+    const where: Prisma.WeeklyRecapWhereInput = {
+      ...this.accessibleRecapWhere(adminId, adminRole),
       status: { in: [RecapStatus.SUBMITTED, RecapStatus.REVIEWED] },
     };
 
@@ -498,27 +479,14 @@ export class RecapsService {
     adminRole: string,
     query: AdminRecapQueryDto,
   ) {
-    const accessibleClientIds = await this.resolveAccessibleClientIds(
-      adminId,
-      adminRole,
-    );
-
-    if (accessibleClientIds.length === 0) {
-      return paginate([], 0, query);
-    }
-
-    if (query.client_id && !accessibleClientIds.includes(query.client_id)) {
-      return paginate([], 0, query);
-    }
-
-    const clientIds = query.client_id ? [query.client_id] : accessibleClientIds;
     const statusFilter =
       query.status === RecapStatus.SUBMITTED ||
       query.status === RecapStatus.REVIEWED
         ? query.status
         : { in: [...ADMIN_RECAP_STATUSES] };
-    const where = {
-      client_id: { in: clientIds },
+    const where: Prisma.WeeklyRecapWhereInput = {
+      ...this.accessibleRecapWhere(adminId, adminRole),
+      ...(query.client_id ? { client_id: query.client_id } : {}),
       status: statusFilter,
       archived_at: query.archived ? { not: null } : null,
     };
@@ -526,7 +494,7 @@ export class RecapsService {
     const [data, total] = await Promise.all([
       this.prisma.weeklyRecap.findMany({
         where,
-        orderBy: { week_start_date: 'desc' },
+        orderBy: [{ week_start_date: 'desc' }, { id: 'desc' }],
         skip: query.skip,
         take: query.limit,
         select: ADMIN_RECAP_LIST_SELECT,

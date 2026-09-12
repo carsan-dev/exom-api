@@ -1,3 +1,5 @@
+import { inPageOrder } from '../../common/query-page';
+import { userPage, clientPage, activeAdminWhere } from './users-list-query';
 import { enqueueWork } from '../jobs/jobs.service';
 import {
   BadRequestException,
@@ -21,15 +23,8 @@ import { ChallengesService } from '../challenges/challenges.service';
 import { STREAK_PUBLIC_SELECT } from '../streaks/streak-public';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import {
-  AdminClientsQueryDto,
-  type ClientAssignmentStateFilter,
-  type UserStatusFilter as ClientUserStatusFilter,
-} from './dto/admin-clients-query.dto';
-import {
-  AdminUsersQueryDto,
-  type UserStatusFilter,
-} from './dto/admin-users-query.dto';
+import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
+import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import { CreateClientDto, UpdateRoleDto } from './dto/create-client.dto';
 import {
   CreateAdminDto,
@@ -78,29 +73,6 @@ type ManagedUserRecord = {
     avatar_url: string | null;
   } | null;
 };
-
-function normalizeSearchText(value: string) {
-  return value
-    .toLocaleLowerCase('es-ES')
-    .normalize('NFD')
-    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
-    .normalize('NFC');
-}
-
-function getDerivedUserStatus(user: {
-  is_active: boolean;
-  is_locked: boolean;
-}): UserStatusFilter {
-  if (user.is_locked) {
-    return 'LOCKED';
-  }
-
-  if (user.is_active) {
-    return 'ACTIVE';
-  }
-
-  return 'INACTIVE';
-}
 
 function getDateRange(
   from?: string,
@@ -171,30 +143,17 @@ export class UsersService {
     } as const;
 
     if (normalizedSearch || status?.length) {
-      const users = await this.prisma.user.findMany({
-        where,
-        select,
-        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      });
-      const normalizedTerm = normalizedSearch
-        ? normalizeSearchText(normalizedSearch)
-        : null;
-      const filteredUsers = users.filter((user) => {
-        const matchesStatus =
-          !status?.length || status.includes(getDerivedUserStatus(user));
-        const matchesSearch =
-          !normalizedTerm ||
-          normalizeSearchText(
-            [user.email, user.profile?.first_name, user.profile?.last_name]
-              .filter(Boolean)
-              .join(' '),
-          ).includes(normalizedTerm);
-
-        return matchesStatus && matchesSearch;
-      });
-      const pageData = filteredUsers.slice(skip, skip + pageSize);
-
-      return paginate(pageData, filteredUsers.length, query);
+      return this.prisma.$transaction(
+        async (tx) => {
+          const page = await userPage(tx, query);
+          const rows = await tx.user.findMany({
+            where: { id: { in: page.ids } },
+            select,
+          });
+          return paginate(inPageOrder(page.ids, rows), page.total, query);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     }
 
     const [data, total] = await Promise.all([
@@ -550,22 +509,11 @@ export class UsersService {
       is_archived: true,
       created_at: true,
       profile: true,
-      clientOf: {
-        where: {
-          is_active: true,
-          admin: {
-            is: {
-              role: Role.ADMIN,
-              is_active: true,
-            },
-          },
-        },
-        select: { id: true },
-      },
+      _count: { select: { clientOf: { where: activeAdminWhere } } },
     } as const;
     const mapClientWithAdminCount = <
       T extends {
-        clientOf: { id: string }[];
+        _count: { clientOf: number };
         is_active: boolean;
         is_locked: boolean;
         email: string;
@@ -577,51 +525,13 @@ export class UsersService {
     >(
       client: T,
     ) => {
-      const { clientOf, ...clientData } = client;
+      const { _count, ...clientData } = client;
 
       return {
         ...clientData,
-        active_admins_count: clientOf.length,
+        active_admins_count: _count.clientOf,
       };
     };
-    const matchesClientStatus = (
-      client: {
-        is_active: boolean;
-        is_locked: boolean;
-      },
-      statuses?: ClientUserStatusFilter[],
-    ) => !statuses?.length || statuses.includes(getDerivedUserStatus(client));
-    const matchesAssignmentState = (
-      activeAdminsCount: number,
-      assignmentStates?: ClientAssignmentStateFilter[],
-    ) => {
-      if (!assignmentStates?.length) {
-        return true;
-      }
-
-      const hasAssigned = activeAdminsCount > 0;
-      return (
-        (hasAssigned && assignmentStates.includes('ASSIGNED')) ||
-        (!hasAssigned && assignmentStates.includes('UNASSIGNED'))
-      );
-    };
-    const matchesClientSearch = (
-      client: {
-        email: string;
-        profile: {
-          first_name?: string | null;
-          last_name?: string | null;
-        } | null;
-      },
-      term: string | null,
-    ) =>
-      !term ||
-      normalizeSearchText(
-        [client.email, client.profile?.first_name, client.profile?.last_name]
-          .filter(Boolean)
-          .join(' '),
-      ).includes(term);
-
     if (currentUserRole === Role.SUPER_ADMIN) {
       const where: Prisma.UserWhereInput = {
         role: Role.CLIENT,
@@ -631,28 +541,26 @@ export class UsersService {
       };
 
       if (normalizedSearch || status?.length || assignment_state?.length) {
-        const clients = await this.prisma.user.findMany({
-          where,
-          select: clientSelect,
-          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-        });
-        const normalizedTerm = normalizedSearch
-          ? normalizeSearchText(normalizedSearch)
-          : null;
-        const filteredClients = clients
-          .map(mapClientWithAdminCount)
-          .filter(
-            (client) =>
-              matchesClientStatus(client, status) &&
-              matchesAssignmentState(
-                client.active_admins_count ?? 0,
-                assignment_state,
-              ) &&
-              matchesClientSearch(client, normalizedTerm),
-          );
-        const pageData = filteredClients.slice(skip, skip + pageSize);
-
-        return paginate(pageData, filteredClients.length, query);
+        return this.prisma.$transaction(
+          async (tx) => {
+            const page = await clientPage(
+              tx,
+              currentUserId,
+              currentUserRole,
+              query,
+            );
+            const rows = await tx.user.findMany({
+              where: { id: { in: page.ids } },
+              select: clientSelect,
+            });
+            return paginate(
+              inPageOrder(page.ids, rows).map(mapClientWithAdminCount),
+              page.total,
+              query,
+            );
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+        );
       }
 
       const [clients, total] = await Promise.all([
@@ -685,28 +593,26 @@ export class UsersService {
     };
 
     if (normalizedSearch || status?.length) {
-      const assignments = await this.prisma.adminClientAssignment.findMany({
-        where,
-        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-        include: {
-          client: {
+      return this.prisma.$transaction(
+        async (tx) => {
+          const page = await clientPage(
+            tx,
+            currentUserId,
+            currentUserRole,
+            query,
+          );
+          const rows = await tx.user.findMany({
+            where: { id: { in: page.ids } },
             select: clientSelect,
-          },
+          });
+          return paginate(
+            inPageOrder(page.ids, rows).map(mapClientWithAdminCount),
+            page.total,
+            query,
+          );
         },
-      });
-      const normalizedTerm = normalizedSearch
-        ? normalizeSearchText(normalizedSearch)
-        : null;
-      const filteredClients = assignments
-        .map(({ client }) => mapClientWithAdminCount(client))
-        .filter(
-          (client) =>
-            matchesClientStatus(client, status) &&
-            matchesClientSearch(client, normalizedTerm),
-        );
-      const pageData = filteredClients.slice(skip, skip + pageSize);
-
-      return paginate(pageData, filteredClients.length, query);
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+      );
     }
 
     const [assignments, total] = await Promise.all([

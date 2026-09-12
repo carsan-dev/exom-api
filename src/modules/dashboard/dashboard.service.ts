@@ -34,7 +34,10 @@ export class DashboardService {
       select: { role: true },
     });
 
-    if (!admin || (admin.role !== Role.ADMIN && admin.role !== Role.SUPER_ADMIN)) {
+    if (
+      !admin ||
+      (admin.role !== Role.ADMIN && admin.role !== Role.SUPER_ADMIN)
+    ) {
       throw new ForbiddenException('Access denied');
     }
 
@@ -51,7 +54,7 @@ export class DashboardService {
       recentFeedback,
       recentProgress,
       recentClients,
-      weeklyCompletedProgress,
+      topClients,
     ] = await Promise.all([
       this.prisma.user.count({
         where: {
@@ -171,37 +174,7 @@ export class DashboardService {
           },
         },
       }),
-      this.prisma.dayProgress.findMany({
-        where: {
-          training_completed: true,
-          date: {
-            gte: weekStart,
-            lte: weekEnd,
-          },
-          client: { is: clientWhere },
-        },
-        select: {
-          client_id: true,
-          client: {
-            select: {
-              id: true,
-              email: true,
-              profile: {
-                select: {
-                  first_name: true,
-                  last_name: true,
-                  avatar_url: true,
-                },
-              },
-              streak: {
-                select: {
-                  current_days: true,
-                },
-              },
-            },
-          },
-        },
-      }),
+      this.getTopClients(adminId, admin.role, weekStart, weekEnd),
     ]);
 
     // Merge the different activity sources into a single chronological feed.
@@ -249,47 +222,11 @@ export class DashboardService {
         ),
       ),
     ]
-      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .sort(
+        (left, right) =>
+          Date.parse(right.createdAt) - Date.parse(left.createdAt),
+      )
       .slice(0, 10);
-
-    const topClientsById = new Map<
-      string,
-      {
-        completedDays: number;
-        client: DashboardClient & { streak: { current_days: number } | null };
-      }
-    >();
-
-    for (const item of weeklyCompletedProgress) {
-      const existing = topClientsById.get(item.client_id);
-
-      if (existing) {
-        existing.completedDays += 1;
-        continue;
-      }
-
-      topClientsById.set(item.client_id, {
-        completedDays: 1,
-        client: item.client,
-      });
-    }
-
-    const topClients = [...topClientsById.entries()]
-      .sort((left, right) => {
-        if (right[1].completedDays !== left[1].completedDays) {
-          return right[1].completedDays - left[1].completedDays;
-        }
-
-        return this.getClientName(left[1].client).localeCompare(this.getClientName(right[1].client));
-      })
-      .slice(0, 5)
-      .map(([clientId, item]) => ({
-        clientId,
-        clientName: this.getClientName(item.client),
-        clientAvatar: item.client.profile?.avatar_url ?? null,
-        completedDays: item.completedDays,
-        currentStreak: item.client.streak?.current_days ?? 0,
-      }));
 
     return {
       stats: {
@@ -302,6 +239,33 @@ export class DashboardService {
       recentActivity,
       topClients,
     };
+  }
+
+  private getTopClients(adminId: string, role: Role, start: Date, end: Date) {
+    // ECMAScript trim whitespace, including NBSP/BOM; preserve the display name.
+    const whitespace =
+      '\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
+    const scope =
+      role === Role.SUPER_ADMIN
+        ? Prisma.sql`TRUE`
+        : Prisma.sql`EXISTS (
+      SELECT 1 FROM admin_client_assignments a WHERE a.client_id=u.id AND a.admin_id=${adminId} AND a.is_active)`;
+    return this.prisma.$queryRaw<
+      Array<{
+        clientId: string;
+        clientName: string;
+        clientAvatar: string | null;
+        completedDays: number;
+        currentStreak: number;
+      }>
+    >(Prisma.sql`
+      SELECT u.id AS "clientId", coalesce(nullif(concat_ws(' ', nullif(btrim(p.first_name, ${whitespace}), ''), nullif(btrim(p.last_name, ${whitespace}), '')), ''), u.email) AS "clientName",
+        p.avatar_url AS "clientAvatar", d.completed::integer AS "completedDays", coalesce(s.current_days,0) AS "currentStreak"
+      FROM (SELECT client_id, count(*) completed FROM day_progress WHERE training_completed AND date>=${start} AND date<=${end} GROUP BY client_id) d
+      JOIN users u ON u.id=d.client_id LEFT JOIN profiles p ON p.user_id=u.id LEFT JOIN streaks s ON s.client_id=u.id
+      WHERE u.role='CLIENT' AND ${scope}
+      ORDER BY d.completed DESC, (coalesce(nullif(concat_ws(' ', nullif(btrim(p.first_name, ${whitespace}), ''), nullif(btrim(p.last_name, ${whitespace}), '')), ''), u.email)) COLLATE public.exom_search_locale, u.id
+      LIMIT 5`);
   }
 
   private buildClientWhere(adminId: string, adminRole: Role): Prisma.UserWhereInput {

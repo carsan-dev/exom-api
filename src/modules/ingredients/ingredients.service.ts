@@ -1,3 +1,5 @@
+import { ingredientPage } from '../../common/catalog-page';
+import { inPageOrder } from '../../common/query-page';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,14 +19,6 @@ type IngredientSortField =
   | 'fat_per_100g'
   | 'updated_at'
   | 'created_at';
-
-function normalizeSearchText(value: string) {
-  return value
-    .toLocaleLowerCase('es-ES')
-    .normalize('NFD')
-    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
-    .normalize('NFC');
-}
 
 function getDateRange(
   from?: string,
@@ -140,22 +134,16 @@ export class IngredientsService {
     };
 
     if (normalizedSearch) {
-      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
-      const ingredients = await this.prisma.ingredient.findMany({
-        where,
-        orderBy: this.getIngredientOrderBy(sortBy, sortDir),
-      });
-
-      const filteredIngredients = ingredients.filter((ingredient) =>
-        normalizeSearchText(ingredient.name).includes(normalizedSearchTerm),
+      return this.prisma.$transaction(
+        async (tx) => {
+          const page = await ingredientPage(tx, query, sortBy, sortDir);
+          const rows = await tx.ingredient.findMany({
+            where: { id: { in: page.ids } },
+          });
+          return paginate(inPageOrder(page.ids, rows), page.total, query);
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
       );
-
-      const pageData = filteredIngredients.slice(
-        skip,
-        skip + pageSize,
-      );
-
-      return paginate(pageData, filteredIngredients.length, query);
     }
 
     const [data, total] = await Promise.all([

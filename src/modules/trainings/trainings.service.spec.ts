@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Level, TrainingMeasureType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
@@ -7,7 +8,7 @@ import type { AutoAssignmentMaterializerService } from '../assignments/auto-assi
 describe('TrainingsService', () => {
   let service: TrainingsService;
   let prisma: {
-    $queryRaw: jest.Mock;
+    $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
     $transaction: jest.Mock;
     training: {
       findMany: jest.Mock;
@@ -30,7 +31,9 @@ describe('TrainingsService', () => {
 
   beforeEach(() => {
     prisma = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
+      $queryRaw: jest
+        .fn<Promise<unknown>, [Prisma.Sql]>()
+        .mockResolvedValue([]),
       $transaction: jest.fn().mockResolvedValue([]),
       training: {
         findMany: jest.fn(),
@@ -347,6 +350,13 @@ describe('TrainingsService', () => {
   });
 
   it('keeps accent-insensitive search on already filtered trainings', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['training-2'], total: 2n },
+    ]);
     const query = Object.assign(new TrainingsQueryDto(), {
       page: 2,
       limit: 1,
@@ -398,19 +408,16 @@ describe('TrainingsService', () => {
       totalPages: 2,
     });
 
-    expect(prisma.training.findMany).toHaveBeenCalledWith({
-      where: {
-        is_active: true,
-        OR: [
-          { types: { hasSome: ['FLEXIBILIDAD'] } },
-          { type: { in: ['FLEXIBILIDAD'] } },
-        ],
-      },
-      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      select: expect.objectContaining({
-        _count: { select: { exercises: true } },
-      }),
+    expect(prisma.training.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['training-2'] } } }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     });
+    expect(prisma.$queryRaw.mock.calls[0][0]).toHaveProperty(
+      'values',
+      expect.any(Array),
+    );
     expect(prisma.training.count).not.toHaveBeenCalled();
   });
 

@@ -1,3 +1,5 @@
+import { trainingPage } from '../../common/catalog-page';
+import { inPageOrder } from '../../common/query-page';
 import {
   applyRirTargets,
   loadRirTargets,
@@ -140,14 +142,6 @@ const trainingListSelect = {
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
 const DEFAULT_CATALOG_COLOR = '#6B7280';
-
-function normalizeSearchText(value: string) {
-  return value
-    .toLocaleLowerCase('es-ES')
-    .normalize('NFD')
-    .replace(/([aeiou])([\u0300-\u036f]+)/g, '$1')
-    .normalize('NFC');
-}
 
 @Injectable()
 export class TrainingsService {
@@ -1351,22 +1345,27 @@ export class TrainingsService {
     };
 
     if (normalizedSearch) {
-      const normalizedSearchTerm = normalizeSearchText(normalizedSearch);
-      const trainings = await this.prisma.training.findMany({
-        where,
-        orderBy: this.getTrainingOrderBy(sortBy, sortDir),
-        select: trainingListSelect,
-      });
-
-      const filteredTrainings = trainings.filter((training) =>
-        normalizeSearchText(training.name).includes(normalizedSearchTerm),
+      return this.prisma.$transaction(
+        async (tx) => {
+          const page = await trainingPage(
+            tx,
+            query,
+            normalizedTypeFilters,
+            sortBy,
+            sortDir,
+          );
+          const rows = await tx.training.findMany({
+            where: { id: { in: page.ids } },
+            select: trainingListSelect,
+          });
+          return paginate(
+            this.serializeTrainingList(inPageOrder(page.ids, rows)),
+            page.total,
+            query,
+          );
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
       );
-
-      const pageData = this.serializeTrainingList(
-        filteredTrainings.slice(skip, skip + pageSize),
-      );
-
-      return paginate(pageData, filteredTrainings.length, query);
     }
 
     const [data, total] = await Promise.all([

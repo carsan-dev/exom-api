@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { MealType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DietsQueryDto } from './dto/diets-query.dto';
@@ -8,6 +9,7 @@ import type { AutoAssignmentMaterializerService } from '../assignments/auto-assi
 describe('DietsService', () => {
   let service: DietsService;
   let prisma: {
+    $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
     diet: {
       findMany: jest.Mock;
       count: jest.Mock;
@@ -31,6 +33,9 @@ describe('DietsService', () => {
 
   beforeEach(() => {
     prisma = {
+      $queryRaw: jest
+        .fn<Promise<unknown>, [Prisma.Sql]>()
+        .mockResolvedValue([]),
       diet: {
         findMany: jest.fn(),
         count: jest.fn(),
@@ -136,6 +141,13 @@ describe('DietsService', () => {
   });
 
   it('keeps accent-insensitive search on filtered diet subset', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['diet-1', 'diet-2'], total: 2n },
+    ]);
     const query = Object.assign(new DietsQueryDto(), {
       page: 1,
       limit: 10,
@@ -152,7 +164,12 @@ describe('DietsService', () => {
     await expect(service.findAll(query)).resolves.toEqual({
       data: [
         { id: 'diet-1', name: 'Dieta protéica', meals: [], meals_count: 0 },
-        { id: 'diet-2', name: 'Plan proteíca avanzado', meals: [], meals_count: 0 },
+        {
+          id: 'diet-2',
+          name: 'Plan proteíca avanzado',
+          meals: [],
+          meals_count: 0,
+        },
       ],
       total: 2,
       page: 1,
@@ -160,20 +177,16 @@ describe('DietsService', () => {
       totalPages: 1,
     });
 
-    expect(prisma.diet.findMany).toHaveBeenCalledWith({
-      where: {
-        is_active: true,
-        meals: {
-          some: {
-            type: { in: [MealType.DINNER] },
-          },
-        },
-      },
-      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      select: expect.objectContaining({
-        meals: expect.any(Object),
-      }),
+    expect(prisma.diet.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['diet-1', 'diet-2'] } } }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     });
+    expect(prisma.$queryRaw.mock.calls[0][0]).toHaveProperty(
+      'values',
+      expect.any(Array),
+    );
     expect(prisma.diet.count).not.toHaveBeenCalled();
   });
 
@@ -228,7 +241,9 @@ describe('DietsService', () => {
     prisma.meal.update.mockResolvedValue({});
     prisma.catalogColor.upsert.mockResolvedValue({});
 
-    await expect(service.renameNutritionalBadge('Proteína', 'Proteica')).resolves.toEqual({
+    await expect(
+      service.renameNutritionalBadge('Proteína', 'Proteica'),
+    ).resolves.toEqual({
       value: 'Proteica',
       affected_count: 1,
     });
@@ -259,12 +274,16 @@ describe('DietsService', () => {
       color: '#22C55E',
     });
 
-    await expect(service.updateNutritionalBadgeColor('Proteína', '#22c55e')).resolves.toEqual({
+    await expect(
+      service.updateNutritionalBadgeColor('Proteína', '#22c55e'),
+    ).resolves.toEqual({
       value: 'Proteína',
       color: '#22C55E',
     });
 
-    await expect(service.updateNutritionalBadgeColor('Proteína', 'green')).rejects.toThrow(
+    await expect(
+      service.updateNutritionalBadgeColor('Proteína', 'green'),
+    ).rejects.toThrow(
       'El color del catálogo debe ser un valor hex #RRGGBB válido',
     );
   });

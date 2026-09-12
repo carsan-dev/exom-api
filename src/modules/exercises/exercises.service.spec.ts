@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Level } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExercisesQueryDto } from './dto/exercises-query.dto';
@@ -6,6 +7,8 @@ import { ExercisesService } from './exercises.service';
 describe('ExercisesService', () => {
   let service: ExercisesService;
   let prisma: {
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
     exercise: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -16,6 +19,10 @@ describe('ExercisesService', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(),
+      $queryRaw: jest
+        .fn<Promise<unknown>, [Prisma.Sql]>()
+        .mockResolvedValue([]),
       exercise: {
         findMany: jest.fn(),
         findFirst: jest.fn(),
@@ -46,7 +53,13 @@ describe('ExercisesService', () => {
     prisma.exercise.count.mockResolvedValue(12);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'exercise-1', training_usage_count: 0, is_used_in_training: false }],
+      data: [
+        {
+          id: 'exercise-1',
+          training_usage_count: 0,
+          is_used_in_training: false,
+        },
+      ],
       total: 12,
       page: 2,
       limit: 10,
@@ -62,17 +75,19 @@ describe('ExercisesService', () => {
     expect(prisma.exercise.count).toHaveBeenCalledWith({
       where: expectedWhere,
     });
-    expect(prisma.trainingExercise.findMany).toHaveBeenCalledWith({
-      where: {
-        exercise_id: { in: ['exercise-1'] },
-        training: { is_active: true },
-      },
-      select: { exercise_id: true, training_id: true },
-      distinct: ['exercise_id', 'training_id'],
-    });
+    expect(prisma.$queryRaw).toHaveBeenCalledWith(
+      expect.objectContaining({ values: ['exercise-1'] }),
+    );
   });
 
-  it('normalizes search after applying prisma filters and paginates in memory', async () => {
+  it('hydrates only the normalized SQL search page', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['exercise-2'], total: 2n },
+    ]);
     const query = Object.assign(new ExercisesQueryDto(), {
       page: 2,
       limit: 1,
@@ -87,30 +102,45 @@ describe('ExercisesService', () => {
     ]);
 
     await expect(service.findAll(query)).resolves.toEqual({
-      data: [{ id: 'exercise-2', name: 'Sentadílla búlgara', training_usage_count: 0, is_used_in_training: false }],
+      data: [
+        {
+          id: 'exercise-2',
+          name: 'Sentadílla búlgara',
+          training_usage_count: 0,
+          is_used_in_training: false,
+        },
+      ],
       total: 2,
       page: 2,
       limit: 1,
       totalPages: 2,
     });
 
-    expect(prisma.exercise.findMany).toHaveBeenCalledWith({
-      where: {
-        is_active: true,
-        muscle_groups: { hasSome: ['Pierna'] },
-      },
-      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    expect(prisma.exercise.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['exercise-2'] } } }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     });
+    expect(prisma.$queryRaw.mock.calls[0][0]).toHaveProperty(
+      'values',
+      expect.any(Array),
+    );
     expect(prisma.exercise.count).not.toHaveBeenCalled();
   });
 
   it('counts distinct active trainings for current page only', async () => {
-    const query = Object.assign(new ExercisesQueryDto(), { page: 1, limit: 10 });
-    prisma.exercise.findMany.mockResolvedValue([{ id: 'exercise-1' }, { id: 'exercise-2' }]);
+    const query = Object.assign(new ExercisesQueryDto(), {
+      page: 1,
+      limit: 10,
+    });
+    prisma.exercise.findMany.mockResolvedValue([
+      { id: 'exercise-1' },
+      { id: 'exercise-2' },
+    ]);
     prisma.exercise.count.mockResolvedValue(2);
-    prisma.trainingExercise.findMany.mockResolvedValue([
-      { exercise_id: 'exercise-1', training_id: 'training-1' },
-      { exercise_id: 'exercise-1', training_id: 'training-2' },
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { exercise_id: 'exercise-1', count: 2n },
     ]);
 
     const result = await service.findAll(query);
@@ -121,6 +151,13 @@ describe('ExercisesService', () => {
   });
 
   it('filters used exercises before paginating', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['exercise-1'], total: 1n },
+    ]);
     const query = Object.assign(new ExercisesQueryDto(), {
       page: 1,
       limit: 10,
@@ -130,8 +167,8 @@ describe('ExercisesService', () => {
       { id: 'exercise-1' },
       { id: 'exercise-2' },
     ]);
-    prisma.trainingExercise.findMany.mockResolvedValue([
-      { exercise_id: 'exercise-1', training_id: 'training-1' },
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { exercise_id: 'exercise-1', count: 1n },
     ]);
 
     await expect(service.findAll(query)).resolves.toEqual({
@@ -151,6 +188,13 @@ describe('ExercisesService', () => {
   });
 
   it('filters unused exercises before paginating', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['exercise-2'], total: 1n },
+    ]);
     const query = Object.assign(new ExercisesQueryDto(), {
       page: 1,
       limit: 10,
@@ -160,8 +204,8 @@ describe('ExercisesService', () => {
       { id: 'exercise-1' },
       { id: 'exercise-2' },
     ]);
-    prisma.trainingExercise.findMany.mockResolvedValue([
-      { exercise_id: 'exercise-1', training_id: 'training-1' },
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { exercise_id: 'exercise-1', count: 1n },
     ]);
 
     const result = await service.findAll(query);
@@ -176,6 +220,13 @@ describe('ExercisesService', () => {
   });
 
   it('sorts by training usage count before paginating', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['exercise-3', 'exercise-1'], total: 3n },
+    ]);
     const query = Object.assign(new ExercisesQueryDto(), {
       page: 1,
       limit: 2,
@@ -187,10 +238,9 @@ describe('ExercisesService', () => {
       { id: 'exercise-2' },
       { id: 'exercise-3' },
     ]);
-    prisma.trainingExercise.findMany.mockResolvedValue([
-      { exercise_id: 'exercise-1', training_id: 'training-1' },
-      { exercise_id: 'exercise-3', training_id: 'training-1' },
-      { exercise_id: 'exercise-3', training_id: 'training-2' },
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { exercise_id: 'exercise-1', count: 1n },
+      { exercise_id: 'exercise-3', count: 2n },
     ]);
 
     const result = await service.findAll(query);

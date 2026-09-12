@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Level, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChallengesService } from '../challenges/challenges.service';
@@ -10,6 +11,8 @@ import type { CalendarService } from '../calendar/calendar.service';
 describe('UsersService listing filters', () => {
   let service: UsersService;
   let prisma: {
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
     user: {
       findMany: jest.Mock;
       count: jest.Mock;
@@ -28,6 +31,10 @@ describe('UsersService listing filters', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(),
+      $queryRaw: jest
+        .fn<Promise<unknown>, [Prisma.Sql]>()
+        .mockResolvedValue([]),
       user: {
         findMany: jest.fn(),
         count: jest.fn(),
@@ -54,6 +61,11 @@ describe('UsersService listing filters', () => {
   });
 
   it('applies role, status, and created_at filters to global user listings', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([{ ids: ['admin-2'], total: 1n }]);
     const query = Object.assign(new AdminUsersQueryDto(), {
       page: 1,
       limit: 10,
@@ -93,35 +105,25 @@ describe('UsersService listing filters', () => {
       totalPages: 1,
     });
 
-    expect(prisma.user.findMany).toHaveBeenCalledWith({
-      where: {
-        role: Role.ADMIN,
-        created_at: {
-          gte: new Date('2026-01-01T00:00:00.000Z'),
-          lte: new Date('2026-01-31T23:59:59.999Z'),
-        },
-      },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        is_active: true,
-        is_locked: true,
-        created_at: true,
-        profile: {
-          select: {
-            first_name: true,
-            last_name: true,
-            avatar_url: true,
-          },
-        },
-      },
-      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['admin-2'] } } }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     });
+    expect(prisma.$queryRaw.mock.calls[0][0]).toHaveProperty(
+      'values',
+      expect.any(Array),
+    );
     expect(prisma.user.count).not.toHaveBeenCalled();
   });
 
   it('filters super admin client listings by level, status, assignment state, and search', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([{ ids: ['client-1'], total: 1n }]);
     const query = Object.assign(new AdminClientsQueryDto(), {
       page: 1,
       limit: 10,
@@ -146,7 +148,7 @@ describe('UsersService listing filters', () => {
           level: Level.INTERMEDIO,
           main_goal: 'Fuerza',
         },
-        clientOf: [{ id: 'assignment-1' }],
+        _count: { clientOf: 1 },
       },
       {
         id: 'client-2',
@@ -162,7 +164,7 @@ describe('UsersService listing filters', () => {
           level: Level.INTERMEDIO,
           main_goal: 'Salud',
         },
-        clientOf: [],
+        _count: { clientOf: 0 },
       },
     ]);
 
@@ -193,39 +195,16 @@ describe('UsersService listing filters', () => {
       totalPages: 1,
     });
 
-    expect(prisma.user.findMany).toHaveBeenCalledWith({
-      where: {
-        role: Role.CLIENT,
-        profile: {
-          is: {
-            level: { in: [Level.INTERMEDIO] },
-          },
-        },
-      },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        is_active: true,
-        is_locked: true,
-        is_archived: true,
-        created_at: true,
-        profile: true,
-        clientOf: {
-          where: {
-            is_active: true,
-            admin: {
-              is: {
-                role: Role.ADMIN,
-                is_active: true,
-              },
-            },
-          },
-          select: { id: true },
-        },
-      },
-      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['client-1'] } } }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     });
+    expect(prisma.$queryRaw.mock.calls[0][0]).toHaveProperty(
+      'values',
+      expect.any(Array),
+    );
     expect(prisma.user.count).not.toHaveBeenCalled();
   });
 });

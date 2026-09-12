@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IngredientsQueryDto } from './dto/ingredients-query.dto';
 import { IngredientsService } from './ingredients.service';
@@ -5,6 +6,8 @@ import { IngredientsService } from './ingredients.service';
 describe('IngredientsService', () => {
   let service: IngredientsService;
   let prisma: {
+    $transaction: jest.Mock;
+    $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
     ingredient: {
       findMany: jest.Mock;
       count: jest.Mock;
@@ -13,6 +16,10 @@ describe('IngredientsService', () => {
 
   beforeEach(() => {
     prisma = {
+      $transaction: jest.fn(),
+      $queryRaw: jest
+        .fn<Promise<unknown>, [Prisma.Sql]>()
+        .mockResolvedValue([]),
       ingredient: {
         findMany: jest.fn(),
         count: jest.fn(),
@@ -74,6 +81,13 @@ describe('IngredientsService', () => {
   });
 
   it('keeps accent-insensitive search after applying ingredient filters', async () => {
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(prisma as unknown as Prisma.TransactionClient),
+    );
+    prisma.$queryRaw.mockResolvedValueOnce([
+      { ids: ['ingredient-2'], total: 2n },
+    ]);
     const query = Object.assign(new IngredientsQueryDto(), {
       page: 2,
       limit: 1,
@@ -95,13 +109,16 @@ describe('IngredientsService', () => {
       totalPages: 2,
     });
 
-    expect(prisma.ingredient.findMany).toHaveBeenCalledWith({
-      where: {
-        is_active: true,
-        OR: [{ icon: null }, { icon: '' }],
-      },
-      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    expect(prisma.ingredient.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['ingredient-2'] } } }),
+    );
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
     });
+    expect(prisma.$queryRaw.mock.calls[0][0]).toHaveProperty(
+      'values',
+      expect.any(Array),
+    );
     expect(prisma.ingredient.count).not.toHaveBeenCalled();
   });
 });

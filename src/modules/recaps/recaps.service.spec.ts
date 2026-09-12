@@ -364,7 +364,11 @@ describe('RecapsService', () => {
     expect(prisma.weeklyRecap.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          client_id: { in: ['client-1'] },
+          client: {
+            is: {
+              clientOf: { some: { admin_id: 'admin-1', is_active: true } },
+            },
+          },
           archived_at: null,
         }),
         select: expect.objectContaining({
