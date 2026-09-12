@@ -44,18 +44,23 @@ export class MetricsService {
   ) {}
 
   private normalizeMetricDate(date?: string) {
-    const now = date != null
-      ? (() => {
-          const [year, month, day] = date.split('-').map(Number);
-          return new Date(Date.UTC(year, month - 1, day));
-        })()
-      : new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const now =
+      date != null
+        ? (() => {
+            const [year, month, day] = date.split('-').map(Number);
+            return new Date(Date.UTC(year, month - 1, day));
+          })()
+        : new Date();
+    return new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
   }
 
   private assertDateIsNotFuture(date: Date) {
     if (date.getTime() > this.normalizeMetricDate().getTime()) {
-      throw new BadRequestException('La fecha de la métrica no puede ser futura');
+      throw new BadRequestException(
+        'La fecha de la métrica no puede ser futura',
+      );
     }
   }
 
@@ -76,10 +81,21 @@ export class MetricsService {
     });
   }
 
-  private async refreshDerivedData(clientId: string) {
+  private async refreshDerivedData(clientId: string, weightAffected: boolean) {
     await this.syncCurrentWeight(clientId);
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
+    if (!weightAffected) return;
+    await this.challengesService.recalculateAutomaticProgress(
+      clientId,
+      undefined,
+      undefined,
+      ['WEIGHT_LOGS'],
+    );
+    await this.achievementsService.evaluateAutomaticAchievementsForUser(
+      clientId,
+      undefined,
+      undefined,
+      ['WEIGHT_LOGS', 'CHALLENGES_COMPLETED'],
+    );
   }
 
   private throwMetricConflict(error: unknown): never {
@@ -111,12 +127,9 @@ export class MetricsService {
       update: metricData,
     });
 
-    if (metricData.weight_kg != null) {
-      await this.syncCurrentWeight(clientId);
+    if (metricData.weight_kg !== undefined) {
+      await this.refreshDerivedData(clientId, true);
     }
-
-    await this.challengesService.recalculateAutomaticProgress(clientId);
-    await this.achievementsService.evaluateAutomaticAchievementsForUser(clientId);
 
     return metric;
   }
@@ -139,7 +152,7 @@ export class MetricsService {
       this.throwMetricConflict(error);
     }
 
-    await this.refreshDerivedData(clientId);
+    await this.refreshDerivedData(clientId, metricData.weight_kg != null);
     return metric;
   }
 
@@ -174,7 +187,10 @@ export class MetricsService {
       this.throwMetricConflict(error);
     }
 
-    await this.refreshDerivedData(clientId);
+    await this.refreshDerivedData(
+      clientId,
+      existing.weight_kg != null || metricData.weight_kg != null,
+    );
     return metric;
   }
 

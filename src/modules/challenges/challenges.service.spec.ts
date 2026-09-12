@@ -74,7 +74,7 @@ describe('ChallengesService', () => {
     jest.useRealTimers();
   });
 
-  it('re-evaluates achievements after loading my challenges', async () => {
+  it('loads my challenges without reconciliation or notifications', async () => {
     prisma.challengeClient.findMany.mockResolvedValue([{ id: 'assignment-1' }]);
     const recalculate = jest
       .spyOn(service, 'recalculateAutomaticProgress')
@@ -84,10 +84,10 @@ describe('ChallengesService', () => {
       { id: 'assignment-1' },
     ]);
 
-    expect(recalculate).toHaveBeenCalledWith('client-1');
+    expect(recalculate).not.toHaveBeenCalled();
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
-    ).toHaveBeenCalledWith('client-1', prisma as unknown as PrismaService);
+    ).not.toHaveBeenCalled();
   });
 
   it('re-evaluates achievements after updating manual challenge progress', async () => {
@@ -110,7 +110,12 @@ describe('ChallengesService', () => {
 
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
-    ).toHaveBeenCalledWith('client-1', prisma as unknown as PrismaService);
+    ).toHaveBeenCalledWith(
+      'client-1',
+      prisma as unknown as PrismaService,
+      undefined,
+      ['CHALLENGES_COMPLETED'],
+    );
     expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
 

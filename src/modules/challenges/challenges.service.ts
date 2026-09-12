@@ -1,3 +1,4 @@
+import { AggregateRule } from '../../common/progress/aggregate-scope';
 import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import {
   BadRequestException,
@@ -101,6 +102,8 @@ export class ChallengesService {
     await this.achievementsService.evaluateAutomaticAchievementsForUser(
       clientId,
       prisma,
+      undefined,
+      ['CHALLENGES_COMPLETED'],
     );
   }
 
@@ -149,9 +152,13 @@ export class ChallengesService {
     return normalized;
   }
 
-  private getChallengeWindow(assignedAt: Date, deadline: Date | null) {
+  private getChallengeWindow(
+    assignedAt: Date,
+    deadline: Date | null,
+    asOf = new Date(),
+  ) {
     const start = this.normalizeDate(assignedAt);
-    const now = new Date();
+    const now = asOf;
     const deadlineEnd = deadline ? this.normalizeEndOfDay(deadline) : now;
     const end = deadlineEnd.getTime() < now.getTime() ? deadlineEnd : now;
 
@@ -821,8 +828,9 @@ export class ChallengesService {
       weight_kg: number | null;
     }>,
     streak: { current_days: number } | null,
+    asOf: Date,
   ) {
-    const { start, end } = this.getChallengeWindow(assignedAt, deadline);
+    const { start, end } = this.getChallengeWindow(assignedAt, deadline, asOf);
 
     switch (ruleKey) {
       case 'TRAINING_DAYS':
@@ -1008,9 +1016,6 @@ export class ChallengesService {
   }
 
   async findMyChallenges(clientId: string) {
-    await this.recalculateAutomaticProgress(clientId);
-    await this.evaluateAchievementsForClient(clientId);
-
     return this.prisma.challengeClient.findMany({
       where: { client_id: clientId },
       include: { challenge: true },
@@ -1295,12 +1300,20 @@ export class ChallengesService {
     clientId: string,
     prisma: PrismaClientLike = this.prisma,
     challengeIds?: string[],
+    rules?: AggregateRule[],
+    asOf = new Date(),
   ): Promise<void> {
     if (prisma === this.prisma) {
       return this.prisma.$transaction(
         async (tx) => {
           await lockClientDayProgress(tx, clientId);
-          return this.recalculateAutomaticProgress(clientId, tx, challengeIds);
+          return this.recalculateAutomaticProgress(
+            clientId,
+            tx,
+            challengeIds,
+            rules,
+            asOf,
+          );
         },
         { maxWait: 5000, timeout: 30000 },
       );
@@ -1310,6 +1323,7 @@ export class ChallengesService {
         client_id: clientId,
         challenge: {
           is_manual: false,
+          ...(rules && { rule_key: { in: rules } }),
           ...(challengeIds?.length ? { id: { in: challengeIds } } : {}),
         },
       },
@@ -1351,32 +1365,39 @@ export class ChallengesService {
       return;
     }
 
+    const needed = new Set(assignments.map((a) => a.challenge.rule_key));
     const [dayProgress, bodyMetrics, streak] = await Promise.all([
-      prisma.dayProgress.findMany({
-        where: {
-          client_id: clientId,
-          date: { gte: earliestAssignedAt },
-        },
-        select: {
-          date: true,
-          training_completed: true,
-          meals_completed: true,
-        },
-      }),
-      prisma.bodyMetric.findMany({
-        where: {
-          client_id: clientId,
-          date: { gte: earliestAssignedAt },
-        },
-        select: {
-          date: true,
-          weight_kg: true,
-        },
-      }),
-      prisma.streak.findUnique({
-        where: { client_id: clientId },
-        select: { current_days: true },
-      }),
+      needed.has('TRAINING_DAYS') || needed.has('MEAL_CHECKINS')
+        ? prisma.dayProgress.findMany({
+            where: {
+              client_id: clientId,
+              date: { gte: earliestAssignedAt },
+            },
+            select: {
+              date: true,
+              training_completed: true,
+              meals_completed: true,
+            },
+          })
+        : [],
+      needed.has('WEIGHT_LOGS')
+        ? prisma.bodyMetric.findMany({
+            where: {
+              client_id: clientId,
+              date: { gte: earliestAssignedAt },
+            },
+            select: {
+              date: true,
+              weight_kg: true,
+            },
+          })
+        : [],
+      needed.has('STREAK_DAYS')
+        ? prisma.streak.findUnique({
+            where: { client_id: clientId },
+            select: { current_days: true },
+          })
+        : null,
     ]);
 
     await Promise.all(
@@ -1388,8 +1409,17 @@ export class ChallengesService {
           dayProgress,
           bodyMetrics,
           streak,
+          asOf,
         );
         const isCompleted = currentValue >= assignment.challenge.target_value;
+        if (
+          assignment.current_value === currentValue &&
+          assignment.is_completed === isCompleted &&
+          (isCompleted
+            ? assignment.completed_at !== null
+            : assignment.completed_at === null)
+        )
+          return;
 
         await prisma.challengeClient.update({
           where: {

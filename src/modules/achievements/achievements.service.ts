@@ -1,3 +1,4 @@
+import { AggregateRule } from '../../common/progress/aggregate-scope';
 import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import {
   BadRequestException,
@@ -387,12 +388,17 @@ export class AchievementsService {
   private async resolveAutomaticAchievements(
     achievementIds: string[] | undefined,
     prisma: PrismaClientLike = this.prisma,
+    rules?: AggregateRule[],
   ) {
     if (!achievementIds?.length) {
       return prisma.achievement.findMany({
         where: {
           criteria_type: {
-            in: ACHIEVEMENT_CRITERIA_TYPES.filter((type) => type !== 'CUSTOM'),
+            in: ACHIEVEMENT_CRITERIA_TYPES.filter(
+              (type) =>
+                type !== 'CUSTOM' &&
+                (!rules || rules.some((rule) => rule === type)),
+            ),
           },
         },
         select: {
@@ -442,7 +448,10 @@ export class AchievementsService {
       );
     }
 
-    return achievements;
+    return achievements.filter(
+      (achievement) =>
+        !rules || rules.some((rule) => rule === achievement.criteria_type),
+    );
   }
 
   private async evaluateTrainingDaysByType(
@@ -803,8 +812,6 @@ export class AchievementsService {
   }
 
   async findMyAchievements(userId: string) {
-    await this.evaluateAutomaticAchievementsForUser(userId);
-
     return this.prisma.userAchievement.findMany({
       where: { user_id: userId },
       include: { achievement: true },
@@ -1012,42 +1019,55 @@ export class AchievementsService {
   async evaluateUserAchievementMetrics(
     userId: string,
     prisma: PrismaClientLike = this.prisma,
+    rules?: AggregateRule[],
+    trainingTypes = true,
   ) {
+    const needs = (rule: AggregateRule) => !rules || rules.includes(rule);
     const [completedTrainingEntries, completedChallenges, weightLogs, streak] =
       await Promise.all([
-        prisma.dayProgress.findMany({
-          where: {
-            client_id: userId,
-            training_completed: true,
-          },
-          select: { date: true },
-        }),
-        prisma.challengeClient.count({
-          where: {
-            client_id: userId,
-            is_completed: true,
-          },
-        }),
-        prisma.bodyMetric.count({
-          where: {
-            client_id: userId,
-            weight_kg: { not: null },
-          },
-        }),
-        prisma.streak.findUnique({
-          where: { client_id: userId },
-          select: { current_days: true },
-        }),
+        needs('TRAINING_DAYS')
+          ? prisma.dayProgress.findMany({
+              where: {
+                client_id: userId,
+                training_completed: true,
+              },
+              select: { date: true },
+            })
+          : [],
+        needs('CHALLENGES_COMPLETED')
+          ? prisma.challengeClient.count({
+              where: {
+                client_id: userId,
+                is_completed: true,
+              },
+            })
+          : 0,
+        needs('WEIGHT_LOGS')
+          ? prisma.bodyMetric.count({
+              where: {
+                client_id: userId,
+                weight_kg: { not: null },
+              },
+            })
+          : 0,
+        needs('STREAK_DAYS')
+          ? prisma.streak.findUnique({
+              where: { client_id: userId },
+              select: { current_days: true },
+            })
+          : null,
       ]);
 
     const completedTrainingDates = completedTrainingEntries.map(
-      (entry) => entry.date,
+      (entry: { date: Date }) => entry.date,
     );
-    const trainingDaysByType = await this.evaluateTrainingDaysByType(
-      userId,
-      completedTrainingDates,
-      prisma,
-    );
+    const trainingDaysByType = trainingTypes
+      ? await this.evaluateTrainingDaysByType(
+          userId,
+          completedTrainingDates,
+          prisma,
+        )
+      : {};
 
     return {
       trainingDays: completedTrainingEntries.length,
@@ -1062,6 +1082,7 @@ export class AchievementsService {
     userId: string,
     prisma: PrismaClientLike = this.prisma,
     achievementIds?: string[],
+    rules?: AggregateRule[],
   ): Promise<{
     user_id: string;
     evaluated: number;
@@ -1076,6 +1097,7 @@ export class AchievementsService {
             userId,
             tx,
             achievementIds,
+            rules,
           );
         },
         { maxWait: 5000, timeout: 30000 },
@@ -1084,6 +1106,7 @@ export class AchievementsService {
     const achievements = await this.resolveAutomaticAchievements(
       achievementIds,
       prisma,
+      rules,
     );
 
     if (achievements.length === 0) {
@@ -1095,7 +1118,16 @@ export class AchievementsService {
       };
     }
 
-    const metrics = await this.evaluateUserAchievementMetrics(userId, prisma);
+    const metrics = await this.evaluateUserAchievementMetrics(
+      userId,
+      prisma,
+      rules,
+      achievements.some(
+        (a) =>
+          a.criteria_type === 'TRAINING_DAYS' &&
+          !!this.parseRuleConfig(a.rule_config)?.training_type,
+      ),
+    );
     const syncResult = await this.syncAutomaticAchievementsForUser(
       userId,
       achievements,

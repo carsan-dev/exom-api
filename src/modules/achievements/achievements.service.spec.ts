@@ -50,6 +50,30 @@ describe('AchievementsService', () => {
     sendInternalTemplate: jest.Mock;
   };
 
+  it('P7-01-R2: explicit achievement IDs still respect the affected rule filter', async () => {
+    prisma.achievement.findMany.mockResolvedValue([
+      {
+        id: 'training-achievement',
+        name: 'Training',
+        criteria_type: 'TRAINING_DAYS',
+        criteria_value: 1,
+        rule_config: null,
+      },
+    ]);
+    prisma.userAchievement.findMany.mockResolvedValue([]);
+    const metrics = jest.spyOn(service, 'evaluateUserAchievementMetrics');
+    expect(
+      await service.evaluateAutomaticAchievementsForUser(
+        'client-1',
+        undefined,
+        ['training-achievement'],
+        ['WEIGHT_LOGS'],
+      ),
+    ).toMatchObject({ evaluated: 0 });
+    expect(metrics).not.toHaveBeenCalled();
+    expect(prisma.userAchievement.deleteMany).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     prisma = {
       $transaction: jest.fn(

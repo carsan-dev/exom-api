@@ -2,7 +2,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
 import { MetricsService } from './metrics.service';
-
 describe('MetricsService', () => {
   let service: MetricsService;
   let prisma: {
@@ -115,12 +114,12 @@ describe('MetricsService', () => {
       },
       update: { sleep_hours: 7.5 },
     });
-    expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
-      'client-1',
-    );
+    expect(
+      challengesService.recalculateAutomaticProgress,
+    ).not.toHaveBeenCalled();
     expect(
       achievementsService.evaluateAutomaticAchievementsForUser,
-    ).toHaveBeenCalledWith('client-1');
+    ).not.toHaveBeenCalled();
   });
 
   it('finds the latest metric for a specific date', async () => {
@@ -165,8 +164,18 @@ describe('MetricsService', () => {
       where: { user_id: 'client-1' },
       data: { current_weight: 72.5 },
     });
-    expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith('client-1');
-    expect(achievementsService.evaluateAutomaticAchievementsForUser).toHaveBeenCalledWith('client-1');
+    expect(challengesService.recalculateAutomaticProgress).toHaveBeenCalledWith(
+      'client-1',
+      undefined,
+      undefined,
+      ['WEIGHT_LOGS'],
+    );
+    expect(
+      achievementsService.evaluateAutomaticAchievementsForUser,
+    ).toHaveBeenCalledWith('client-1', undefined, undefined, [
+      'WEIGHT_LOGS',
+      'CHALLENGES_COMPLETED',
+    ]);
   });
 
   it('edits date and clears optional metric values', async () => {
@@ -178,7 +187,10 @@ describe('MetricsService', () => {
         waist_cm: 82,
       })
       .mockResolvedValueOnce({ weight_kg: 69 });
-    prisma.bodyMetric.update.mockResolvedValue({ id: 'metric-admin-2', waist_cm: 81 });
+    prisma.bodyMetric.update.mockResolvedValue({
+      id: 'metric-admin-2',
+      waist_cm: 81,
+    });
 
     await service.updateForClient('client-1', 'metric-admin-2', {
       date: '2026-07-11',
