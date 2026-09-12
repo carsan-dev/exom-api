@@ -1,3 +1,4 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { ConfigService } from '@nestjs/config';
 import {
   ConflictException,
@@ -86,30 +87,11 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     });
   }
   beforeAll(async () => {
-    const target = new URL(url!);
-    if (
-      target.hostname !== '127.0.0.1' ||
-      !['55437', '55447'].includes(target.port) ||
-      target.pathname !== '/exom_review'
-    )
-      throw new Error('Identified isolated DB required');
     pool = new Pool({
       connectionString: url,
       application_name: 'f004-deletion-test',
     });
-    const result = await pool.query<{ data_directory: string }>(
-      'SHOW data_directory',
-    );
-    if (
-      ![
-        '/EXOM/phase4-20260906/pgdata',
-        '/EXOM/docs/operations/phase6-20260911/pgdata',
-        '/EXOM/docs/operations/phase7-20260912/pgdata',
-      ].some((directory) =>
-        result.rows[0].data_directory.replaceAll('\\', '/').endsWith(directory),
-      )
-    )
-      throw new Error('Unexpected cluster');
+    await assertTestDatabase(pool);
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   });
   beforeEach(async () => {

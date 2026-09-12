@@ -69,6 +69,7 @@ export class IngredientsController {
     @Body() dto: UpdateIngredientDto,
     @CurrentUser() _user: AuthenticatedUser,
   ) {
+    void _user; // Auth and role guards enforce access before this handler.
     return this.ingredientsService.update(id, dto);
   }
 
@@ -82,6 +83,7 @@ export class IngredientsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @CurrentUser() _user: AuthenticatedUser) {
+    void _user; // Auth and role guards enforce access before this handler.
     return this.ingredientsService.remove(id);
   }
 }

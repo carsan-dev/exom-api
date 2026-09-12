@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StreakCalculatorService } from './streak-calculator.service';
 describe('StreakCalculatorService', () => {

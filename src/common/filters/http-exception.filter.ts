@@ -17,9 +17,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let message = 'Error interno del servidor';
-    let error = 'Internal Server Error';
-    let code: string | undefined;
+    let message: unknown = 'Error interno del servidor';
+    let error: unknown = 'Internal Server Error';
+    let code: unknown;
     let recoveryReceipt: { operation_id: string } | undefined;
     let progressConflict:
       | { current_revision: number; current_progress: unknown }
@@ -31,9 +31,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (typeof res === 'string') {
         message = res;
       } else if (typeof res === 'object' && res !== null) {
-        message = (res as any).message || message;
-        error = (res as any).error || error;
-        code = (res as any).code;
+        message = (res as Record<string, unknown>).message || message;
+        error = (res as Record<string, unknown>).error || error;
+        code = (res as Record<string, unknown>).code;
         // Forward only explicitly public contracts, never arbitrary internals.
         const detail = res as Record<string, unknown>;
         if (
@@ -68,7 +68,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode: status,
       message,
       error,
-      ...(code && { code }),
+      ...(code ? { code } : {}),
       ...recoveryReceipt,
       ...progressConflict,
       timestamp: new Date().toISOString(),

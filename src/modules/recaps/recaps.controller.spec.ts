@@ -1,3 +1,4 @@
+import type { Server } from 'node:http';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { RecapStatus } from '@prisma/client';
@@ -7,7 +8,7 @@ import { RecapsController } from './recaps.controller';
 import { RecapsService } from './recaps.service';
 
 describe('RecapsController', () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
   const recapsService = {
     create: jest.fn(),
     findMyRecaps: jest.fn(),

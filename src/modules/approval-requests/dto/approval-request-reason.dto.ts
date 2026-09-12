@@ -9,7 +9,9 @@ export class ApprovalRequestReasonDto {
     description: 'Motivo humano de la solicitud de aprobación',
   })
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @MinLength(10)
   @MaxLength(500)

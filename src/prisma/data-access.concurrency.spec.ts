@@ -1,3 +1,4 @@
+import { assertTestDatabase } from '../../scripts/test-database.cjs';
 import { PrismaClient, Prisma, Role, Level, MealType } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -25,7 +26,7 @@ import {
   ChallengeAssignmentsQueryDto,
 } from '../modules/challenges/dto/challenges-query.dto';
 
-const enabled = process.env.PHASE8_DATABASE_URL;
+const enabled = process.env.TEST_DATABASE_URL;
 const normalize = (s: string) =>
   s
     .toLocaleLowerCase('es-ES')
@@ -55,13 +56,6 @@ const date = new Date('2026-01-10T10:00:00Z');
     let diets: DietsService;
     let trainings: TrainingsService;
     beforeAll(async () => {
-      const url = new URL(enabled!);
-      if (
-        url.hostname !== '127.0.0.1' ||
-        url.port !== '55448' ||
-        url.pathname !== '/phase8'
-      )
-        throw new Error('Use the identified phase8 disposable database');
       pool = new Pool(
         databasePoolConfig({
           DATABASE_URL: enabled,
@@ -70,15 +64,7 @@ const date = new Date('2026-01-10T10:00:00Z');
           DATABASE_POOL_MAX: '4',
         }),
       );
-      const identity = await pool.query<{ data_directory: string }>(
-        'SHOW data_directory',
-      );
-      if (
-        !String(identity.rows[0].data_directory)
-          .replaceAll('\\', '/')
-          .endsWith('/docs/operations/phase8-20260912/pgdata')
-      )
-        throw new Error('Wrong cluster');
+      await assertTestDatabase(pool);
       db = new PrismaClient({ adapter: new PrismaPg(pool) });
       const serviceDb = db as PrismaService;
       users = new UsersService(

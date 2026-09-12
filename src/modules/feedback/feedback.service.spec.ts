@@ -49,7 +49,8 @@ describe('FeedbackService', () => {
       consumePrepared: jest.fn().mockResolvedValue(undefined),
     };
     prisma.$transaction.mockImplementation(
-      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+      async (callback: (tx: typeof prisma) => unknown) =>
+        await callback(prisma),
     );
 
     service = new FeedbackService(

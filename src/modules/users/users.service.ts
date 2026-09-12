@@ -1148,13 +1148,13 @@ export class UsersService {
             where: { id: { in: exerciseIds } },
             select: { id: true, name: true },
           })
-        : Promise.resolve([]),
+        : Promise.resolve<{ id: string; name: string }[]>([]),
       mealIds.length
         ? this.prisma.meal.findMany({
             where: { id: { in: mealIds } },
             select: { id: true, name: true },
           })
-        : Promise.resolve([]),
+        : Promise.resolve<{ id: string; name: string }[]>([]),
     ]);
 
     const exerciseNames = new Map<string, string>(

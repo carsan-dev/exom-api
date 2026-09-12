@@ -8,13 +8,13 @@ function normalizeCatalogValue(value: unknown) {
 
 export class RenameCatalogValueDto {
   @ApiProperty({ example: 'Pectoral' })
-  @Transform(({ value }) => normalizeCatalogValue(value))
+  @Transform(({ value }: { value: unknown }) => normalizeCatalogValue(value))
   @IsString()
   @MinLength(1)
   from: string;
 
   @ApiProperty({ example: 'Pecho' })
-  @Transform(({ value }) => normalizeCatalogValue(value))
+  @Transform(({ value }: { value: unknown }) => normalizeCatalogValue(value))
   @IsString()
   @MinLength(1)
   to: string;
@@ -30,7 +30,7 @@ export class CatalogMutationResponseDto {
 
 export class DeleteCatalogValuesDto {
   @ApiProperty({ type: [String], example: ['Pecho', 'Espalda'] })
-  @Transform(({ value }) => {
+  @Transform(({ value }: { value: unknown }): unknown => {
     if (!Array.isArray(value)) return value;
     const unique = new Map<string, string>();
     for (const item of value) {

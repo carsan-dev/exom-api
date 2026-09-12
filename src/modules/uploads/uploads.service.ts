@@ -1124,8 +1124,8 @@ export class UploadsService {
     fileKey: string,
   ): Promise<{ file_url: string }> {
     const filePath = this.localFilePath(fileKey);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, buffer);
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, buffer);
     const port = this.config.get<number>('PORT', 3000);
     return {
       file_url: `http://localhost:${port}/api/v1/uploads/local/${fileKey}`,

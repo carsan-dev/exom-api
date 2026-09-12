@@ -1,11 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsIn,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  ValidateIf,
-} from 'class-validator';
+import { IsIn, IsNotEmpty, IsString, ValidateIf } from 'class-validator';
 
 export class ResolveApprovalRequestDto {
   @ApiProperty({ enum: ['approve', 'reject'] })

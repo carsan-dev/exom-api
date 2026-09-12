@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { BadRequestException } from '@nestjs/common';
 import { ChallengeType, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';

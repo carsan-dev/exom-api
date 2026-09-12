@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { ConflictException } from '@nestjs/common';
 import { ApprovalStatus, Role } from '@prisma/client';
 import { ModuleRef } from '@nestjs/core';
@@ -94,7 +95,9 @@ describe('ApprovalRequestsService', () => {
       reserveForApproval: jest.fn(),
       releaseApprovalUploads: jest.fn(),
     };
-    prisma.$transaction.mockImplementation((callback) => callback(prisma));
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
 
     service = new ApprovalRequestsService(
       prisma as unknown as PrismaService,

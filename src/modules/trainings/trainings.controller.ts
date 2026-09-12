@@ -205,6 +205,7 @@ export class TrainingsController {
     @Body() dto: UpdateTrainingDto,
     @CurrentUser() _user: AuthenticatedUser,
   ) {
+    void _user; // Auth and role guards enforce access before this handler.
     return this.trainingsService.update(id, dto);
   }
 
@@ -218,6 +219,7 @@ export class TrainingsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @CurrentUser() _user: AuthenticatedUser) {
+    void _user; // Auth and role guards enforce access before this handler.
     return this.trainingsService.remove(id);
   }
 }

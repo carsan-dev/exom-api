@@ -1,4 +1,5 @@
-﻿import { PrismaPg } from '@prisma/adapter-pg';
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
+import { PrismaPg } from '@prisma/adapter-pg';
 import {
   ManagedUploadPurpose,
   ManagedUploadStatus,
@@ -24,10 +25,8 @@ suite('P4 upload identity and feedback PostgreSQL races', () => {
   let uploads: UploadsService;
   let otherUploads: UploadsService;
   beforeAll(async () => {
-    const target = new URL(url!);
-    if (target.hostname !== '127.0.0.1' || target.pathname !== '/exom_review')
-      throw new Error('Isolated local test database required');
     pool = new Pool({ connectionString: url, application_name: id + '-one' });
+    await assertTestDatabase(pool);
     otherPool = new Pool({
       connectionString: url,
       application_name: id + '-two',

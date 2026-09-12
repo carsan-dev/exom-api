@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
 import { ChallengesService } from '../challenges/challenges.service';
@@ -18,7 +19,10 @@ describe('ProgressService', () => {
     dayProgress: {
       findUnique: jest.Mock;
       findMany: jest.Mock;
-      upsert: jest.Mock;
+      upsert: jest.Mock<
+        Promise<unknown>,
+        [{ update: { exercises_completed?: unknown } }]
+      >;
     };
     streak: {
       findUnique: jest.Mock;
@@ -54,7 +58,10 @@ describe('ProgressService', () => {
       dayProgress: {
         findUnique: jest.fn(),
         findMany: jest.fn(),
-        upsert: jest.fn(),
+        upsert: jest.fn<
+          Promise<unknown>,
+          [{ update: { exercises_completed?: unknown } }]
+        >(),
       },
       streak: {
         findUnique: jest.fn(),
@@ -103,7 +110,8 @@ describe('ProgressService', () => {
     );
 
     prisma.$transaction.mockImplementation(
-      async (callback: (tx: typeof prisma) => unknown) => callback(prisma),
+      async (callback: (tx: typeof prisma) => unknown) =>
+        await callback(prisma),
     );
 
     updateStreakSpy = jest

@@ -1,3 +1,5 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
+import { resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -21,7 +23,6 @@ import { ExecutionContext, INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Server } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
 import { Role } from '@prisma/client';
 import { NotificationsController } from '../notifications/notifications.controller';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -93,12 +94,6 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
   }
 
   beforeAll(async () => {
-    const target = new URL(url!);
-    if (
-      !['localhost', '127.0.0.1'].includes(target.hostname) ||
-      target.pathname !== '/exom_review'
-    )
-      throw Error('Dedicated local phase6 database required');
     pools = [
       new Pool({ connectionString: url }),
       new Pool({ connectionString: url }),
@@ -106,17 +101,7 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
     db = new PrismaClient({ adapter: new PrismaPg(pools[0]) });
     other = new PrismaClient({ adapter: new PrismaPg(pools[1]) });
     for (const [index, client] of [db, other].entries()) {
-      const [identity] = await client.$queryRaw<
-        { data_directory: string }[]
-      >`SHOW data_directory`;
-      expect(resolve(identity.data_directory)).toBe(
-        resolve(
-          process.cwd(),
-          new URL(process.env.TEST_DATABASE_URL ?? '').port === '55447'
-            ? '../docs/operations/phase7-20260912/pgdata'
-            : '../docs/operations/phase6-20260911/pgdata',
-        ),
-      );
+      await assertTestDatabase(pools[index]);
       Object.assign(client, { postgresqlPool: pools[index] });
     }
     isolated = true;

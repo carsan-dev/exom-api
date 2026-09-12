@@ -1,3 +1,4 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient, Role } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -71,32 +72,11 @@ const url = process.env.TEST_DATABASE_URL;
       });
     }
     beforeAll(async () => {
-      const target = new URL(url!);
-      if (
-        target.hostname !== '127.0.0.1' ||
-        !['55437', '55447'].includes(target.port) ||
-        target.pathname !== '/exom_review'
-      )
-        throw Error('ISOLATED_DB_REQUIRED');
       pool = new Pool({
         connectionString: url,
         application_name: 'multipart-057',
       });
-      const identity = (
-        await pool.query<{ directory: string }>(
-          "SELECT current_setting('data_directory') AS directory",
-        )
-      ).rows[0];
-      if (
-        ![
-          '/EXOM/phase4-20260906/pgdata',
-          '/EXOM/docs/operations/phase6-20260911/pgdata',
-          '/EXOM/docs/operations/phase7-20260912/pgdata',
-        ].some((directory) =>
-          identity.directory.replaceAll('\\', '/').endsWith(directory),
-        )
-      )
-        throw Error('WRONG_CLUSTER');
+      await assertTestDatabase(pool);
       db = new PrismaClient({ adapter: new PrismaPg(pool) });
     });
     beforeEach(() => {

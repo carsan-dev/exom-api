@@ -147,47 +147,47 @@ enum CatalogColorType {
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
-  rir_protected_days RirProtectedDay[]
-  rir_cycles RirCycleVersion[]
-  rir_targets RirDayTarget[]
-  id             String       @id @default(uuid())
-  email          String       @unique
-  firebase_uid   String       @unique
-  role           Role         @default(CLIENT)
-  auth_provider  AuthProvider @default(email)
-  is_active      Boolean      @default(true)
-  identity_pending Boolean    @default(false)
+  rir_protected_days  RirProtectedDay[]
+  rir_cycles          RirCycleVersion[]
+  rir_targets         RirDayTarget[]
+  id                  String            @id @default(uuid())
+  email               String            @unique
+  firebase_uid        String            @unique
+  role                Role              @default(CLIENT)
+  auth_provider       AuthProvider      @default(email)
+  is_active           Boolean           @default(true)
+  identity_pending    Boolean           @default(false)
   sessions_revoked_at DateTime?
-  is_archived    Boolean      @default(false)
-  is_locked      Boolean      @default(false)
-  login_attempts Int          @default(0)
-  locked_at      DateTime?
-  fcm_token  String?
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  is_archived         Boolean           @default(false)
+  is_locked           Boolean           @default(false)
+  login_attempts      Int               @default(0)
+  locked_at           DateTime?
+  fcm_token           String?
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
 
-  profile          Profile?
-  adminOf          AdminClientAssignment[] @relation("AdminAssignments")
-  clientOf         AdminClientAssignment[] @relation("ClientAssignments")
-  dayProgress      DayProgress[]
-  dietDaySnapshots DietDaySnapshot[]
-  bodyMetrics      BodyMetric[]
-  streak           Streak?
-  weeklyRecaps     WeeklyRecap[]
-  clientChallenges ChallengeClient[]
-  userAchievements UserAchievement[]
-  feedbackMedia    FeedbackMedia[]
-  managedUploads   ManagedUpload[]
-  progressOperations ProgressOperation[]
-  sentNotifications     Notification[] @relation("SentNotifications")
-  receivedNotifications Notification[] @relation("ReceivedNotifications")
-  durableWork DurableWork[]
-  approvalRequestsMade     ApprovalRequest[] @relation("ApprovalRequester")
-  approvalRequestsReviewed ApprovalRequest[] @relation("ApprovalReviewer")
-  planAssignmentsAsClient PlanAssignment[] @relation("PlanAssignmentClient")
-  planAssignmentsAsAdmin  PlanAssignment[] @relation("PlanAssignmentAdmin")
-  autoAssignmentRulesAsClient AutoAssignmentRule[] @relation("AutoAssignmentRuleClient")
-  autoAssignmentRulesAsAdmin  AutoAssignmentRule[] @relation("AutoAssignmentRuleAdmin")
+  profile                     Profile?
+  adminOf                     AdminClientAssignment[] @relation("AdminAssignments")
+  clientOf                    AdminClientAssignment[] @relation("ClientAssignments")
+  dayProgress                 DayProgress[]
+  dietDaySnapshots            DietDaySnapshot[]
+  bodyMetrics                 BodyMetric[]
+  streak                      Streak?
+  weeklyRecaps                WeeklyRecap[]
+  clientChallenges            ChallengeClient[]
+  userAchievements            UserAchievement[]
+  feedbackMedia               FeedbackMedia[]
+  managedUploads              ManagedUpload[]
+  progressOperations          ProgressOperation[]
+  sentNotifications           Notification[]          @relation("SentNotifications")
+  receivedNotifications       Notification[]          @relation("ReceivedNotifications")
+  durableWork                 DurableWork[]
+  approvalRequestsMade        ApprovalRequest[]       @relation("ApprovalRequester")
+  approvalRequestsReviewed    ApprovalRequest[]       @relation("ApprovalReviewer")
+  planAssignmentsAsClient     PlanAssignment[]        @relation("PlanAssignmentClient")
+  planAssignmentsAsAdmin      PlanAssignment[]        @relation("PlanAssignmentAdmin")
+  autoAssignmentRulesAsClient AutoAssignmentRule[]    @relation("AutoAssignmentRuleClient")
+  autoAssignmentRulesAsAdmin  AutoAssignmentRule[]    @relation("AutoAssignmentRuleAdmin")
 
   @@index([role, created_at, id])
   @@map("users")
@@ -224,27 +224,27 @@ model AdminClientAssignment {
   admin  User @relation("AdminAssignments", fields: [admin_id], references: [id], onDelete: Cascade)
   client User @relation("ClientAssignments", fields: [client_id], references: [id], onDelete: Cascade)
 
+  @@unique([admin_id, client_id])
   @@index([admin_id, is_active, created_at, id])
   @@index([client_id, is_active, created_at, id])
   @@index([admin_id, client_id, is_active])
-  @@unique([admin_id, client_id])
   @@map("admin_client_assignments")
 }
 
 model Notification {
-  id           String             @id @default(uuid())
-  sender_id    String
-  recipient_id String
-  title        String
-  body         String
-  data         Json?
-  status       NotificationStatus @default(PENDING)
-  provider_message_id String?
-  requires_client_role Boolean @default(false)
-  sent_at DateTime?
-  error        String?
-  read_at      DateTime?
-  created_at   DateTime           @default(now())
+  id                   String             @id @default(uuid())
+  sender_id            String
+  recipient_id         String
+  title                String
+  body                 String
+  data                 Json?
+  status               NotificationStatus @default(PENDING)
+  provider_message_id  String?
+  requires_client_role Boolean            @default(false)
+  sent_at              DateTime?
+  error                String?
+  read_at              DateTime?
+  created_at           DateTime           @default(now())
 
   sender    User @relation("SentNotifications", fields: [sender_id], references: [id], onDelete: Cascade)
   recipient User @relation("ReceivedNotifications", fields: [recipient_id], references: [id], onDelete: Cascade)
@@ -256,19 +256,20 @@ model Notification {
 }
 
 model DurableWork {
-  key String @id
-  kind String
-  payload Json
-  owner_id String?
-  owner User? @relation(fields: [owner_id], references: [id], onDelete: Cascade)
-  status String @default("PENDING")
-  attempts Int @default(0)
-  claim_token String?
-  lease_until DateTime?
-  next_attempt_at DateTime @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
-  last_error String?
-  created_at DateTime @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
-  completed_at DateTime?
+  key             String    @id
+  kind            String
+  payload         Json
+  owner_id        String?
+  owner           User?     @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  status          String    @default("PENDING")
+  attempts        Int       @default(0)
+  claim_token     String?
+  lease_until     DateTime?
+  next_attempt_at DateTime  @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
+  last_error      String?
+  created_at      DateTime  @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
+  completed_at    DateTime?
+
   @@index([status, next_attempt_at])
   @@index([owner_id])
   @@map("durable_work")
@@ -326,23 +327,23 @@ model MobileAppConfig {
 
 model ApprovalRequest {
   execution_completed_at DateTime?
-  id               String         @id @default(uuid())
-  requester_id     String
-  reviewer_id      String?
-  action_type      String
-  resource_type    String
-  resource_id      String?
-  payload          Json
-  request_reason   String?
-  status           ApprovalStatus @default(PENDING)
-  rejection_reason String?
-  failure_reason   String?
-  resolved_at      DateTime?
-  created_at       DateTime       @default(now())
-  updated_at       DateTime       @updatedAt
+  id                     String         @id @default(uuid())
+  requester_id           String
+  reviewer_id            String?
+  action_type            String
+  resource_type          String
+  resource_id            String?
+  payload                Json
+  request_reason         String?
+  status                 ApprovalStatus @default(PENDING)
+  rejection_reason       String?
+  failure_reason         String?
+  resolved_at            DateTime?
+  created_at             DateTime       @default(now())
+  updated_at             DateTime       @updatedAt
 
-  requester User  @relation("ApprovalRequester", fields: [requester_id], references: [id], onDelete: Cascade)
-  reviewer  User? @relation("ApprovalReviewer", fields: [reviewer_id], references: [id], onDelete: SetNull)
+  requester      User            @relation("ApprovalRequester", fields: [requester_id], references: [id], onDelete: Cascade)
+  reviewer       User?           @relation("ApprovalReviewer", fields: [reviewer_id], references: [id], onDelete: SetNull)
   managedUploads ManagedUpload[]
 
   @@index([requester_id, status, created_at])
@@ -354,13 +355,13 @@ model ApprovalRequest {
 // ─── Training & Exercise ──────────────────────────────────────────────────────
 
 model Training {
-  rir_proposal Json?
-  id                     String       @id @default(uuid())
+  rir_proposal           Json?
+  id                     String   @id @default(uuid())
   name                   String
   type                   String
-  types                  String[]     @default([])
+  types                  String[] @default([])
   accentColor            String?
-  level                  Level        @default(PRINCIPIANTE)
+  level                  Level    @default(PRINCIPIANTE)
   estimated_duration_min Int?
   estimated_calories     Int?
   total_volume           Int?
@@ -368,31 +369,31 @@ model Training {
   warmup_duration_min    Int?
   cooldown_description   String?
   tags                   String[]
-  is_active              Boolean      @default(true)
+  is_active              Boolean  @default(true)
   created_by             String?
-  created_at             DateTime     @default(now())
-  updated_at             DateTime     @updatedAt
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
   group_id               String?
 
-  group       TrainingGroup? @relation(fields: [group_id], references: [id], onDelete: SetNull)
-  exercises   TrainingExercise[]
-  assignments PlanAssignment[]
-  assignmentLinks PlanAssignmentTraining[]
-  autoAssignmentRuleDays AutoAssignmentRuleDay[]
+  group                      TrainingGroup?                  @relation(fields: [group_id], references: [id], onDelete: SetNull)
+  exercises                  TrainingExercise[]
+  assignments                PlanAssignment[]
+  assignmentLinks            PlanAssignmentTraining[]
+  autoAssignmentRuleDays     AutoAssignmentRuleDay[]
   autoAssignmentRuleDayLinks AutoAssignmentRuleDayTraining[]
-  blocks                 TrainingBlock[]
-  feedbackMedia          FeedbackMedia[]
+  blocks                     TrainingBlock[]
+  feedbackMedia              FeedbackMedia[]
 
   @@index([group_id])
   @@map("trainings")
 }
 
 model TrainingGroup {
-  id              String     @id @default(uuid())
+  id              String   @id @default(uuid())
   name            String
-  normalized_name String     @unique
-  created_at      DateTime   @default(now())
-  updated_at      DateTime   @updatedAt
+  normalized_name String   @unique
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
 
   trainings Training[]
 
@@ -400,15 +401,15 @@ model TrainingGroup {
 }
 
 model TrainingBlock {
-  id                                String            @id @default(uuid())
-  training_id                       String
-  order                             Int
-  type                              TrainingBlockType @default(CIRCUIT)
-  name                              String?
-  rounds                            Int               @default(3)
-  rest_between_rounds_seconds       Int               @default(60)
-  created_at                        DateTime          @default(now())
-  updated_at                        DateTime          @updatedAt
+  id                          String            @id @default(uuid())
+  training_id                 String
+  order                       Int
+  type                        TrainingBlockType @default(CIRCUIT)
+  name                        String?
+  rounds                      Int               @default(3)
+  rest_between_rounds_seconds Int               @default(60)
+  created_at                  DateTime          @default(now())
+  updated_at                  DateTime          @updatedAt
 
   training  Training           @relation(fields: [training_id], references: [id], onDelete: Cascade)
   exercises TrainingExercise[]
@@ -442,27 +443,27 @@ model Exercise {
 }
 
 model TrainingExercise {
-  rir_override Json?
-  id               String @id @default(uuid())
-  training_id      String
-  block_id         String?
-  exercise_id      String
-  order            Int
-  position_in_block Int?
-  sets             Int
-  reps_or_duration String
-  measure_type     TrainingMeasureType?
-  target_value     Int?
-  target_value_min Int?
-  target_value_max Int?
-  target_rir       Int?
-  request_set_tracking Boolean @default(false)
+  rir_override         Json?
+  id                   String               @id @default(uuid())
+  training_id          String
+  block_id             String?
+  exercise_id          String
+  order                Int
+  position_in_block    Int?
+  sets                 Int
+  reps_or_duration     String
+  measure_type         TrainingMeasureType?
+  target_value         Int?
+  target_value_min     Int?
+  target_value_max     Int?
+  target_rir           Int?
+  request_set_tracking Boolean              @default(false)
   /// Descanso entre series, en segundos.
-  rest_seconds     Int    @default(60)
+  rest_seconds         Int                  @default(60)
 
-  training Training @relation(fields: [training_id], references: [id], onDelete: Cascade)
-  block    TrainingBlock? @relation(fields: [block_id], references: [id], onDelete: Cascade)
-  exercise Exercise @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
+  training      Training        @relation(fields: [training_id], references: [id], onDelete: Cascade)
+  block         TrainingBlock?  @relation(fields: [block_id], references: [id], onDelete: Cascade)
+  exercise      Exercise        @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
   feedbackMedia FeedbackMedia[]
 
   @@unique([training_id, order])
@@ -500,9 +501,9 @@ model Diet {
   updated_at      DateTime @updatedAt
   group_id        String?
 
-  group       DietGroup? @relation(fields: [group_id], references: [id], onDelete: SetNull)
-  meals       Meal[]
-  assignments PlanAssignment[]
+  group                  DietGroup?              @relation(fields: [group_id], references: [id], onDelete: SetNull)
+  meals                  Meal[]
+  assignments            PlanAssignment[]
   autoAssignmentRuleDays AutoAssignmentRuleDay[]
 
   @@index([group_id])
@@ -565,11 +566,11 @@ model Ingredient {
 }
 
 model MealIngredient {
-  id            String      @id @default(uuid())
-  meal_id       String
-  ingredient_id String
-  quantity      Float
-  unit          MeasureUnit @default(g)
+  id               String      @id @default(uuid())
+  meal_id          String
+  ingredient_id    String
+  quantity         Float
+  unit             MeasureUnit @default(g)
   grams_equivalent Float?
 
   meal       Meal       @relation(fields: [meal_id], references: [id], onDelete: Cascade)
@@ -582,24 +583,24 @@ model MealIngredient {
 // ─── Assignments & Progress ───────────────────────────────────────────────────
 
 model PlanAssignment {
-  id          String   @id @default(uuid())
-  client_id   String
-  admin_id    String?
-  date        DateTime @db.Date
-  training_id String?
-  diet_id     String?
+  id                      String   @id @default(uuid())
+  client_id               String
+  admin_id                String?
+  date                    DateTime @db.Date
+  training_id             String?
+  diet_id                 String?
   auto_assignment_rule_id String?
-  is_rest_day Boolean  @default(false)
-  notes       String?
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  is_rest_day             Boolean  @default(false)
+  notes                   String?
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
 
-  training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
-  trainings PlanAssignmentTraining[]
-  diet     Diet?     @relation(fields: [diet_id], references: [id], onDelete: SetNull)
-  autoAssignmentRule AutoAssignmentRule? @relation(fields: [auto_assignment_rule_id], references: [id], onDelete: SetNull)
-  client   User @relation("PlanAssignmentClient", fields: [client_id], references: [id], onDelete: Cascade)
-  admin    User? @relation("PlanAssignmentAdmin", fields: [admin_id], references: [id], onDelete: SetNull)
+  training           Training?                @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  trainings          PlanAssignmentTraining[]
+  diet               Diet?                    @relation(fields: [diet_id], references: [id], onDelete: SetNull)
+  autoAssignmentRule AutoAssignmentRule?      @relation(fields: [auto_assignment_rule_id], references: [id], onDelete: SetNull)
+  client             User                     @relation("PlanAssignmentClient", fields: [client_id], references: [id], onDelete: Cascade)
+  admin              User?                    @relation("PlanAssignmentAdmin", fields: [admin_id], references: [id], onDelete: SetNull)
 
   @@unique([client_id, date])
   @@index([admin_id])
@@ -609,12 +610,12 @@ model PlanAssignment {
 }
 
 model PlanAssignmentTraining {
-  id            String @id @default(uuid())
-  assignment_id String
-  training_id   String
-  position      Int
-  last_set_video_policy LastSetVideoPolicy @default(AUTO)
-  requires_last_set_video Boolean @default(false)
+  id                      String             @id @default(uuid())
+  assignment_id           String
+  training_id             String
+  position                Int
+  last_set_video_policy   LastSetVideoPolicy @default(AUTO)
+  requires_last_set_video Boolean            @default(false)
 
   assignment PlanAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
   training   Training       @relation(fields: [training_id], references: [id], onDelete: Cascade)
@@ -626,21 +627,21 @@ model PlanAssignmentTraining {
 }
 
 model AutoAssignmentRule {
-  id                String   @id @default(uuid())
+  id                String    @id @default(uuid())
   client_id         String
   admin_id          String?
-  source_week_start DateTime @db.Date
-  starts_on         DateTime @db.Date
+  source_week_start DateTime  @db.Date
+  starts_on         DateTime  @db.Date
   ends_on           DateTime? @db.Date
-  is_active         Boolean  @default(true)
+  is_active         Boolean   @default(true)
   deactivated_at    DateTime?
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
 
   days        AutoAssignmentRuleDay[]
   assignments PlanAssignment[]
-  client      User  @relation("AutoAssignmentRuleClient", fields: [client_id], references: [id], onDelete: Cascade)
-  admin       User? @relation("AutoAssignmentRuleAdmin", fields: [admin_id], references: [id], onDelete: SetNull)
+  client      User                    @relation("AutoAssignmentRuleClient", fields: [client_id], references: [id], onDelete: Cascade)
+  admin       User?                   @relation("AutoAssignmentRuleAdmin", fields: [admin_id], references: [id], onDelete: SetNull)
 
   @@index([client_id, is_active, starts_on, ends_on])
   @@index([admin_id])
@@ -655,22 +656,22 @@ model AutoAssignmentRuleDay {
   diet_id     String?
   is_rest_day Boolean @default(false)
 
-  rule     AutoAssignmentRule @relation(fields: [rule_id], references: [id], onDelete: Cascade)
-  training Training?          @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  rule      AutoAssignmentRule              @relation(fields: [rule_id], references: [id], onDelete: Cascade)
+  training  Training?                       @relation(fields: [training_id], references: [id], onDelete: SetNull)
   trainings AutoAssignmentRuleDayTraining[]
-  diet     Diet?              @relation(fields: [diet_id], references: [id], onDelete: SetNull)
+  diet      Diet?                           @relation(fields: [diet_id], references: [id], onDelete: SetNull)
 
   @@unique([rule_id, weekday])
   @@map("auto_assignment_rule_days")
 }
 
 model AutoAssignmentRuleDayTraining {
-  id          String @id @default(uuid())
-  rule_day_id String
-  training_id String
-  position    Int
-  last_set_video_policy LastSetVideoPolicy @default(AUTO)
-  requires_last_set_video Boolean @default(false)
+  id                      String             @id @default(uuid())
+  rule_day_id             String
+  training_id             String
+  position                Int
+  last_set_video_policy   LastSetVideoPolicy @default(AUTO)
+  requires_last_set_video Boolean            @default(false)
 
   ruleDay  AutoAssignmentRuleDay @relation(fields: [rule_day_id], references: [id], onDelete: Cascade)
   training Training              @relation(fields: [training_id], references: [id], onDelete: Cascade)
@@ -699,22 +700,24 @@ model DietDaySnapshot {
 
 model RirProtectedDay {
   client_id String
-  date DateTime @db.Date
-  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  date      DateTime @db.Date
+  client    User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
   @@id([client_id, date])
   @@map("rir_protected_days")
 }
 
 model RirCycleVersion {
-  client_id String
-  revision Int
-  operation_id String
-  request Json
+  client_id      String
+  revision       Int
+  operation_id   String
+  request        Json
   effective_from DateTime @db.Date
-  starts_on DateTime @db.Date
-  config Json?
-  created_at DateTime @default(now())
-  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  starts_on      DateTime @db.Date
+  config         Json?
+  created_at     DateTime @default(now())
+  client         User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
   @@id([client_id, revision])
   @@unique([client_id, operation_id])
   @@index([client_id, effective_from, revision], map: "rir_cycle_effective_idx")
@@ -722,32 +725,33 @@ model RirCycleVersion {
 }
 
 model RirDayTarget {
-  client_id String
-  date DateTime @db.Date
+  client_id            String
+  date                 DateTime @db.Date
   training_exercise_id String
-  training_id String
-  target_rir Int?
-  revision Int?
-  captured_at DateTime @default(now())
-  client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  training_id          String
+  target_rir           Int?
+  revision             Int?
+  captured_at          DateTime @default(now())
+  client               User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
   @@id([client_id, date, training_exercise_id])
   @@map("rir_day_targets")
 }
 
 model DayProgress {
-  sync_revision Int @default(0)
-  id                  String   @id @default(uuid())
+  sync_revision       Int       @default(0)
+  id                  String    @id @default(uuid())
   client_id           String
-  date                DateTime @db.Date
-  training_completed  Boolean  @default(false)
-  trainings_completed String[] @default([])
-  exercises_completed Json     @default("[]")
+  date                DateTime  @db.Date
+  training_completed  Boolean   @default(false)
+  trainings_completed String[]  @default([])
+  exercises_completed Json      @default("[]")
   meals_completed     String[]
   notes               String?
   admin_reply_text    String?
   admin_reply_sent_at DateTime?
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
@@ -758,27 +762,27 @@ model DayProgress {
 // ─── Body Metrics ─────────────────────────────────────────────────────────────
 
 model BodyMetric {
-  id             String   @id @default(uuid())
-  client_id      String
-  date           DateTime @default(now()) @db.Date
-  weight_kg      Float?
-  muscle_mass_kg Float?
-  height_cm      Float?
-  sleep_hours    Float?
-  neck_cm        Float?
-  shoulders_cm   Float?
-  chest_cm       Float?
-  arm_left_cm    Float?
-  arm_right_cm   Float?
-  forearm_left_cm Float?
+  id               String   @id @default(uuid())
+  client_id        String
+  date             DateTime @default(now()) @db.Date
+  weight_kg        Float?
+  muscle_mass_kg   Float?
+  height_cm        Float?
+  sleep_hours      Float?
+  neck_cm          Float?
+  shoulders_cm     Float?
+  chest_cm         Float?
+  arm_left_cm      Float?
+  arm_right_cm     Float?
+  forearm_left_cm  Float?
   forearm_right_cm Float?
-  waist_cm       Float?
-  hips_cm        Float?
-  thigh_left_cm  Float?
-  thigh_right_cm Float?
-  calf_left_cm   Float?
-  calf_right_cm  Float?
-  created_at     DateTime @default(now())
+  waist_cm         Float?
+  hips_cm          Float?
+  thigh_left_cm    Float?
+  thigh_right_cm   Float?
+  calf_left_cm     Float?
+  calf_right_cm    Float?
+  created_at       DateTime @default(now())
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
@@ -789,16 +793,16 @@ model BodyMetric {
 // ─── Streak ───────────────────────────────────────────────────────────────────
 
 model Streak {
-  id               String    @id @default(uuid())
-  client_id        String    @unique
-  current_days     Int       @default(0)
-  longest_days     Int       @default(0)
-  last_active_date DateTime? @db.Date
+  id                  String    @id @default(uuid())
+  client_id           String    @unique
+  current_days        Int       @default(0)
+  longest_days        Int       @default(0)
+  last_active_date    DateTime? @db.Date
   tracking_started_at DateTime?
-  source_revision BigInt @default(0)
-  calculated_revision BigInt @default(-1)
+  source_revision     BigInt    @default(0)
+  calculated_revision BigInt    @default(-1)
   calculated_for_date DateTime? @db.Date
-  updated_at       DateTime  @updatedAt
+  updated_at          DateTime  @updatedAt
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
@@ -808,18 +812,18 @@ model Streak {
 // ─── Weekly Recap ─────────────────────────────────────────────────────────────
 
 model WeeklyRecap {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   client_id       String
-  week_start_date DateTime @db.Date
-  week_end_date   DateTime @db.Date
+  week_start_date DateTime  @db.Date
+  week_end_date   DateTime  @db.Date
   submitted_at    DateTime?
 
   // Step 1: Training
-  training_effort   Int?
-  training_sessions Int?
+  training_effort     Int?
+  training_sessions   Int?
   average_daily_steps Int?
-  training_progress String?
-  training_notes    String?
+  training_progress   String?
+  training_notes      String?
 
   // Step 2: Nutrition
   nutrition_quality String?
@@ -944,34 +948,34 @@ model UserAchievement {
 // ─── Feedback Media ───────────────────────────────────────────────────────────
 
 model FeedbackMedia {
-  id             String         @id @default(uuid())
-  client_id      String
-  client_upload_id String?
-  exercise_id    String?
-  training_id    String?
+  id                   String         @id @default(uuid())
+  client_id            String
+  client_upload_id     String?
+  exercise_id          String?
+  training_id          String?
   training_exercise_id String?
-  assignment_date DateTime?      @db.Date
-  feedback_kind  FeedbackKind    @default(GENERAL)
-  media_type     MediaType
-  media_url      String?
-  notes          String?
-  admin_response String?
-  status         FeedbackStatus @default(PENDING)
-  reviewed_by    String?
-  reviewed_at    DateTime?
-  media_deleted_at DateTime?
-  created_at     DateTime       @default(now())
-  updated_at     DateTime       @updatedAt
+  assignment_date      DateTime?      @db.Date
+  feedback_kind        FeedbackKind   @default(GENERAL)
+  media_type           MediaType
+  media_url            String?
+  notes                String?
+  admin_response       String?
+  status               FeedbackStatus @default(PENDING)
+  reviewed_by          String?
+  reviewed_at          DateTime?
+  media_deleted_at     DateTime?
+  created_at           DateTime       @default(now())
+  updated_at           DateTime       @updatedAt
 
-  client   User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
-  exercise Exercise? @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
-  training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  client           User              @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  exercise         Exercise?         @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
+  training         Training?         @relation(fields: [training_id], references: [id], onDelete: SetNull)
   trainingExercise TrainingExercise? @relation(fields: [training_exercise_id], references: [id], onDelete: SetNull)
 
+  @@unique([client_id, client_upload_id])
   @@index([status, reviewed_at, media_deleted_at])
   @@index([client_id, created_at, id])
   @@index([client_id, assignment_date, training_id, training_exercise_id])
-  @@unique([client_id, client_upload_id])
   @@map("feedback_media")
 }
 
@@ -996,51 +1000,51 @@ model UploadTransfer {
 
 model ManagedUpload {
   client_operation_id String?
-  object_deleted_at DateTime?
-  id             String              @id @default(uuid())
-  owner_id       String
+  object_deleted_at   DateTime?
+  id                  String               @id @default(uuid())
+  owner_id            String
   approval_request_id String?
-  purpose        ManagedUploadPurpose
-  object_key     String              @unique
-  mime_type      String
-  expected_bytes Int
-  actual_bytes   Int?
-  status         ManagedUploadStatus @default(PENDING)
-  expires_at     DateTime
-  verified_at    DateTime?
-  consumed_at    DateTime?
-  created_at     DateTime            @default(now())
-  updated_at     DateTime            @updatedAt
+  purpose             ManagedUploadPurpose
+  object_key          String               @unique
+  mime_type           String
+  expected_bytes      Int
+  actual_bytes        Int?
+  status              ManagedUploadStatus  @default(PENDING)
+  expires_at          DateTime
+  verified_at         DateTime?
+  consumed_at         DateTime?
+  created_at          DateTime             @default(now())
+  updated_at          DateTime             @updatedAt
 
-  owner User @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  owner           User             @relation(fields: [owner_id], references: [id], onDelete: Cascade)
   approvalRequest ApprovalRequest? @relation(fields: [approval_request_id], references: [id], onDelete: SetNull)
 
+  @@unique([owner_id, client_operation_id])
   @@index([owner_id, status, expires_at])
   @@index([status, expires_at])
   @@index([approval_request_id, status])
-  @@unique([owner_id, client_operation_id])
   @@map("managed_uploads")
 }
 
 // Independent of User cascades: recover external cleanup after database deletion.
 model ClientDeletion {
-  id                     String   @id @default(uuid())
-  client_id              String   @unique
-  requested_by           String
-  status                 String   @default("PENDING")
-  firebase_uid           String?
-  object_keys            String[]
-  storage_review         Boolean  @default(false)
-  claimed_at             DateTime?
-  claim_token            String?
-  attempts               Int      @default(0)
-  next_attempt_at        DateTime @default(now())
-  last_error             String?
-  created_at             DateTime @default(now())
-  completed_at           DateTime?
-  settle_after           DateTime?
-  last_verified_at       DateTime?
-  cleanup_cursor         Int      @default(0)
+  id               String    @id @default(uuid())
+  client_id        String    @unique
+  requested_by     String
+  status           String    @default("PENDING")
+  firebase_uid     String?
+  object_keys      String[]
+  storage_review   Boolean   @default(false)
+  claimed_at       DateTime?
+  claim_token      String?
+  attempts         Int       @default(0)
+  next_attempt_at  DateTime  @default(now())
+  last_error       String?
+  created_at       DateTime  @default(now())
+  completed_at     DateTime?
+  settle_after     DateTime?
+  last_verified_at DateTime?
+  cleanup_cursor   Int       @default(0)
 
   @@index([status, next_attempt_at])
   @@index([next_attempt_at])
@@ -1050,19 +1054,19 @@ model ClientDeletion {
 
 // Independent recovery metadata; never stores passwords, tokens or profiles.
 model IdentityOperation {
-  id              String   @id @default(uuid())
-  request_key     String   @unique
+  id              String    @id @default(uuid())
+  request_key     String    @unique
   request_hash    String
   user_id         String
   actor_id        String
   firebase_uid    String
   kind            String
-  status          String   @default("PENDING")
-  firebase_owned  Boolean  @default(false)
-  attempts        Int      @default(0)
+  status          String    @default("PENDING")
+  firebase_owned  Boolean   @default(false)
+  attempts        Int       @default(0)
   last_error      String?
-  next_attempt_at DateTime @default(now())
-  created_at      DateTime @default(now())
+  next_attempt_at DateTime  @default(now())
+  created_at      DateTime  @default(now())
   completed_at    DateTime?
 
   @@index([status, next_attempt_at], map: "identity_operations_due")
@@ -1071,13 +1075,14 @@ model IdentityOperation {
 }
 
 model ProgressOperation {
-  id String
-  owner_id String
-  date DateTime @db.Date
+  id           String
+  owner_id     String
+  date         DateTime @db.Date
   payload_hash String
-  response Json
-  created_at DateTime @default(now())
-  owner User @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  response     Json
+  created_at   DateTime @default(now())
+  owner        User     @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
   @@id([owner_id, id])
   @@map("progress_operations")
 }

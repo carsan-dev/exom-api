@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { Prisma } from '@prisma/client';
 import { MealType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';

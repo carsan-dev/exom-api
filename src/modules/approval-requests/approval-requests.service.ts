@@ -27,11 +27,7 @@ import { MealsService } from '../meals/meals.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { TrainingsService } from '../trainings/trainings.service';
 import { UploadsService } from '../uploads/uploads.service';
-import {
-  APPROVAL_ACTION_LABELS,
-  APPROVAL_RULES,
-  type ApprovalCheckType,
-} from './approval-rules';
+import { APPROVAL_ACTION_LABELS, APPROVAL_RULES } from './approval-rules';
 import { ApprovalRequestReasonDto } from './dto/approval-request-reason.dto';
 import { ApprovalRequestsQueryDto } from './dto/approval-requests-query.dto';
 import { MyApprovalRequestsQueryDto } from './dto/my-approval-requests-query.dto';
@@ -277,6 +273,8 @@ export class ApprovalRequestsService {
         current_resource: _currentResource,
         ...businessDetail
       } = detail;
+      void _payload;
+      void _currentResource;
 
       return businessDetail;
     }

@@ -1,3 +1,4 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, Role } from '@prisma/client';
 import { Pool } from 'pg';
@@ -19,14 +20,8 @@ suite('F005 archive PostgreSQL integration', () => {
   let prisma: PrismaClient;
   let service: UsersService;
   beforeAll(async () => {
-    const target = new URL(url!);
-    if (
-      target.hostname !== '127.0.0.1' ||
-      !['55437', '55447'].includes(target.port) ||
-      target.pathname !== '/exom_review'
-    )
-      throw new Error('Isolated archive test database required');
     pool = new Pool({ connectionString: url, application_name: prefix });
+    await assertTestDatabase(pool);
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
     service = new UsersService(
       prisma as PrismaService,

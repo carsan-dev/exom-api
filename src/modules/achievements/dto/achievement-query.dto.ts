@@ -36,7 +36,9 @@ class AchievementRecomputeTargetValidator implements ValidatorConstraintInterfac
 
 export class AchievementFiltersDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Búsqueda en nombre y descripción' })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsOptional()
   @IsString()
   search?: string;
@@ -76,7 +78,7 @@ export class RecomputeAchievementsDto {
     description:
       'Aplica el recálculo a todos los clientes visibles para el admin actual',
   })
-  @Transform(({ value }) => {
+  @Transform(({ value }: { value: unknown }) => {
     if (value === undefined) {
       return false;
     }

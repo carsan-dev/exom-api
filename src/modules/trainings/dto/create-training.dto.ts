@@ -25,7 +25,7 @@ const trimString = ({ value }: { value: unknown }) =>
 const trimStringArray = ({ value }: { value: unknown }) =>
   Array.isArray(value)
     ? value
-        .map((entry) =>
+        .map((entry: unknown) =>
           typeof entry === 'string' ? entry.trim().replace(/\s+/g, ' ') : entry,
         )
         .filter((entry) => typeof entry === 'string' && entry.length > 0)

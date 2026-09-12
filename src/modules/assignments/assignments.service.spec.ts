@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import {
   BadRequestException,
   ConflictException,
@@ -145,7 +146,7 @@ describe('AssignmentsService', () => {
       },
       $transaction: jest.fn(async (input: unknown) =>
         typeof input === 'function'
-          ? (input as (tx: typeof prisma) => unknown)(prisma)
+          ? await (input as (tx: typeof prisma) => unknown)(prisma)
           : Promise.all(input as Promise<unknown>[]),
       ),
       $queryRaw: jest
@@ -1575,8 +1576,9 @@ describe('AssignmentsService', () => {
       role: Role.CLIENT,
     });
     prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'link-1' });
-    prisma.training.findFirst.mockImplementation(({ where }) =>
-      Promise.resolve({ id: where.id }),
+    prisma.training.findFirst.mockImplementation(
+      ({ where }: { where: { id: string } }) =>
+        Promise.resolve({ id: where.id }),
     );
     prisma.planAssignment.upsert.mockResolvedValue(
       createAssignment({

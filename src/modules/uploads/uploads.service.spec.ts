@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import {
   BadRequestException,
   ConflictException,
@@ -66,7 +67,9 @@ describe('UploadsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.$queryRaw.mockResolvedValue([{ id: 'client-1' }]);
-    prisma.$transaction.mockImplementation((callback) => callback(prisma));
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
     // Session validation tests use a simulated signer. The real durable protocol
     // and advisory locks have their own PostgreSQL suite.
     jest
@@ -294,14 +297,16 @@ describe('UploadsService', () => {
   it('serializes the active-session quota per owner', async () => {
     let active = 19;
     let transactionTail = Promise.resolve();
-    prisma.$transaction.mockImplementation((callback) => {
-      const run = transactionTail.then(() => callback(prisma));
-      transactionTail = run.then(
-        () => undefined,
-        () => undefined,
-      );
-      return run;
-    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => {
+        const run = transactionTail.then(() => callback(prisma));
+        transactionTail = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      },
+    );
     managedUpload.count.mockImplementation(() => Promise.resolve(active));
     managedUpload.create.mockImplementation(({ data }) => {
       active++;

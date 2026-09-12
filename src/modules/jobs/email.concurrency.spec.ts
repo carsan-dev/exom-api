@@ -1,3 +1,4 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -5,7 +6,6 @@ import { ConfigService } from '@nestjs/config';
 import { EmailService } from '../email/email.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { enqueueWork, JobsService } from './jobs.service';
-import { resolve } from 'node:path';
 
 const linkMock = jest.fn();
 jest.mock('firebase-admin', () => ({
@@ -27,26 +27,9 @@ const url = process.env.TEST_DATABASE_URL;
       FIREBASE_WEB_API_KEY: 'test-only',
     });
     beforeAll(async () => {
-      const target = new URL(url!);
-      if (
-        target.hostname !== '127.0.0.1' ||
-        !['55437', '55447'].includes(target.port) ||
-        target.pathname !== '/exom_review'
-      )
-        throw Error('Local phase6 DB required');
       pool = new Pool({ connectionString: url });
       db = new PrismaClient({ adapter: new PrismaPg(pool) });
-      const [identity] = await db.$queryRaw<
-        { data_directory: string }[]
-      >`SHOW data_directory`;
-      expect(resolve(identity.data_directory)).toBe(
-        resolve(
-          process.cwd(),
-          new URL(process.env.TEST_DATABASE_URL ?? '').port === '55447'
-            ? '../docs/operations/phase7-20260912/pgdata'
-            : '../docs/operations/phase6-20260911/pgdata',
-        ),
-      );
+      await assertTestDatabase(pool);
       Object.assign(db, { postgresqlPool: pool });
       isolated = true;
       await db.user.create({

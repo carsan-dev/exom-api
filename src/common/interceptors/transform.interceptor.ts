@@ -32,7 +32,7 @@ export class TransformInterceptor<T> implements NestInterceptor<
 
   intercept(
     _context: ExecutionContext,
-    next: CallHandler,
+    next: CallHandler<T>,
   ): Observable<ApiResponse<T>> {
     return next
       .handle()

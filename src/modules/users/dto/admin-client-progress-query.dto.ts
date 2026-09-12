@@ -17,7 +17,9 @@ export class ReplyToTrainingNoteDto extends AdminClientProgressQueryDto {
     description:
       'Respuesta visible para el cliente. Vacía elimina la respuesta.',
   })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @MaxLength(1000)
   reply: string;

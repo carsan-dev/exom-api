@@ -18,7 +18,9 @@ import { MealType, MeasureUnit } from '@prisma/client';
 
 export class MealIngredientDto {
   @ApiProperty()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @IsNotEmpty()
   ingredient_id: string;
@@ -51,7 +53,9 @@ class MealBaseDto {
   type: MealType;
 
   @ApiProperty()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @IsNotEmpty()
   name: string;
@@ -124,7 +128,9 @@ export class CreateMealDto extends MealBaseDto {
 
 export class CreateDietDto {
   @ApiProperty()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @IsNotEmpty()
   name: string;

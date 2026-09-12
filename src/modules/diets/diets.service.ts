@@ -678,6 +678,7 @@ export class DietsService {
       historicalDietFor(indexDietHistory(history), assignment) ??
       assignment.diet;
     const { tags: _tags, ...clientDiet } = diet;
+    void _tags; // Client response intentionally omits admin catalog tags.
     return clientDiet;
   }
 

@@ -167,7 +167,11 @@ export class ExercisesService {
       );
     }
 
-    const exercises =
+    const exercises: Array<{
+      id: string;
+      muscle_groups?: string[];
+      equipment?: string[];
+    }> =
       field === 'muscle_groups'
         ? await this.prisma.exercise.findMany({
             where: { is_active: true },
@@ -180,7 +184,9 @@ export class ExercisesService {
 
     const updates = exercises.flatMap((exercise) => {
       const currentValues =
-        field === 'muscle_groups' ? exercise.muscle_groups : exercise.equipment;
+        field === 'muscle_groups'
+          ? exercise.muscle_groups!
+          : exercise.equipment!;
       const nextValues = mutateValues(currentValues);
 
       if (!this.hasCatalogChanged(currentValues, nextValues)) {

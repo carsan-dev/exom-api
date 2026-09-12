@@ -20,10 +20,10 @@ export class DietGroupsService {
         },
       })
       .then((groups) =>
-        groups.map(({ _count, normalized_name: _, ...group }) => ({
-          ...group,
-          item_count: _count.diets,
-        })),
+        groups.map(({ _count, normalized_name: _, ...group }) => {
+          void _; // Internal normalized key is omitted from the response.
+          return { ...group, item_count: _count.diets };
+        }),
       );
   }
 
@@ -34,6 +34,7 @@ export class DietGroupsService {
         await this.prisma.dietGroup.create({
           data: { name, normalized_name: normalizedName },
         });
+      void _; // Internal normalized key is omitted from the response.
       return { ...group, item_count: 0 };
     } catch (error) {
       this.handleUnique(error);
@@ -53,6 +54,7 @@ export class DietGroupsService {
         },
       });
       const { _count, normalized_name: _, ...group } = result;
+      void _; // Internal normalized key is omitted from the response.
       return { ...group, item_count: _count.diets };
     } catch (error) {
       this.handleUnique(error);

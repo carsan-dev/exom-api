@@ -8,7 +8,7 @@ export class FindTodayDietQueryDto {
     example: '2026-03-30',
   })
   @IsOptional()
-  @Transform(({ value }) => {
+  @Transform(({ value }: { value: unknown }) => {
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;

@@ -159,7 +159,9 @@ export class ReviewRecapDto {
     description: 'Internal note — not visible to client',
   })
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @MaxLength(1000)
   admin_comments?: string;
@@ -170,7 +172,9 @@ export class ReviewRecapDto {
       'Visible feedback for the client — triggers push notification when changed',
   })
   @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @MaxLength(1000)
   client_feedback_text?: string;

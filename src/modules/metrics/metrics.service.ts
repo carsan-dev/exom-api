@@ -1,3 +1,4 @@
+import type { BodyMetric } from '@prisma/client';
 import {
   BadRequestException,
   ConflictException,
@@ -143,7 +144,7 @@ export class MetricsService {
       throw new BadRequestException('Introduce al menos una métrica');
     }
 
-    let metric;
+    let metric: BodyMetric;
     try {
       metric = await this.prisma.bodyMetric.create({
         data: { client_id: clientId, date: targetDate, ...metricData },
@@ -177,7 +178,7 @@ export class MetricsService {
     const targetDate = date ? this.normalizeMetricDate(date) : undefined;
     if (targetDate) this.assertDateIsNotFuture(targetDate);
 
-    let metric;
+    let metric: BodyMetric;
     try {
       metric = await this.prisma.bodyMetric.update({
         where: { id: metricId },

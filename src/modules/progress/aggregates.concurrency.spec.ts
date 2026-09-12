@@ -1,7 +1,7 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { PrismaClient, Prisma, DurableWork } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
-import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
@@ -46,20 +46,8 @@ const url = process.env.TEST_DATABASE_URL;
     const challengeId = (rule: string) => `${owner}-${rule}`;
 
     beforeAll(async () => {
-      const target = new URL(url!);
-      if (
-        target.hostname !== '127.0.0.1' ||
-        target.port !== '55447' ||
-        target.pathname !== '/exom_review'
-      )
-        throw Error('P7 disposable DB required');
       pool = new Pool({ connectionString: url });
-      const identity = await pool.query<{ data_directory: string }>(
-        'SHOW data_directory',
-      );
-      expect(resolve(identity.rows[0].data_directory)).toBe(
-        resolve(process.cwd(), '../docs/operations/phase7-20260912/pgdata'),
-      );
+      await assertTestDatabase(pool);
       db = new PrismaClient({ adapter: new PrismaPg(pool) });
       isolated = true;
       const prisma = db as PrismaService;

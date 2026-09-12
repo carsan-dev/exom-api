@@ -51,13 +51,12 @@ describe('NotificationsSchedulerService', () => {
       notifications as unknown as NotificationsService,
       autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
     );
-    (service as any).todayUtcDate = jest
-      .fn()
-      .mockReturnValue(new Date('2026-04-23T00:00:00.000Z'));
+    jest.useFakeTimers({ now: new Date('2026-04-23T00:00:00.000Z') });
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it('sends training reminders with date-aware routes', async () => {
@@ -67,7 +66,7 @@ describe('NotificationsSchedulerService', () => {
     ]);
     prisma.dayProgress.findMany.mockResolvedValue([]);
 
-    await (service as any).remindDailyTraining();
+    await service['remindDailyTraining']();
 
     expect(autoAssignmentMaterializer.reconcile).toHaveBeenCalledWith(
       'client-1',
@@ -110,7 +109,7 @@ describe('NotificationsSchedulerService', () => {
     ]);
     prisma.dayProgress.findMany.mockResolvedValue([]);
 
-    await (service as any).remindMeal(MealType.LUNCH, 'comida');
+    await service['remindMeal'](MealType.LUNCH, 'comida');
 
     expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'system-admin',
@@ -222,7 +221,7 @@ describe('NotificationsSchedulerService', () => {
     ]);
     prisma.planAssignment.findMany.mockResolvedValue([]);
 
-    await (service as any).warnStreakAtRisk();
+    await service['warnStreakAtRisk']();
 
     expect(notifications.sendInternalTemplate).not.toHaveBeenCalled();
   });
@@ -236,7 +235,7 @@ describe('NotificationsSchedulerService', () => {
     ]);
     prisma.dayProgress.findMany.mockResolvedValue([]);
 
-    await (service as any).warnStreakAtRisk();
+    await service['warnStreakAtRisk']();
 
     expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
       'system-admin',

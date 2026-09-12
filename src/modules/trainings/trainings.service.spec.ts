@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { Prisma } from '@prisma/client';
 import { Level, TrainingMeasureType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -9,7 +10,7 @@ describe('TrainingsService', () => {
   let service: TrainingsService;
   let prisma: {
     $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
-    $transaction: jest.Mock;
+    $transaction: jest.Mock<Promise<unknown>, [unknown]>;
     training: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -34,7 +35,9 @@ describe('TrainingsService', () => {
       $queryRaw: jest
         .fn<Promise<unknown>, [Prisma.Sql]>()
         .mockResolvedValue([]),
-      $transaction: jest.fn().mockResolvedValue([]),
+      $transaction: jest
+        .fn<Promise<unknown>, [unknown]>()
+        .mockResolvedValue([]),
       training: {
         findMany: jest.fn(),
         findFirst: jest.fn(),
@@ -600,7 +603,8 @@ describe('TrainingsService', () => {
         color: '#6B7280',
       },
     });
-    expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(5);
+    const transactionInput: unknown = prisma.$transaction.mock.calls[0][0];
+    expect(transactionInput).toHaveLength(5);
   });
 
   it('updates training type color with hex validation', async () => {

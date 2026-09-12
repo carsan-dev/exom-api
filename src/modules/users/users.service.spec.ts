@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { IdentityService } from '../identity/identity.service';
 import { IdentityProvider } from '../identity/identity-provider';
 import type { Prisma } from '@prisma/client';
@@ -69,7 +70,10 @@ describe('UsersService', () => {
   beforeEach(() => {
     prisma = {
       $queryRaw: jest.fn().mockResolvedValue([]),
-      $transaction: jest.fn(async (callback: any) => callback(prisma)),
+      $transaction: jest.fn(
+        async (callback: (tx: unknown) => Promise<unknown>) =>
+          await callback(prisma),
+      ),
       user: {
         findUnique: jest.fn(),
         findUniqueOrThrow: jest.fn().mockResolvedValue({ role: Role.ADMIN }),

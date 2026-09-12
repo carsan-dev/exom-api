@@ -12,7 +12,7 @@ import {
   IsUrl,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { MealType, MeasureUnit } from '@prisma/client';
+import { MealType } from '@prisma/client';
 import { MealIngredientDto } from '../../diets/dto/create-diet.dto';
 
 export class CreateMealBodyDto {

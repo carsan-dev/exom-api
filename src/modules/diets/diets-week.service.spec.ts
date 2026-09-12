@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DietsService } from './diets.service';
 import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';

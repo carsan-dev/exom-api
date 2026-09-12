@@ -165,12 +165,6 @@ export class AchievementsService {
       normalizedRuleConfig.training_type = normalizedTrainingType;
     }
 
-    if (normalizedRuleConfig.training_type !== undefined && false) {
-      throw new BadRequestException(
-        'rule_config.training_type debe ser un tipo de entrenamiento válido',
-      );
-    }
-
     return normalizedRuleConfig;
   }
 
@@ -851,6 +845,7 @@ export class AchievementsService {
     dto: UpdateAchievementDto,
     _admin: Pick<AuthenticatedUser, 'id' | 'role'>,
   ) {
+    void _admin; // Authorization is enforced by the controller/interceptor.
     const achievement = await this.prisma.achievement.findUnique({
       where: { id },
     });

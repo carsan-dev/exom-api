@@ -23,7 +23,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { paginate } from '../../common/dto/pagination.dto';
 import {
   CreateTrainingDto,
-  TrainingCircuitItemDto,
   TrainingItemExerciseDto,
   UpdateTrainingDto,
 } from './dto/create-training.dto';
@@ -39,8 +38,6 @@ type TrainingSortField =
   | 'estimated_calories'
   | 'updated_at'
   | 'created_at';
-
-type PrismaClientLike = PrismaService | Prisma.TransactionClient;
 
 type AchievementRuleConfigLike = {
   training_type?: string;
@@ -729,7 +726,7 @@ export class TrainingsService {
       const order = item.order ?? index;
 
       if (item.kind === 'CIRCUIT') {
-        const circuit = item as TrainingCircuitItemDto;
+        const circuit = item;
         const blockData = {
           training_id: trainingId,
           order,
@@ -786,7 +783,7 @@ export class TrainingsService {
         continue;
       }
 
-      const exercise = item as TrainingItemExerciseDto;
+      const exercise = item;
       const prescription = this.resolveExercisePrescription(
         exercise,
         exercise.id ? existingExerciseById.get(exercise.id) : undefined,

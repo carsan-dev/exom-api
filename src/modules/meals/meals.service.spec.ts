@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import { MealType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { UploadsService } from '../uploads/uploads.service';
@@ -23,7 +24,8 @@ describe('MealsService', () => {
         update: jest.fn().mockResolvedValue(meal),
       },
       $transaction: jest.fn(
-        async (callback: (tx: unknown) => Promise<unknown>) => callback(prisma),
+        async (callback: (tx: unknown) => Promise<unknown>): Promise<unknown> =>
+          callback(prisma),
       ),
     };
     const uploadsService = {

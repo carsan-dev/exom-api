@@ -20,10 +20,10 @@ export class TrainingGroupsService {
         },
       })
       .then((groups) =>
-        groups.map(({ _count, normalized_name: _, ...group }) => ({
-          ...group,
-          item_count: _count.trainings,
-        })),
+        groups.map(({ _count, normalized_name: _, ...group }) => {
+          void _; // Internal normalized key is omitted from the response.
+          return { ...group, item_count: _count.trainings };
+        }),
       );
   }
 
@@ -34,6 +34,7 @@ export class TrainingGroupsService {
         await this.prisma.trainingGroup.create({
           data: { name, normalized_name: normalizedName },
         });
+      void _; // Internal normalized key is omitted from the response.
       return { ...group, item_count: 0 };
     } catch (error) {
       this.handleUnique(error);
@@ -53,11 +54,13 @@ export class TrainingGroupsService {
             _count: { select: { trainings: { where: { is_active: true } } } },
           },
         });
+      void _;
       const count = (group as typeof group & { _count?: { trainings: number } })
         ._count;
       const { _count: __, ...result } = group as typeof group & {
         _count?: { trainings: number };
       };
+      void __; // Return the count only as item_count.
       return { ...result, item_count: count?.trainings ?? 0 };
     } catch (error) {
       this.handleUnique(error);

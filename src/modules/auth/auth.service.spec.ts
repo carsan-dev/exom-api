@@ -1,3 +1,4 @@
+import { expect } from '@jest/globals';
 import {
   HttpException,
   HttpStatus,
@@ -39,7 +40,7 @@ describe('AuthService', () => {
     createCustomTokenMock.mockReset();
     verifyIdTokenMock.mockReset();
     queueEmailMock.mockReset().mockResolvedValue(undefined);
-    global.fetch = jest.fn() as jest.Mock;
+    global.fetch = jest.fn();
 
     prisma = {
       $transaction: jest.fn(),

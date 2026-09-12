@@ -3,23 +3,11 @@ require('ts-node/register/transpile-only');
 const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
-const { resolve } = require('node:path');
+const { assertTestDatabase, databaseUrl } = require('../../../scripts/test-database.cjs');
 const { JobsService } = require('./jobs.service');
 (async () => {
-  const url = new URL(process.env.TEST_DATABASE_URL);
-  if (
-    url.hostname !== '127.0.0.1' ||
-    !['55437', '55447'].includes(url.port) ||
-    url.pathname !== '/exom_review'
-  )
-    throw Error('Not isolated');
-  const pool = new Pool({ connectionString: url.toString() });
-  const result = await pool.query('SHOW data_directory');
-  if (
-    resolve(result.rows[0].data_directory) !==
-    resolve(process.cwd(), new URL(process.env.TEST_DATABASE_URL ?? '').port === '55447' ? '../docs/operations/phase7-20260912/pgdata' : '../docs/operations/phase6-20260911/pgdata')
-  )
-    throw Error('Wrong cluster');
+  const pool = new Pool({ connectionString: databaseUrl() });
+  await assertTestDatabase(pool);
   const db = new PrismaClient({ adapter: new PrismaPg(pool) });
   Object.assign(db, { postgresqlPool: pool });
   const jobs = new JobsService(db);

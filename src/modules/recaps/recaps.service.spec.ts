@@ -1,3 +1,5 @@
+import type { NotificationsService } from '../notifications/notifications.service';
+import { expect } from '@jest/globals';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { RecapStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -25,7 +27,7 @@ describe('RecapsService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       create: jest.Mock;
-      update: jest.Mock;
+      update: jest.Mock<Promise<unknown>, [{ data: Record<string, unknown> }]>;
     };
   };
 
@@ -48,7 +50,10 @@ describe('RecapsService', () => {
         findMany: jest.fn(),
         count: jest.fn(),
         create: jest.fn(),
-        update: jest.fn(),
+        update: jest.fn<
+          Promise<unknown>,
+          [{ data: Record<string, unknown> }]
+        >(),
       },
     };
 
@@ -60,7 +65,7 @@ describe('RecapsService', () => {
 
     service = new RecapsService(
       prisma as unknown as PrismaService,
-      notificationsService as any,
+      notificationsService as unknown as NotificationsService,
     );
   });
 

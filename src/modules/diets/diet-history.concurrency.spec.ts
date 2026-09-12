@@ -1,3 +1,4 @@
+import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
@@ -78,19 +79,11 @@ suite('Diet history PostgreSQL integrity', () => {
   }
 
   beforeAll(async () => {
-    const target = new URL(databaseUrl);
-    if (
-      !['127.0.0.1', 'localhost'].includes(target.hostname) ||
-      target.pathname !== '/exom_review'
-    ) {
-      throw new Error(
-        'Requires the explicitly disposable local exom_review database',
-      );
-    }
     pool = new Pool({
       connectionString: databaseUrl,
       application_name: prefix,
     });
+    await assertTestDatabase(pool);
     otherPool = new Pool({
       connectionString: databaseUrl,
       application_name: `${prefix}-other`,

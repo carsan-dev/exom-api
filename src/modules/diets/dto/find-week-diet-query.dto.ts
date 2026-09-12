@@ -7,7 +7,9 @@ export class FindWeekDietQueryDto {
     description: 'Any date inside the week to fetch (YYYY-MM-DD).',
     example: '2026-06-15',
   })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsNotEmpty()
   @IsDateString()
   week_start!: string;

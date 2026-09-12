@@ -1,3 +1,4 @@
+import type { AuthenticatedUser } from '../decorators/current-user.decorator';
 import {
   CanActivate,
   ExecutionContext,
@@ -20,9 +21,11 @@ export class RolesGuard implements CanActivate {
 
     if (!requiredRoles || requiredRoles.length === 0) return true;
 
-    const { user } = context.switchToHttp().getRequest();
+    const { user } = context
+      .switchToHttp()
+      .getRequest<{ user?: AuthenticatedUser }>();
 
-    if (!user || !requiredRoles.includes(user.role)) {
+    if (!user || !requiredRoles.some((role) => role === user.role)) {
       throw new ForbiddenException(
         'No tienes permisos para realizar esta acción',
       );

@@ -1,3 +1,4 @@
+import type { FeedbackMedia } from '@prisma/client';
 import {
   BadRequestException,
   ForbiddenException,
@@ -108,7 +109,7 @@ export class FeedbackService {
       dto.media_type === MediaType.VIDEO
         ? ManagedUploadPurpose.FEEDBACK_VIDEO
         : ManagedUploadPurpose.FEEDBACK_IMAGE;
-    let feedback;
+    let feedback: FeedbackMedia;
     try {
       const upload = await this.uploadsService.prepareForConsumption({
         ownerId: clientId,

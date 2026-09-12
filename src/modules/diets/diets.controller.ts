@@ -253,6 +253,7 @@ export class DietsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string, @CurrentUser() _user: AuthenticatedUser) {
+    void _user; // Auth and role guards enforce access before this handler.
     return this.dietsService.remove(id);
   }
 }

@@ -1,3 +1,4 @@
+import type { Server } from 'node:http';
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -9,7 +10,7 @@ import { AchievementsController } from './achievements.controller';
 import { AchievementsService } from './achievements.service';
 
 describe('AchievementsController', () => {
-  let app: INestApplication;
+  let app: INestApplication<Server>;
   const achievementsService = {
     findAll: jest.fn(),
     findMyAchievements: jest.fn(),

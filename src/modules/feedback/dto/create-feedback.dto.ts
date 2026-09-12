@@ -64,7 +64,9 @@ export class CreateFeedbackDto {
 
 export class RespondFeedbackDto {
   @ApiProperty()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   @IsString()
   @IsNotEmpty()
   admin_response: string;
