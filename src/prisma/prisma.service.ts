@@ -1,43 +1,53 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Logger,
+} from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
+import { databasePoolConfig } from './pool-config';
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new Logger(PrismaService.name);
   // Jobs pin a PostgreSQL transaction without Prisma's interactive callback deadline.
   readonly postgresqlPool: Pool;
 
   constructor() {
-    const connectionString = process.env.DATABASE_URL;
-
-    if (!connectionString) {
-      throw new Error('DATABASE_URL is not configured');
-    }
-
-    // Strip sslmode from URL so the Pool uses our ssl config instead
-    const cleanUrl = connectionString.replace(/[?&]sslmode=[^&]*/g, '').replace(/\?$/, '');
-
-    const pool = new Pool({
-      connectionString: cleanUrl,
-      ssl: { rejectUnauthorized: false },
-    });
+    const pool = new Pool(databasePoolConfig());
 
     super({
       adapter: new PrismaPg(pool),
-      log: process.env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['error'],
+      log: [],
     });
     this.postgresqlPool = pool;
+    pool.on('error', () =>
+      this.logger.error('Database idle connection failed'),
+    );
   }
 
   async onModuleInit() {
-    await this.$connect();
+    try {
+      await this.$connect();
+      // adapter-pg may connect lazily; readiness must verify a real connection.
+      await this.postgresqlPool.query('SELECT 1');
+    } catch {
+      await this.postgresqlPool.end();
+      throw new Error(
+        'Database connection failed; verify connectivity and TLS configuration',
+      );
+    }
     this.logger.log('Database connected');
   }
 
   async onModuleDestroy() {
     await this.$disconnect();
+    if (!this.postgresqlPool.ended) await this.postgresqlPool.end();
     this.logger.log('Database disconnected');
   }
 }
