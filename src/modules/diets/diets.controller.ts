@@ -102,7 +102,8 @@ export class DietsController {
 
   @Get('month')
   @ApiOperation({
-    summary: 'Get the diets assigned to the current client for a calendar month',
+    summary:
+      'Get the diets assigned to the current client for a calendar month',
   })
   @ApiOkResponse({ description: 'Monthly diets fetched successfully' })
   @ApiBadRequestResponse({ description: 'Invalid year or month parameter' })
@@ -158,7 +159,9 @@ export class DietsController {
   }
 
   @Post('nutritional-badges/delete-batch')
-  @ApiOperation({ summary: 'Remove multiple nutritional badges from active diet meals' })
+  @ApiOperation({
+    summary: 'Remove multiple nutritional badges from active diet meals',
+  })
   @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   deleteNutritionalBadges(@Body() dto: DeleteCatalogValuesDto) {

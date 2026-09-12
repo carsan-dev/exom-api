@@ -6,12 +6,7 @@ import {
   Patch,
   UnauthorizedException,
 } from '@nestjs/common';
-import {
-  ApiHeader,
-  ApiOperation,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 import { MobileAppConfigResponseDto } from './dto/mobile-app-config-response.dto';
 import { UpdateMobileReleaseDto } from './dto/update-mobile-release.dto';

@@ -9,7 +9,10 @@ export class AdminFeedbackQueryDto extends PaginationDto {
   @IsString()
   client_id?: string;
 
-  @ApiPropertyOptional({ enum: FeedbackStatus, description: 'Filter by status' })
+  @ApiPropertyOptional({
+    enum: FeedbackStatus,
+    description: 'Filter by status',
+  })
   @IsOptional()
   @IsEnum(FeedbackStatus)
   status?: FeedbackStatus;

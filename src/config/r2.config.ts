@@ -18,4 +18,5 @@ export function getR2Client(): S3Client {
 }
 
 export const R2_BUCKET = () => process.env.R2_BUCKET_NAME ?? 'exom-media';
-export const R2_PUBLIC_URL = () => process.env.R2_PUBLIC_URL ?? 'https://media.exom.app';
+export const R2_PUBLIC_URL = () =>
+  process.env.R2_PUBLIC_URL ?? 'https://media.exom.app';

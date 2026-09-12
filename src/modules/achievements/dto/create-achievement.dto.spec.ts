@@ -14,9 +14,7 @@ describe('CreateAchievementDto', () => {
     const errors = await validate(dto);
     const properties = errors.map((error) => error.property);
 
-    expect(properties).toEqual(
-      expect.arrayContaining(['name', 'description']),
-    );
+    expect(properties).toEqual(expect.arrayContaining(['name', 'description']));
   });
 
   it('trims valid string fields before validation', async () => {

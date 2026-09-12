@@ -22,12 +22,16 @@ import { AssignmentTrainingInputDto } from './assignment-training-input.dto';
 import { IsDateOnly } from '../../../common/date-only';
 
 @ValidatorConstraint({ name: 'autoAssignmentDaySelection', async: false })
-class AutoAssignmentDaySelectionValidator
-  implements ValidatorConstraintInterface
-{
+class AutoAssignmentDaySelectionValidator implements ValidatorConstraintInterface {
   validate(_: boolean | undefined, args: ValidationArguments) {
     const day = args.object as AutoAssignmentRuleDayDto;
-    return Boolean(day.is_rest_day || day.trainings?.length || day.training_ids?.length || day.training_id || day.diet_id);
+    return Boolean(
+      day.is_rest_day ||
+      day.trainings?.length ||
+      day.training_ids?.length ||
+      day.training_id ||
+      day.diet_id,
+    );
   }
 
   defaultMessage() {
@@ -92,7 +96,10 @@ export class CreateAutoAssignmentRuleDto {
   @IsDateOnly()
   starts_on: string;
 
-  @ApiPropertyOptional({ nullable: true, description: 'ISO date string YYYY-MM-DD' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'ISO date string YYYY-MM-DD',
+  })
   @IsOptional()
   @IsDateOnly()
   ends_on?: string | null;

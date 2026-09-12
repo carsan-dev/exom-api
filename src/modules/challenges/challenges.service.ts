@@ -560,9 +560,13 @@ export class ChallengesService {
 
     const data: Prisma.ChallengeUpdateInput = {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
-      ...(dto.description !== undefined ? { description: dto.description } : {}),
+      ...(dto.description !== undefined
+        ? { description: dto.description }
+        : {}),
       ...(dto.type !== undefined ? { type: dto.type } : {}),
-      ...(dto.target_value !== undefined ? { target_value: dto.target_value } : {}),
+      ...(dto.target_value !== undefined
+        ? { target_value: dto.target_value }
+        : {}),
       ...(dto.unit !== undefined ? { unit: dto.unit } : {}),
       ...(dto.is_manual !== undefined ? { is_manual: dto.is_manual } : {}),
       ...(dto.is_global !== undefined ? { is_global: dto.is_global } : {}),

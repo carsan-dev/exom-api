@@ -83,7 +83,10 @@ export class CopySelectionDto {
   @IsNotEmpty()
   client_id: string;
 
-  @ApiProperty({ type: [String], description: 'Selected source dates (YYYY-MM-DD)' })
+  @ApiProperty({
+    type: [String],
+    description: 'Selected source dates (YYYY-MM-DD)',
+  })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(93)

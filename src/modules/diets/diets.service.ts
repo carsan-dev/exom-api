@@ -175,7 +175,8 @@ export class DietsService {
 
     return values.map((value) => ({
       value,
-      color: colorsByKey.get(this.getCatalogKey(value)) ?? DEFAULT_CATALOG_COLOR,
+      color:
+        colorsByKey.get(this.getCatalogKey(value)) ?? DEFAULT_CATALOG_COLOR,
     }));
   }
 
@@ -369,9 +370,9 @@ export class DietsService {
     };
   }
 
-  private serializeDietList<T extends { meals?: Array<Record<string, unknown>> }>(
-    diets: T[],
-  ) {
+  private serializeDietList<
+    T extends { meals?: Array<Record<string, unknown>> },
+  >(diets: T[]) {
     return diets.map((diet) => this.serializeDietListItem(diet));
   }
 
@@ -497,7 +498,9 @@ export class DietsService {
     const normalizedValue = this.normalizeCatalogValue(value);
 
     if (!normalizedValue) {
-      throw new BadRequestException('El badge nutricional no puede estar vacío');
+      throw new BadRequestException(
+        'El badge nutricional no puede estar vacío',
+      );
     }
 
     const normalizedColor = this.normalizeCatalogColor(color);
@@ -600,7 +603,11 @@ export class DietsService {
   }
 
   private getDietSortField(value?: string): DietSortField {
-    const allowed = new Set<DietSortField>(['name', 'updated_at', 'created_at']);
+    const allowed = new Set<DietSortField>([
+      'name',
+      'updated_at',
+      'created_at',
+    ]);
 
     return value && allowed.has(value as DietSortField)
       ? (value as DietSortField)
@@ -620,12 +627,17 @@ export class DietsService {
     return this.prisma.$transaction(async (tx) => {
       if (groupId) {
         const group = await tx.dietGroup.findUnique({ where: { id: groupId } });
-        if (!group) throw new NotFoundException('Grupo de dietas no encontrado');
+        if (!group)
+          throw new NotFoundException('Grupo de dietas no encontrado');
       }
 
-      const activeCount = await tx.diet.count({ where: { id: { in: ids }, is_active: true } });
+      const activeCount = await tx.diet.count({
+        where: { id: { in: ids }, is_active: true },
+      });
       if (activeCount !== ids.length) {
-        throw new NotFoundException('Una o más dietas no existen o están inactivas');
+        throw new NotFoundException(
+          'Una o más dietas no existen o están inactivas',
+        );
       }
 
       const result = await tx.diet.updateMany({
@@ -815,7 +827,12 @@ export class DietsService {
       }
     }
     const prepared = dto.meals
-      ? await this.prepareMealImages(dto.meals, ownerId, existingImages, approvalRequestId)
+      ? await this.prepareMealImages(
+          dto.meals,
+          ownerId,
+          existingImages,
+          approvalRequestId,
+        )
       : null;
 
     return this.prisma.$transaction(async (tx) => {
@@ -843,7 +860,12 @@ export class DietsService {
 
       if (dto.meals !== undefined) {
         await this.replaceMeals(tx, id, prepared!.meals);
-        await this.consumeMealImages(tx, ownerId!, prepared!.uploadIds, approvalRequestId);
+        await this.consumeMealImages(
+          tx,
+          ownerId!,
+          prepared!.uploadIds,
+          approvalRequestId,
+        );
       }
 
       return tx.diet.findUniqueOrThrow({
@@ -871,9 +893,7 @@ export class DietsService {
           existingImages.get(meal.id),
           meal.image_url,
         );
-      let imageUrl = unchanged
-        ? existingImages.get(meal.id!)
-        : meal.image_url;
+      let imageUrl = unchanged ? existingImages.get(meal.id!) : meal.image_url;
       if (!unchanged && (meal.image_upload_id || meal.image_url)) {
         if (!ownerId) {
           throw new BadRequestException({
@@ -913,9 +933,13 @@ export class DietsService {
     approvalRequestId?: string,
   ) {
     for (const uploadId of uploadIds) {
-      await this.uploadsService.consumePrepared(tx, ownerId, uploadId, [
-        ManagedUploadPurpose.MEAL_IMAGE,
-      ], approvalRequestId);
+      await this.uploadsService.consumePrepared(
+        tx,
+        ownerId,
+        uploadId,
+        [ManagedUploadPurpose.MEAL_IMAGE],
+        approvalRequestId,
+      );
     }
   }
 

@@ -24,7 +24,7 @@ describe('ApprovalInterceptor', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    approvalRequestsService.validateRequestReason.mockResolvedValue(undefined)
+    approvalRequestsService.validateRequestReason.mockResolvedValue(undefined);
   });
 
   function createContext() {
@@ -133,14 +133,17 @@ describe('ApprovalInterceptor', () => {
       handle: jest.fn().mockReturnValue(of({ ok: true })),
     };
 
-    request.headers['x-approval-request-reason'] = '   Necesito coordinacion con el super admin   '
+    request.headers['x-approval-request-reason'] =
+      '   Necesito coordinacion con el super admin   ';
 
     reflector.getAllAndOverride.mockReturnValue({
       actionType: 'training.update',
       resourceType: 'training',
     });
     approvalRequestsService.requiresApproval.mockResolvedValue(true);
-    approvalRequestsService.validateRequestReason.mockResolvedValue('Necesito coordinacion con el super admin');
+    approvalRequestsService.validateRequestReason.mockResolvedValue(
+      'Necesito coordinacion con el super admin',
+    );
     approvalRequestsService.createRequest.mockResolvedValue({
       approvalRequest: { id: 'approval-3' },
       alreadyExists: false,

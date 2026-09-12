@@ -4,7 +4,8 @@ import { ArrayUnique, IsArray, IsNotEmpty, IsString } from 'class-validator';
 export class UpdateClientAssignmentsDto {
   @ApiProperty({
     type: [String],
-    description: 'Listado final de admins activos que quedaran asignados al cliente',
+    description:
+      'Listado final de admins activos que quedaran asignados al cliente',
   })
   @IsArray()
   @ArrayUnique()

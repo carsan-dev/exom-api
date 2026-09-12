@@ -16,7 +16,11 @@ type DashboardClient = {
 
 type DashboardActivity = {
   id: string;
-  type: 'recap_submitted' | 'feedback_sent' | 'progress_completed' | 'client_created';
+  type:
+    | 'recap_submitted'
+    | 'feedback_sent'
+    | 'progress_completed'
+    | 'client_created';
   clientId: string;
   clientName: string;
   clientAvatar: string | null;
@@ -268,7 +272,10 @@ export class DashboardService {
       LIMIT 5`);
   }
 
-  private buildClientWhere(adminId: string, adminRole: Role): Prisma.UserWhereInput {
+  private buildClientWhere(
+    adminId: string,
+    adminRole: Role,
+  ): Prisma.UserWhereInput {
     if (adminRole === Role.SUPER_ADMIN) {
       return { role: Role.CLIENT };
     }
@@ -313,7 +320,9 @@ export class DashboardService {
 
   private getCurrentWeekRange() {
     const now = new Date();
-    const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const weekStart = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
     const day = weekStart.getUTCDay();
     const diffToMonday = day === 0 ? -6 : 1 - day;
 

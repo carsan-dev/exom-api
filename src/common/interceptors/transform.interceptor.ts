@@ -15,9 +15,10 @@ export interface ApiResponse<T> {
 }
 
 @Injectable()
-export class TransformInterceptor<T>
-  implements NestInterceptor<T, ApiResponse<T>>
-{
+export class TransformInterceptor<T> implements NestInterceptor<
+  T,
+  ApiResponse<T>
+> {
   private readonly mediaUrlKeys = new Set([
     'avatar_url',
     'media_url',
@@ -33,9 +34,9 @@ export class TransformInterceptor<T>
     _context: ExecutionContext,
     next: CallHandler,
   ): Observable<ApiResponse<T>> {
-    return next.handle().pipe(
-      mergeMap((data) => from(this.buildResponse(data))),
-    );
+    return next
+      .handle()
+      .pipe(mergeMap((data) => from(this.buildResponse(data))));
   }
 
   private async buildResponse(data: T): Promise<ApiResponse<T>> {

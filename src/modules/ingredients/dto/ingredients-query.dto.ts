@@ -106,12 +106,16 @@ export class IngredientsQueryDto extends PaginationDto {
   @Min(0)
   fat_per_100g_max?: number;
 
-  @ApiPropertyOptional({ description: 'Filter ingredients updated from this ISO date' })
+  @ApiPropertyOptional({
+    description: 'Filter ingredients updated from this ISO date',
+  })
   @IsOptional()
   @IsDateString()
   updated_from?: string;
 
-  @ApiPropertyOptional({ description: 'Filter ingredients updated to this ISO date' })
+  @ApiPropertyOptional({
+    description: 'Filter ingredients updated to this ISO date',
+  })
   @IsOptional()
   @IsDateString()
   updated_to?: string;

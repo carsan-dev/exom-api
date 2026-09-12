@@ -72,7 +72,9 @@ export class ExercisesController {
   }
 
   @Post('muscle-groups/delete-batch')
-  @ApiOperation({ summary: 'Remove multiple muscle groups from active exercises' })
+  @ApiOperation({
+    summary: 'Remove multiple muscle groups from active exercises',
+  })
   @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   deleteMuscleGroups(@Body() dto: DeleteCatalogValuesDto) {
@@ -110,7 +112,9 @@ export class ExercisesController {
   }
 
   @Post('equipment/delete-batch')
-  @ApiOperation({ summary: 'Remove multiple equipment values from active exercises' })
+  @ApiOperation({
+    summary: 'Remove multiple equipment values from active exercises',
+  })
   @ApiOkResponse({ type: CatalogBatchMutationResponseDto })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   deleteEquipmentValues(@Body() dto: DeleteCatalogValuesDto) {

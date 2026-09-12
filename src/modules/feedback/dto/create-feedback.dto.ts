@@ -5,7 +5,9 @@ import { FeedbackKind, MediaType } from '@prisma/client';
 import { IsDateOnly } from '../../../common/date-only';
 
 export class CreateFeedbackDto {
-  @ApiPropertyOptional({ description: 'Stable client-side upload ID for idempotency' })
+  @ApiPropertyOptional({
+    description: 'Stable client-side upload ID for idempotency',
+  })
   @IsOptional()
   @IsString()
   @IsNotEmpty()

@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { LastSetVideoPolicy } from '@prisma/client';
-import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class AssignmentTrainingInputDto {
   @ApiProperty()
@@ -8,7 +14,10 @@ export class AssignmentTrainingInputDto {
   @IsNotEmpty()
   training_id: string;
 
-  @ApiPropertyOptional({ enum: LastSetVideoPolicy, default: LastSetVideoPolicy.AUTO })
+  @ApiPropertyOptional({
+    enum: LastSetVideoPolicy,
+    default: LastSetVideoPolicy.AUTO,
+  })
   @IsOptional()
   @IsEnum(LastSetVideoPolicy)
   last_set_video_policy?: LastSetVideoPolicy;

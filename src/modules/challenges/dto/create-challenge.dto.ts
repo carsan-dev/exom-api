@@ -21,13 +21,18 @@ import {
   ValidatorConstraintInterface,
 } from 'class-validator';
 import { ChallengeType } from '@prisma/client';
-import { CHALLENGE_RULE_KEYS, type ChallengeRuleKey } from '../challenges.constants';
+import {
+  CHALLENGE_RULE_KEYS,
+  type ChallengeRuleKey,
+} from '../challenges.constants';
 
 @ValidatorConstraint({ name: 'challengeAssignmentTarget', async: false })
 class ChallengeAssignmentTargetValidator implements ValidatorConstraintInterface {
   validate(_: boolean | undefined, args: ValidationArguments) {
     const dto = args.object as AssignChallengeDto;
-    return Boolean(dto.apply_to_all_visible_clients || (dto.client_ids?.length ?? 0) > 0);
+    return Boolean(
+      dto.apply_to_all_visible_clients || (dto.client_ids?.length ?? 0) > 0,
+    );
   }
 
   defaultMessage() {
@@ -71,7 +76,10 @@ export class CreateChallengeDto {
   @IsBoolean()
   is_global?: boolean = false;
 
-  @ApiPropertyOptional({ description: 'Deadline date YYYY-MM-DD', nullable: true })
+  @ApiPropertyOptional({
+    description: 'Deadline date YYYY-MM-DD',
+    nullable: true,
+  })
   @IsOptional()
   @IsDateString()
   deadline?: string | null;
@@ -81,7 +89,10 @@ export class CreateChallengeDto {
     description: 'Regla automática para retos no manuales',
     nullable: true,
   })
-  @ValidateIf((dto: CreateChallengeDto) => dto.is_manual === false || dto.rule_key != null)
+  @ValidateIf(
+    (dto: CreateChallengeDto) =>
+      dto.is_manual === false || dto.rule_key != null,
+  )
   @IsString()
   @IsNotEmpty()
   @IsIn(CHALLENGE_RULE_KEYS)
@@ -108,7 +119,11 @@ export class AssignChallengeDto {
   @IsUUID('4', { each: true })
   client_ids?: string[];
 
-  @ApiPropertyOptional({ default: false, description: 'Aplica el reto a todos los clientes visibles del admin actual' })
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Aplica el reto a todos los clientes visibles del admin actual',
+  })
   @IsOptional()
   @IsBoolean()
   @Validate(ChallengeAssignmentTargetValidator)

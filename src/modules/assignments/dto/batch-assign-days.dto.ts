@@ -22,7 +22,13 @@ import { IsDateOnly } from '../../../common/date-only';
 class AssignmentDaySelectionValidator implements ValidatorConstraintInterface {
   validate(_: boolean | undefined, args: ValidationArguments) {
     const day = args.object as BatchAssignmentDayDto;
-    return Boolean(day.is_rest_day || day.trainings?.length || day.training_ids?.length || day.training_id || day.diet_id);
+    return Boolean(
+      day.is_rest_day ||
+      day.trainings?.length ||
+      day.training_ids?.length ||
+      day.training_id ||
+      day.diet_id,
+    );
   }
 
   defaultMessage() {

@@ -47,7 +47,9 @@ describe('PublicConfigController', () => {
       build: 59,
       policy: 'blocking' as const,
     };
-    service.updateMobileRelease.mockResolvedValue({ latest_ios_version: '1.0.1' });
+    service.updateMobileRelease.mockResolvedValue({
+      latest_ios_version: '1.0.1',
+    });
 
     await controller.updateMobileRelease(dto, 'ci-token');
 

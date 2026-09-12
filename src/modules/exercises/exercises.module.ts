@@ -6,6 +6,6 @@ import { UploadsModule } from '../uploads/uploads.module';
 @Module({
   imports: [UploadsModule],
   controllers: [ExercisesController],
-  providers: [ExercisesService]
+  providers: [ExercisesService],
 })
 export class ExercisesModule {}

@@ -50,9 +50,16 @@ async function bootstrap() {
   if (process.env.NODE_ENV !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('EXOM API')
-      .setDescription('API REST para la plataforma EXOM de entrenamiento personal y nutrición')
+      .setDescription(
+        'API REST para la plataforma EXOM de entrenamiento personal y nutrición',
+      )
       .setVersion('1.0.0')
-      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: 'Firebase Auth JWT' })
+      .addBearerAuth({
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Firebase Auth JWT',
+      })
       .build();
 
     const document = SwaggerModule.createDocument(app, config);

@@ -8,4 +8,7 @@ export interface ApprovalMetadata {
 }
 
 export const RequiresApproval = (actionType: string, resourceType: string) =>
-  SetMetadata(REQUIRES_APPROVAL_KEY, { actionType, resourceType } satisfies ApprovalMetadata);
+  SetMetadata(REQUIRES_APPROVAL_KEY, {
+    actionType,
+    resourceType,
+  } satisfies ApprovalMetadata);

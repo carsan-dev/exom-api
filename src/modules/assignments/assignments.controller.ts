@@ -26,7 +26,11 @@ import {
   CreateAutoAssignmentRuleDto,
   GetActiveAutoAssignmentRuleQueryDto,
 } from './dto/auto-assignment-rule.dto';
-import { BulkAssignmentDto, CopySelectionDto, CopyWeekDto } from './dto/bulk-assign.dto';
+import {
+  BulkAssignmentDto,
+  CopySelectionDto,
+  CopyWeekDto,
+} from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
@@ -90,10 +94,14 @@ export class AssignmentsController {
   }
 
   @Post('auto-rules')
-  @ApiOperation({ summary: 'Create or replace the active weekly auto-assignment rule' })
+  @ApiOperation({
+    summary: 'Create or replace the active weekly auto-assignment rule',
+  })
   @ApiOkResponse({ description: 'Auto-assignment rule saved successfully' })
   @ApiBadRequestResponse({ description: 'Invalid auto-assignment payload' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Client, training, or diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   createAutoRule(
@@ -104,7 +112,9 @@ export class AssignmentsController {
   }
 
   @Put('auto-rules/:id')
-  @ApiOperation({ summary: 'Update the active weekly auto-assignment rule in place' })
+  @ApiOperation({
+    summary: 'Update the active weekly auto-assignment rule in place',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   updateAutoRule(
     @CurrentUser() user: AuthenticatedUser,
@@ -115,9 +125,15 @@ export class AssignmentsController {
   }
 
   @Get('auto-rules/active')
-  @ApiOperation({ summary: 'Get the active weekly auto-assignment rule for a client' })
-  @ApiOkResponse({ description: 'Active auto-assignment rule fetched successfully' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiOperation({
+    summary: 'Get the active weekly auto-assignment rule for a client',
+  })
+  @ApiOkResponse({
+    description: 'Active auto-assignment rule fetched successfully',
+  })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Client not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   getActiveAutoRule(
@@ -129,8 +145,12 @@ export class AssignmentsController {
 
   @Put('auto-rules/:id/deactivate')
   @ApiOperation({ summary: 'Deactivate a weekly auto-assignment rule' })
-  @ApiOkResponse({ description: 'Auto-assignment rule deactivated successfully' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiOkResponse({
+    description: 'Auto-assignment rule deactivated successfully',
+  })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Auto-assignment rule not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   deactivateAutoRule(
@@ -141,10 +161,14 @@ export class AssignmentsController {
   }
 
   @Post('batch')
-  @ApiOperation({ summary: 'Assign training/diet/rest day combinations per date' })
+  @ApiOperation({
+    summary: 'Assign training/diet/rest day combinations per date',
+  })
   @ApiOkResponse({ description: 'Assignments created or updated successfully' })
   @ApiBadRequestResponse({ description: 'Invalid batch assignment payload' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Client, training, or diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   batchAssign(
@@ -155,10 +179,14 @@ export class AssignmentsController {
   }
 
   @Post('bulk')
-  @ApiOperation({ summary: 'Bulk-assign training/diet to a client for multiple dates' })
+  @ApiOperation({
+    summary: 'Bulk-assign training/diet to a client for multiple dates',
+  })
   @ApiOkResponse({ description: 'Assignments created or updated successfully' })
   @ApiBadRequestResponse({ description: 'Invalid assignment payload' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Client, training, or diet not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   bulkAssign(
@@ -172,21 +200,24 @@ export class AssignmentsController {
   @ApiOperation({ summary: 'Copy a week of assignments to another week' })
   @ApiOkResponse({ description: 'Week copied successfully' })
   @ApiBadRequestResponse({ description: 'Invalid source or target week' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Client not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  copyWeek(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: CopyWeekDto,
-  ) {
+  copyWeek(@CurrentUser() user: AuthenticatedUser, @Body() dto: CopyWeekDto) {
     return this.assignmentsService.copyWeek(user, dto);
   }
 
   @Post('copy-selection')
-  @ApiOperation({ summary: 'Copy selected assignment days preserving relative offsets' })
+  @ApiOperation({
+    summary: 'Copy selected assignment days preserving relative offsets',
+  })
   @ApiOkResponse({ description: 'Selected days copied successfully' })
   @ApiBadRequestResponse({ description: 'Invalid source or target dates' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   copySelection(
     @CurrentUser() user: AuthenticatedUser,
@@ -199,8 +230,12 @@ export class AssignmentsController {
   @ApiOperation({ summary: 'Delete multiple assignment days' })
   @ApiOkResponse({ description: 'Assignments deleted successfully' })
   @ApiBadRequestResponse({ description: 'Invalid assignment identifiers' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
-  @ApiNotFoundResponse({ description: 'One or more assignments were not found' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
+  @ApiNotFoundResponse({
+    description: 'One or more assignments were not found',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   deleteBatch(
     @CurrentUser() user: AuthenticatedUser,
@@ -227,7 +262,9 @@ export class AssignmentsController {
   @ApiOperation({ summary: 'Get monthly assignments for a client' })
   @ApiOkResponse({ description: 'Month assignments fetched successfully' })
   @ApiBadRequestResponse({ description: 'Invalid month query parameters' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Client not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.CLIENT)
   getMonth(
@@ -241,8 +278,12 @@ export class AssignmentsController {
   @ApiOperation({ summary: 'Update a single assignment day' })
   @ApiOkResponse({ description: 'Assignment updated successfully' })
   @ApiBadRequestResponse({ description: 'Invalid assignment update payload' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
-  @ApiNotFoundResponse({ description: 'Assignment, training, or diet not found' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
+  @ApiNotFoundResponse({
+    description: 'Assignment, training, or diet not found',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   update(
     @CurrentUser() user: AuthenticatedUser,
@@ -255,7 +296,9 @@ export class AssignmentsController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a single assignment day' })
   @ApiOkResponse({ description: 'Assignment deleted successfully' })
-  @ApiForbiddenResponse({ description: 'Client does not belong to the current admin' })
+  @ApiForbiddenResponse({
+    description: 'Client does not belong to the current admin',
+  })
   @ApiNotFoundResponse({ description: 'Assignment not found' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   remove(

@@ -45,12 +45,11 @@ class NotificationDataValidator implements ValidatorConstraintInterface {
 }
 
 @ValidatorConstraint({ name: 'notificationRecipientTarget', async: false })
-class NotificationRecipientTargetValidator
-  implements ValidatorConstraintInterface
-{
+class NotificationRecipientTargetValidator implements ValidatorConstraintInterface {
   validate(_: unknown, args: ValidationArguments) {
     const dto = args.object as SendNotificationDto;
-    const hasUserId = typeof dto.user_id === 'string' && dto.user_id.trim().length > 0;
+    const hasUserId =
+      typeof dto.user_id === 'string' && dto.user_id.trim().length > 0;
     const hasUserIds = Array.isArray(dto.user_ids) && dto.user_ids.length > 0;
 
     return hasUserId !== hasUserIds;
@@ -82,7 +81,9 @@ export class NotificationContentDto {
 }
 
 export class SendNotificationDto extends NotificationContentDto {
-  @ApiPropertyOptional({ description: 'UUID del destinatario para envio individual' })
+  @ApiPropertyOptional({
+    description: 'UUID del destinatario para envio individual',
+  })
   @IsOptional()
   @IsUUID()
   user_id?: string;

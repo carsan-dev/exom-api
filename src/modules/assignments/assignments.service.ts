@@ -18,7 +18,11 @@ import {
   GetActiveAutoAssignmentRuleQueryDto,
 } from './dto/auto-assignment-rule.dto';
 import { BatchAssignDaysDto } from './dto/batch-assign-days.dto';
-import { BulkAssignmentDto, CopySelectionDto, CopyWeekDto } from './dto/bulk-assign.dto';
+import {
+  BulkAssignmentDto,
+  CopySelectionDto,
+  CopyWeekDto,
+} from './dto/bulk-assign.dto';
 import { GetMonthAssignmentsQueryDto } from './dto/get-month-assignments-query.dto';
 import { GetWeekAssignmentsQueryDto } from './dto/get-week-assignments-query.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
@@ -930,7 +934,9 @@ export class AssignmentsService {
               last_set_video_policy: link.last_set_video_policy,
               requires_last_set_video: link.requires_last_set_video,
             }))
-          : day.training ? [this.serializeAssignmentTraining(day.training)!] : [];
+          : day.training
+            ? [this.serializeAssignmentTraining(day.training)!]
+            : [];
         return {
           training_ids: trainings.map((training) => training.id),
           id: day.id,
@@ -1025,7 +1031,8 @@ export class AssignmentsService {
                   position,
                   last_set_video_policy: training.last_set_video_policy,
                   requires_last_set_video:
-                    training.last_set_video_policy === LastSetVideoPolicy.ALWAYS,
+                    training.last_set_video_policy ===
+                    LastSetVideoPolicy.ALWAYS,
                 })),
               },
             })),

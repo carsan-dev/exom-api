@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { ArrayNotEmpty, IsArray, IsDefined, IsOptional, IsString, MaxLength, ValidateIf } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  IsArray,
+  IsDefined,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class CreateCatalogGroupDto {
   @ApiProperty({ minLength: 1, maxLength: 100 })

@@ -4,7 +4,8 @@ import { PublicConfigService } from './public-config.service';
 
 const envValues: Record<string, string> = {
   APP_BASE_URL: 'https://exommethod.com',
-  ANDROID_STORE_URL: 'https://play.google.com/store/apps/details?id=com.exommethod.exom',
+  ANDROID_STORE_URL:
+    'https://play.google.com/store/apps/details?id=com.exommethod.exom',
   IOS_STORE_URL: 'https://apps.apple.com/es/app/exom/id6763056692',
   LATEST_ANDROID_VERSION: '1.0.0',
   LATEST_IOS_VERSION: '1.0.0',

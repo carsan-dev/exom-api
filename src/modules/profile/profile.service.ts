@@ -55,10 +55,15 @@ export class ProfileService {
     const profile = await this.prisma.profile.findUnique({
       where: { user_id: userId },
     });
-    const avatarChanged = Boolean(dto.avatar_upload_id) || Boolean(
-      dto.avatar_url &&
-      !this.uploadsService.referencesSame(dto.avatar_url, profile?.avatar_url),
-    );
+    const avatarChanged =
+      Boolean(dto.avatar_upload_id) ||
+      Boolean(
+        dto.avatar_url &&
+        !this.uploadsService.referencesSame(
+          dto.avatar_url,
+          profile?.avatar_url,
+        ),
+      );
     const avatarUpload = avatarChanged
       ? await this.uploadsService.prepareForConsumption({
           ownerId: userId,
@@ -70,33 +75,10 @@ export class ProfileService {
 
     await this.prisma.$transaction(async (tx) => {
       const profileData = {
-          user_id: userId,
-          first_name: dto.first_name ?? '',
-          last_name: dto.last_name ?? '',
-          ...(avatarUpload && { avatar_url: avatarUpload.file_url }),
-          ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
-          ...(dto.level !== undefined && { level: dto.level }),
-          ...(dto.muscle_mass_goal !== undefined && {
-            muscle_mass_goal: dto.muscle_mass_goal,
-          }),
-          ...(dto.target_calories !== undefined && {
-            target_calories: dto.target_calories,
-          }),
-          ...(dto.current_weight !== undefined && {
-            current_weight: dto.current_weight,
-          }),
-          ...(dto.height !== undefined && { height: dto.height }),
-          ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
-      };
-      if (!profile) {
-        await tx.profile.create({ data: profileData });
-      } else {
-        await tx.profile.update({
-          where: { user_id: userId },
-          data: {
+        user_id: userId,
+        first_name: dto.first_name ?? '',
+        last_name: dto.last_name ?? '',
         ...(avatarUpload && { avatar_url: avatarUpload.file_url }),
-        ...(dto.first_name !== undefined && { first_name: dto.first_name }),
-        ...(dto.last_name !== undefined && { last_name: dto.last_name }),
         ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
         ...(dto.level !== undefined && { level: dto.level }),
         ...(dto.muscle_mass_goal !== undefined && {
@@ -110,16 +92,36 @@ export class ProfileService {
         }),
         ...(dto.height !== undefined && { height: dto.height }),
         ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
+      };
+      if (!profile) {
+        await tx.profile.create({ data: profileData });
+      } else {
+        await tx.profile.update({
+          where: { user_id: userId },
+          data: {
+            ...(avatarUpload && { avatar_url: avatarUpload.file_url }),
+            ...(dto.first_name !== undefined && { first_name: dto.first_name }),
+            ...(dto.last_name !== undefined && { last_name: dto.last_name }),
+            ...(dto.main_goal !== undefined && { main_goal: dto.main_goal }),
+            ...(dto.level !== undefined && { level: dto.level }),
+            ...(dto.muscle_mass_goal !== undefined && {
+              muscle_mass_goal: dto.muscle_mass_goal,
+            }),
+            ...(dto.target_calories !== undefined && {
+              target_calories: dto.target_calories,
+            }),
+            ...(dto.current_weight !== undefined && {
+              current_weight: dto.current_weight,
+            }),
+            ...(dto.height !== undefined && { height: dto.height }),
+            ...(dto.birth_date !== undefined && { birth_date: dto.birth_date }),
           },
         });
       }
       if (avatarUpload) {
-        await this.uploadsService.consumePrepared(
-          tx,
-          userId,
-          avatarUpload.id,
-          [ManagedUploadPurpose.AVATAR],
-        );
+        await this.uploadsService.consumePrepared(tx, userId, avatarUpload.id, [
+          ManagedUploadPurpose.AVATAR,
+        ]);
       }
     });
 

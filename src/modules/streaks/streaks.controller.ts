@@ -1,4 +1,11 @@
-import { Controller, Get, Post, Param, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { StreaksService } from './streaks.service';
 import { Roles } from '../../common/decorators/roles.decorator';

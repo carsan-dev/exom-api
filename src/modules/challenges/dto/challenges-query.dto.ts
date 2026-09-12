@@ -1,6 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEnum, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { ChallengeType } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
@@ -37,7 +44,9 @@ export class ChallengesQueryDto extends PaginationDto {
   @IsEnum(ChallengeType)
   type?: ChallengeType;
 
-  @ApiPropertyOptional({ description: 'Filtra por retos manuales o automáticos' })
+  @ApiPropertyOptional({
+    description: 'Filtra por retos manuales o automáticos',
+  })
   @IsOptional()
   @Transform(({ value }) => toBoolean(value))
   @IsBoolean()

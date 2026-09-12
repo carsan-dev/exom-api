@@ -126,6 +126,9 @@ describe('RecapsController', () => {
       .post('/recaps/my/recap-1/read-feedback')
       .expect(200);
 
-    expect(recapsService.markClientFeedbackAsRead).toHaveBeenCalledWith('admin-1', 'recap-1');
+    expect(recapsService.markClientFeedbackAsRead).toHaveBeenCalledWith(
+      'admin-1',
+      'recap-1',
+    );
   });
 });

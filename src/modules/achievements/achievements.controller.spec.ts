@@ -74,7 +74,9 @@ describe('AchievementsController', () => {
       .set('x-test-role', Role.CLIENT)
       .expect(200);
 
-    expect(achievementsService.findMyAchievements).toHaveBeenCalledWith('user-1');
+    expect(achievementsService.findMyAchievements).toHaveBeenCalledWith(
+      'user-1',
+    );
   });
 
   it.each([Role.ADMIN, Role.SUPER_ADMIN])(

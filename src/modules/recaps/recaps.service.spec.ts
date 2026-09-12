@@ -2,7 +2,10 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { RecapStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RecapsService } from './recaps.service';
-import { ADMIN_RECAP_STATUSES, AdminRecapQueryDto } from './dto/admin-recap-query.dto';
+import {
+  ADMIN_RECAP_STATUSES,
+  AdminRecapQueryDto,
+} from './dto/admin-recap-query.dto';
 
 describe('RecapsService', () => {
   let service: RecapsService;
@@ -50,7 +53,9 @@ describe('RecapsService', () => {
     };
 
     notificationsService = {
-      sendToUser: jest.fn().mockResolvedValue({ success: true, message: 'queued' }),
+      sendToUser: jest
+        .fn()
+        .mockResolvedValue({ success: true, message: 'queued' }),
     };
 
     service = new RecapsService(
@@ -132,7 +137,10 @@ describe('RecapsService', () => {
       client_id: 'client-1',
       status: RecapStatus.DRAFT,
     });
-    prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1', status: RecapStatus.SUBMITTED });
+    prisma.weeklyRecap.update.mockResolvedValue({
+      id: 'recap-1',
+      status: RecapStatus.SUBMITTED,
+    });
 
     await service.submit('client-1', 'recap-1');
 
@@ -153,8 +161,12 @@ describe('RecapsService', () => {
     });
 
     await expect(
-      service.update('client-1', 'recap-1', { training_notes: 'No debería guardar cambios' }),
-    ).rejects.toThrow(new ForbiddenException('Only draft recaps can be edited'));
+      service.update('client-1', 'recap-1', {
+        training_notes: 'No debería guardar cambios',
+      }),
+    ).rejects.toThrow(
+      new ForbiddenException('Only draft recaps can be edited'),
+    );
 
     expect(prisma.weeklyRecap.update).not.toHaveBeenCalled();
   });
@@ -206,8 +218,13 @@ describe('RecapsService', () => {
         profile: null,
       },
     });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
-    prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1', status: RecapStatus.REVIEWED });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
+    prisma.weeklyRecap.update.mockResolvedValue({
+      id: 'recap-1',
+      status: RecapStatus.REVIEWED,
+    });
 
     await service.review('admin-1', Role.ADMIN, 'recap-1', {
       admin_comments: 'Buen trabajo esta semana',
@@ -221,7 +238,9 @@ describe('RecapsService', () => {
         admin_comments: 'Buen trabajo esta semana',
       }),
     });
-    expect(prisma.weeklyRecap.update.mock.calls[0][0].data.general_notes).toBeUndefined();
+    expect(
+      prisma.weeklyRecap.update.mock.calls[0][0].data.general_notes,
+    ).toBeUndefined();
     expect(notificationsService.sendToUser).not.toHaveBeenCalled();
   });
 
@@ -238,7 +257,9 @@ describe('RecapsService', () => {
         profile: null,
       },
     });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
     prisma.weeklyRecap.update.mockResolvedValue({
       id: 'recap-1',
       client_id: 'client-1',
@@ -284,8 +305,13 @@ describe('RecapsService', () => {
         profile: null,
       },
     });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
-    prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1', status: RecapStatus.REVIEWED });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
+    prisma.weeklyRecap.update.mockResolvedValue({
+      id: 'recap-1',
+      status: RecapStatus.REVIEWED,
+    });
 
     await service.review('admin-1', Role.ADMIN, 'recap-1', {
       client_feedback_text: '   ',
@@ -314,7 +340,9 @@ describe('RecapsService', () => {
         profile: null,
       },
     });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
 
     await expect(
       service.review('admin-1', Role.ADMIN, 'recap-1', {
@@ -339,8 +367,13 @@ describe('RecapsService', () => {
         profile: null,
       },
     });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
-    prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1', status: RecapStatus.REVIEWED });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
+    prisma.weeklyRecap.update.mockResolvedValue({
+      id: 'recap-1',
+      status: RecapStatus.REVIEWED,
+    });
 
     await service.review('admin-1', Role.ADMIN, 'recap-1', {
       admin_comments: 'Comentario actualizado',
@@ -355,7 +388,9 @@ describe('RecapsService', () => {
   });
 
   it('excludes archived recaps by default in admin listing', async () => {
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.weeklyRecap.findMany.mockResolvedValue([]);
     prisma.weeklyRecap.count.mockResolvedValue(0);
 
@@ -381,7 +416,9 @@ describe('RecapsService', () => {
   });
 
   it('does not expose draft recaps when admin status validation is bypassed', async () => {
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.weeklyRecap.findMany.mockResolvedValue([]);
     prisma.weeklyRecap.count.mockResolvedValue(0);
 
@@ -401,7 +438,9 @@ describe('RecapsService', () => {
   });
 
   it('can request archived recaps explicitly in admin listing', async () => {
-    prisma.adminClientAssignment.findMany.mockResolvedValue([{ client_id: 'client-1' }]);
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      { client_id: 'client-1' },
+    ]);
     prisma.weeklyRecap.findMany.mockResolvedValue([]);
     prisma.weeklyRecap.count.mockResolvedValue(0);
 
@@ -429,9 +468,13 @@ describe('RecapsService', () => {
         profile: null,
       },
     });
-    prisma.adminClientAssignment.findFirst.mockResolvedValue({ id: 'assignment-1' });
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
 
-    await expect(service.archive('admin-1', Role.ADMIN, 'recap-1')).rejects.toThrow(
+    await expect(
+      service.archive('admin-1', Role.ADMIN, 'recap-1'),
+    ).rejects.toThrow(
       new ForbiddenException('Only reviewed recaps can be archived'),
     );
   });
@@ -450,17 +493,17 @@ describe('RecapsService', () => {
     });
     prisma.adminClientAssignment.findFirst.mockResolvedValue(null);
 
-    await expect(service.getAdminRecapById('admin-1', Role.ADMIN, 'recap-1')).rejects.toThrow(
-      new ForbiddenException('Access denied'),
-    );
+    await expect(
+      service.getAdminRecapById('admin-1', Role.ADMIN, 'recap-1'),
+    ).rejects.toThrow(new ForbiddenException('Access denied'));
   });
 
   it('returns not found when the recap does not exist', async () => {
     prisma.weeklyRecap.findUnique.mockResolvedValue(null);
 
-    await expect(service.getAdminRecapById('admin-1', Role.ADMIN, 'missing')).rejects.toThrow(
-      new NotFoundException('Recap not found'),
-    );
+    await expect(
+      service.getAdminRecapById('admin-1', Role.ADMIN, 'missing'),
+    ).rejects.toThrow(new NotFoundException('Recap not found'));
   });
 
   it('marks visible client feedback as read', async () => {
@@ -472,7 +515,9 @@ describe('RecapsService', () => {
     });
     prisma.weeklyRecap.update.mockResolvedValue({ id: 'recap-1' });
 
-    await expect(service.markClientFeedbackAsRead('client-1', 'recap-1')).resolves.toEqual({
+    await expect(
+      service.markClientFeedbackAsRead('client-1', 'recap-1'),
+    ).resolves.toEqual({
       success: true,
     });
 
@@ -490,7 +535,9 @@ describe('RecapsService', () => {
       client_feedback_read_at: null,
     });
 
-    await expect(service.markClientFeedbackAsRead('client-1', 'recap-1')).resolves.toEqual({
+    await expect(
+      service.markClientFeedbackAsRead('client-1', 'recap-1'),
+    ).resolves.toEqual({
       success: true,
     });
 

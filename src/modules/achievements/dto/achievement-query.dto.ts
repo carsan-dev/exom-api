@@ -21,9 +21,7 @@ import {
 } from '../achievements.constants';
 
 @ValidatorConstraint({ name: 'achievementRecomputeTarget', async: false })
-class AchievementRecomputeTargetValidator
-  implements ValidatorConstraintInterface
-{
+class AchievementRecomputeTargetValidator implements ValidatorConstraintInterface {
   validate(_: boolean | undefined, args: ValidationArguments) {
     const dto = args.object as RecomputeAchievementsDto;
     return Boolean(
@@ -38,9 +36,7 @@ class AchievementRecomputeTargetValidator
 
 export class AchievementFiltersDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Búsqueda en nombre y descripción' })
-  @Transform(({ value }) =>
-    typeof value === 'string' ? value.trim() : value,
-  )
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString()
   search?: string;
@@ -77,7 +73,8 @@ export class RecomputeAchievementsDto {
 
   @ApiPropertyOptional({
     default: false,
-    description: 'Aplica el recálculo a todos los clientes visibles para el admin actual',
+    description:
+      'Aplica el recálculo a todos los clientes visibles para el admin actual',
   })
   @Transform(({ value }) => {
     if (value === undefined) {

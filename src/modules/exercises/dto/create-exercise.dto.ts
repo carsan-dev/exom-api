@@ -1,10 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import {
-  IsString,
-  IsArray,
-  IsEnum,
-  IsOptional,
-} from 'class-validator';
+import { IsString, IsArray, IsEnum, IsOptional } from 'class-validator';
 import { Level } from '@prisma/client';
 
 export class CreateExerciseDto {

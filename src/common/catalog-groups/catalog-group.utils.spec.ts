@@ -11,6 +11,8 @@ describe('normalizeGroupName', () => {
 
   it('rejects empty and overlong names', () => {
     expect(() => normalizeGroupName('   ')).toThrow(BadRequestException);
-    expect(() => normalizeGroupName('x'.repeat(101))).toThrow(BadRequestException);
+    expect(() => normalizeGroupName('x'.repeat(101))).toThrow(
+      BadRequestException,
+    );
   });
 });

@@ -51,7 +51,9 @@ export class TrainingsQueryDto extends PaginationDto {
   @IsString()
   group_id?: string;
 
-  @ApiPropertyOptional({ description: 'Filter trainings without a catalog group' })
+  @ApiPropertyOptional({
+    description: 'Filter trainings without a catalog group',
+  })
   @IsOptional()
   @Transform(({ value }) => toBoolean(value))
   @IsBoolean()

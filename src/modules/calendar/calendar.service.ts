@@ -27,7 +27,11 @@ export class CalendarService {
 
   private buildRange(start: Date, end: Date) {
     const dates: Date[] = [];
-    for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
+    for (
+      const date = new Date(start);
+      date <= end;
+      date.setUTCDate(date.getUTCDate() + 1)
+    ) {
       dates.push(new Date(date));
     }
     return { start, end, dates };
@@ -100,9 +104,8 @@ export class CalendarService {
       const assignedMealsCount = assignedMeals.filter(
         (meal) => meal.parent_meal_id === null,
       ).length;
-      const assignedTrainingIds = assignment?.trainings?.map(
-        (link) => link.training_id,
-      ) ?? [];
+      const assignedTrainingIds =
+        assignment?.trainings?.map((link) => link.training_id) ?? [];
       const currentTrainingCompleted =
         assignedTrainingIds.length > 0
           ? assignedTrainingIds.every((id) =>
@@ -117,7 +120,10 @@ export class CalendarService {
 
       days.push({
         date: dateStr,
-        has_training: Boolean(assignment && ((assignment.trainings?.length ?? 0) > 0 || assignment.training_id)),
+        has_training: Boolean(
+          assignment &&
+          ((assignment.trainings?.length ?? 0) > 0 || assignment.training_id),
+        ),
         has_diet: !!assignment?.diet_id,
         is_rest_day: assignment?.is_rest_day ?? false,
         training_completed: currentTrainingCompleted,
@@ -173,9 +179,11 @@ export class CalendarService {
         : (assignment.diet?.meals ?? []);
     };
     const trainingsAssigned = assignments.reduce(
-      (sum, assignment) => sum + (assignment.is_rest_day
-        ? 0
-        : assignment.trainings?.length || (assignment.training_id ? 1 : 0)),
+      (sum, assignment) =>
+        sum +
+        (assignment.is_rest_day
+          ? 0
+          : assignment.trainings?.length || (assignment.training_id ? 1 : 0)),
       0,
     );
 
@@ -192,14 +200,18 @@ export class CalendarService {
         `${assignment.client_id}:${assignment.date.toISOString()}`,
       );
       if (assignment.trainings?.length) {
-        const assignedIds = new Set(assignment.trainings.map((link) => link.training_id));
+        const assignedIds = new Set(
+          assignment.trainings.map((link) => link.training_id),
+        );
         return (
           sum +
           (progress?.trainings_completed.filter((id) => assignedIds.has(id))
             .length ?? 0)
         );
       }
-      return sum + (assignment.training_id && progress?.training_completed ? 1 : 0);
+      return (
+        sum + (assignment.training_id && progress?.training_completed ? 1 : 0)
+      );
     }, 0);
 
     const totalMeals = assignments.reduce((sum, a) => {

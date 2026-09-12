@@ -190,9 +190,13 @@ export class MealsService {
     uploadId: string,
     approvalRequestId?: string,
   ) {
-    return this.uploadsService.consumePrepared(tx, ownerId, uploadId, [
-      ManagedUploadPurpose.MEAL_IMAGE,
-    ], approvalRequestId);
+    return this.uploadsService.consumePrepared(
+      tx,
+      ownerId,
+      uploadId,
+      [ManagedUploadPurpose.MEAL_IMAGE],
+      approvalRequestId,
+    );
   }
 
   async removeWithAuth(id: string, adminId: string) {

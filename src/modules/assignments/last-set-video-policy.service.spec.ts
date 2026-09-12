@@ -63,11 +63,36 @@ describe('LastSetVideoPolicyService', () => {
     await service.reconcile('client-1', ['2026-09']);
 
     expect(planAssignmentTraining.update.mock.calls).toEqual([
-      [{ where: { id: 'auto-first' }, data: { requires_last_set_video: true } }],
-      [{ where: { id: 'never-first' }, data: { requires_last_set_video: false } }],
-      [{ where: { id: 'auto-same-week' }, data: { requires_last_set_video: true } }],
-      [{ where: { id: 'auto-later' }, data: { requires_last_set_video: false } }],
-      [{ where: { id: 'always-later' }, data: { requires_last_set_video: true } }],
+      [
+        {
+          where: { id: 'auto-first' },
+          data: { requires_last_set_video: true },
+        },
+      ],
+      [
+        {
+          where: { id: 'never-first' },
+          data: { requires_last_set_video: false },
+        },
+      ],
+      [
+        {
+          where: { id: 'auto-same-week' },
+          data: { requires_last_set_video: true },
+        },
+      ],
+      [
+        {
+          where: { id: 'auto-later' },
+          data: { requires_last_set_video: false },
+        },
+      ],
+      [
+        {
+          where: { id: 'always-later' },
+          data: { requires_last_set_video: true },
+        },
+      ],
     ]);
   });
 

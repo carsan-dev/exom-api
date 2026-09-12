@@ -95,7 +95,10 @@ export class PublicConfigService {
         'IOS_STORE_URL',
         DEFAULT_IOS_STORE_URL,
       ),
-      latest_android_version: this.config.get<string>('LATEST_ANDROID_VERSION', ''),
+      latest_android_version: this.config.get<string>(
+        'LATEST_ANDROID_VERSION',
+        '',
+      ),
       latest_ios_version: this.config.get<string>('LATEST_IOS_VERSION', ''),
       min_android_build: this.getNumber('MIN_ANDROID_BUILD'),
       min_ios_build: this.getNumber('MIN_IOS_BUILD'),
@@ -111,7 +114,10 @@ export class PublicConfigService {
         'UPDATE_MESSAGE',
         'Hay una nueva version de EXOM disponible.',
       ),
-      support_url: this.config.get<string>('SUPPORT_URL', `${appBaseUrl}/support`),
+      support_url: this.config.get<string>(
+        'SUPPORT_URL',
+        `${appBaseUrl}/support`,
+      ),
       privacy_policy_url: this.config.get<string>(
         'PRIVACY_POLICY_URL',
         `${appBaseUrl}/privacy`,
@@ -131,7 +137,10 @@ export class PublicConfigService {
 
     const publishedVersion = await this.fetchPublishedIosVersion();
 
-    if (!publishedVersion || !this.isSameVersion(publishedVersion, config.latest_ios_version)) {
+    if (
+      !publishedVersion ||
+      !this.isSameVersion(publishedVersion, config.latest_ios_version)
+    ) {
       return {
         ...config,
         min_ios_build: 0,

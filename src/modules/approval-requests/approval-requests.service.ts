@@ -105,9 +105,18 @@ export class ApprovalRequestsService {
       case 'always':
         return true;
       case 'ownership':
-        return this.requiresOwnershipApproval(user.id, resourceType, resourceId);
+        return this.requiresOwnershipApproval(
+          user.id,
+          resourceType,
+          resourceId,
+        );
       case 'meal_diet_ownership':
-        return this.requiresMealDietApproval(user.id, actionType, resourceId, body);
+        return this.requiresMealDietApproval(
+          user.id,
+          actionType,
+          resourceId,
+          body,
+        );
       case 'challenge_global':
         return this.requiresChallengeGlobalApproval(body);
       case 'challenge_ownership':
@@ -196,7 +205,10 @@ export class ApprovalRequestsService {
     return this.findPaginated(query);
   }
 
-  async findByRequester(requesterId: string, query: MyApprovalRequestsQueryDto) {
+  async findByRequester(
+    requesterId: string,
+    query: MyApprovalRequestsQueryDto,
+  ) {
     return this.findPaginated(query, requesterId);
   }
 
@@ -207,11 +219,7 @@ export class ApprovalRequestsService {
         )
       : rawRequestReason;
 
-    if (
-      candidate === undefined ||
-      candidate === null ||
-      candidate === ''
-    ) {
+    if (candidate === undefined || candidate === null || candidate === '') {
       return undefined;
     }
 
@@ -229,9 +237,7 @@ export class ApprovalRequestsService {
     );
 
     throw new BadRequestException(
-      messages.length > 0
-        ? messages
-        : 'El motivo de la solicitud no es válido',
+      messages.length > 0 ? messages : 'El motivo de la solicitud no es válido',
     );
   }
 
@@ -290,7 +296,10 @@ export class ApprovalRequestsService {
     });
   }
 
-  async findPendingBatchByResource(resourceType: string, resourceIds: string[]) {
+  async findPendingBatchByResource(
+    resourceType: string,
+    resourceIds: string[],
+  ) {
     const uniqueResourceIds = [...new Set(resourceIds.filter(Boolean))];
 
     if (uniqueResourceIds.length === 0) {
@@ -421,7 +430,9 @@ export class ApprovalRequestsService {
     }
 
     if (approvalRequest.status !== ApprovalStatus.PENDING) {
-      throw new ConflictException('Solo puedes cancelar solicitudes pendientes');
+      throw new ConflictException(
+        'Solo puedes cancelar solicitudes pendientes',
+      );
     }
 
     const updated = await this.prisma.approvalRequest.updateMany({
@@ -480,9 +491,7 @@ export class ApprovalRequestsService {
       ...(query.status ? { status: query.status } : {}),
       ...(query.resource_type ? { resource_type: query.resource_type } : {}),
       ...(requesterId ? { requester_id: requesterId } : {}),
-      ...(!requesterId &&
-      'requester_id' in query &&
-      query.requester_id
+      ...(!requesterId && 'requester_id' in query && query.requester_id
         ? { requester_id: query.requester_id }
         : {}),
     };
@@ -506,7 +515,9 @@ export class ApprovalRequestsService {
       where: { id: { in: ids } },
       include: approvalRequestInclude,
     });
-    const requestMap = new Map(requests.map((request) => [request.id, request]));
+    const requestMap = new Map(
+      requests.map((request) => [request.id, request]),
+    );
     const data = ids
       .map((id) => requestMap.get(id))
       .filter(
@@ -625,7 +636,8 @@ export class ApprovalRequestsService {
           this.getStringArrayField(next, 'client_ids'),
         ),
         apply_to_all_visible_clients:
-          this.getBooleanField(current, 'apply_to_all_visible_clients') === true ||
+          this.getBooleanField(current, 'apply_to_all_visible_clients') ===
+            true ||
           this.getBooleanField(next, 'apply_to_all_visible_clients') === true,
       };
     }
@@ -708,13 +720,19 @@ export class ApprovalRequestsService {
       return payloadName;
     }
 
-    const targetUserId = this.getStringField(approvalRequest.payload, 'user_id');
+    const targetUserId = this.getStringField(
+      approvalRequest.payload,
+      'user_id',
+    );
 
     if (targetUserId) {
       return targetUserId;
     }
 
-    const targetUserIds = this.getStringArrayField(approvalRequest.payload, 'user_ids');
+    const targetUserIds = this.getStringArrayField(
+      approvalRequest.payload,
+      'user_ids',
+    );
 
     if (targetUserIds.length > 0) {
       return targetUserIds.join(', ');
@@ -941,7 +959,9 @@ export class ApprovalRequestsService {
     }
 
     const value = (body as Record<string, unknown>)[key];
-    return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+    return typeof value === 'string' && value.trim().length > 0
+      ? value
+      : undefined;
   }
 
   private getBooleanField(body: unknown, key: string) {
@@ -964,7 +984,11 @@ export class ApprovalRequestsService {
       return [];
     }
 
-    return [...new Set(value.filter((item): item is string => typeof item === 'string'))];
+    return [
+      ...new Set(
+        value.filter((item): item is string => typeof item === 'string'),
+      ),
+    ];
   }
 
   private getNotificationRecipientIds(body: unknown) {
@@ -1059,9 +1083,13 @@ export class ApprovalRequestsService {
       case 'challenge':
         return this.prisma.challenge.findUnique({ where: { id: resourceId } });
       case 'achievement':
-        return this.prisma.achievement.findUnique({ where: { id: resourceId } });
+        return this.prisma.achievement.findUnique({
+          where: { id: resourceId },
+        });
       case 'notification':
-        return this.prisma.notification.findUnique({ where: { id: resourceId } });
+        return this.prisma.notification.findUnique({
+          where: { id: resourceId },
+        });
       default:
         return null;
     }

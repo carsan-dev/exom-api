@@ -14,7 +14,11 @@ export class CreateClientDto {
   @IsEmail()
   email: string;
 
-  @ApiPropertyOptional({ minLength: 8, description: 'Si se omite, se envía email de invitación para que el usuario la fije' })
+  @ApiPropertyOptional({
+    minLength: 8,
+    description:
+      'Si se omite, se envía email de invitación para que el usuario la fije',
+  })
   @IsOptional()
   @IsString()
   @MinLength(8)

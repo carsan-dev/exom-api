@@ -1,7 +1,15 @@
 import { Controller, Get, Post, Put, Body, Param, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { FeedbackService } from './feedback.service';
-import { CreateFeedbackDto, RespondFeedbackDto } from './dto/create-feedback.dto';
+import {
+  CreateFeedbackDto,
+  RespondFeedbackDto,
+} from './dto/create-feedback.dto';
 import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -27,16 +35,26 @@ export class FeedbackController {
 
   @Get('stats')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Obtener resumen de feedback visible para la sesión actual' })
-  @ApiResponse({ status: 200, description: 'Estadísticas de feedback obtenidas correctamente' })
+  @ApiOperation({
+    summary: 'Obtener resumen de feedback visible para la sesión actual',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Estadísticas de feedback obtenidas correctamente',
+  })
   getStats(@CurrentUser() user: AuthenticatedUser) {
     return this.feedbackService.getStats(user.id, user.role);
   }
 
   @Get()
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Listar feedback multimedia accesible para la sesión actual' })
-  @ApiResponse({ status: 200, description: 'Listado de feedback obtenido correctamente' })
+  @ApiOperation({
+    summary: 'Listar feedback multimedia accesible para la sesión actual',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Listado de feedback obtenido correctamente',
+  })
   @ApiResponse({ status: 400, description: 'Parámetros de consulta inválidos' })
   findAll(
     @CurrentUser() user: AuthenticatedUser,
@@ -57,10 +75,21 @@ export class FeedbackController {
 
   @Put(':id/respond')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Responder feedback multimedia accesible para la sesión actual' })
-  @ApiResponse({ status: 200, description: 'Feedback respondido correctamente' })
-  @ApiResponse({ status: 400, description: 'La respuesta del admin es inválida' })
-  @ApiResponse({ status: 403, description: 'No tienes permisos sobre este feedback' })
+  @ApiOperation({
+    summary: 'Responder feedback multimedia accesible para la sesión actual',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Feedback respondido correctamente',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'La respuesta del admin es inválida',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'No tienes permisos sobre este feedback',
+  })
   @ApiResponse({ status: 404, description: 'Feedback no encontrado' })
   respond(
     @Param('id') id: string,

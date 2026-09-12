@@ -1,5 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { CalendarService } from './calendar.service';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -30,8 +35,15 @@ export class CalendarController {
   }
 
   @Get('week-summary')
-  @ApiOperation({ summary: 'Get weekly summary of training and diet completion' })
-  @ApiQuery({ name: 'week_start', required: true, type: String, description: 'YYYY-MM-DD' })
+  @ApiOperation({
+    summary: 'Get weekly summary of training and diet completion',
+  })
+  @ApiQuery({
+    name: 'week_start',
+    required: true,
+    type: String,
+    description: 'YYYY-MM-DD',
+  })
   getWeekSummary(
     @CurrentUser() user: AuthenticatedUser,
     @Query('week_start') weekStart: string,

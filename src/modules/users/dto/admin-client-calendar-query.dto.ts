@@ -19,7 +19,10 @@ export class AdminClientCalendarMonthQueryDto {
 }
 
 export class AdminClientCalendarWeekQueryDto {
-  @ApiProperty({ example: '2024-03-11', description: 'Inicio de semana en formato YYYY-MM-DD' })
+  @ApiProperty({
+    example: '2024-03-11',
+    description: 'Inicio de semana en formato YYYY-MM-DD',
+  })
   @IsDateString()
   week_start: string;
 }

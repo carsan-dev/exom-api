@@ -4,7 +4,10 @@ import { IsBoolean, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { RecapStatus } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
-export const ADMIN_RECAP_STATUSES = [RecapStatus.SUBMITTED, RecapStatus.REVIEWED] as const;
+export const ADMIN_RECAP_STATUSES = [
+  RecapStatus.SUBMITTED,
+  RecapStatus.REVIEWED,
+] as const;
 export type AdminRecapStatus = (typeof ADMIN_RECAP_STATUSES)[number];
 
 function toBoolean(value: unknown) {

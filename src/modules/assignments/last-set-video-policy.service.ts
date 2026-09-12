@@ -76,9 +76,13 @@ export class LastSetVideoPolicyService {
       const updates: Prisma.PrismaPromise<unknown>[] = [];
 
       for (const assignment of assignments) {
-        const autoRequired = this.weekStart(assignment.date).getTime() === firstWeekStart;
+        const autoRequired =
+          this.weekStart(assignment.date).getTime() === firstWeekStart;
         for (const link of assignment.trainings) {
-          const required = this.effective(link.last_set_video_policy, autoRequired);
+          const required = this.effective(
+            link.last_set_video_policy,
+            autoRequired,
+          );
           if (required !== link.requires_last_set_video) {
             updates.push(
               db.planAssignmentTraining.update({

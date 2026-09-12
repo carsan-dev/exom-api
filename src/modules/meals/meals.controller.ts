@@ -42,7 +42,10 @@ export class MealsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Create a meal inside a diet' })
   @ApiResponse({ status: 201, description: 'Meal created successfully' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateMealBodyDto,
@@ -54,7 +57,10 @@ export class MealsController {
   @RequiresApproval('meal.update', 'meal')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Update meal name, macros and ingredients' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -68,7 +74,10 @@ export class MealsController {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a meal' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   remove(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.mealsService.removeWithAuth(id, user.id);
   }

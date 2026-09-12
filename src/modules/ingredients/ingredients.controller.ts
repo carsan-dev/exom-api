@@ -59,7 +59,10 @@ export class IngredientsController {
   @Put(':id')
   @RequiresApproval('ingredient.update', 'ingredient')
   @ApiOperation({ summary: 'Update an ingredient (admin only)' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   update(
     @Param('id') id: string,
@@ -72,13 +75,13 @@ export class IngredientsController {
   @Delete(':id')
   @RequiresApproval('ingredient.delete', 'ingredient')
   @ApiOperation({ summary: 'Soft-delete an ingredient (admin only)' })
-  @ApiResponse({ status: 202, description: 'Solicitud de aprobación creada (solo ADMIN)' })
+  @ApiResponse({
+    status: 202,
+    description: 'Solicitud de aprobación creada (solo ADMIN)',
+  })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(
-    @Param('id') id: string,
-    @CurrentUser() _user: AuthenticatedUser,
-  ) {
+  remove(@Param('id') id: string, @CurrentUser() _user: AuthenticatedUser) {
     return this.ingredientsService.remove(id);
   }
 }

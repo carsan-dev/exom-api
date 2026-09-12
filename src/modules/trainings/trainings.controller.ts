@@ -72,7 +72,9 @@ export class TrainingsController {
   }
 
   @Get('day')
-  @ApiOperation({ summary: 'Get all ordered trainings and individual state for a date' })
+  @ApiOperation({
+    summary: 'Get all ordered trainings and individual state for a date',
+  })
   @Roles(Role.CLIENT)
   findDay(
     @CurrentUser() user: AuthenticatedUser,
@@ -93,7 +95,10 @@ export class TrainingsController {
   @Patch('group-membership')
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   updateGroupMembership(@Body() dto: UpdateTrainingGroupMembershipDto) {
-    return this.trainingsService.updateGroupMembership(dto.training_ids, dto.group_id);
+    return this.trainingsService.updateGroupMembership(
+      dto.training_ids,
+      dto.group_id,
+    );
   }
 
   @Get('types')

@@ -9,7 +9,10 @@ export class NotificationQueryDto extends PaginationDto {
   @IsUUID()
   recipient_id?: string;
 
-  @ApiPropertyOptional({ enum: NotificationStatus, description: 'Filter by notification status' })
+  @ApiPropertyOptional({
+    enum: NotificationStatus,
+    description: 'Filter by notification status',
+  })
   @IsOptional()
   @IsEnum(NotificationStatus)
   status?: NotificationStatus;

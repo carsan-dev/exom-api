@@ -54,7 +54,10 @@ const notificationHistoryInclude = {
   },
 } as const;
 
-type TemplateVariables = Record<string, string | number | boolean | null | undefined>;
+type TemplateVariables = Record<
+  string,
+  string | number | boolean | null | undefined
+>;
 
 type TemplateFallback = {
   title: string;
@@ -208,8 +211,9 @@ export class NotificationsService implements OnModuleInit {
   ) {
     if (!text) return text;
 
-    return text.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key: string) =>
-      variables[key] ?? '',
+    return text.replace(
+      /\{([a-zA-Z0-9_]+)\}/g,
+      (_match, key: string) => variables[key] ?? '',
     );
   }
 
@@ -1153,7 +1157,10 @@ export class NotificationsService implements OnModuleInit {
     );
     const weekday = this.normalizeScheduleWeekday(
       schedule,
-      dto.weekday ?? existingSchedule?.weekday ?? schedule.defaultWeekday ?? null,
+      dto.weekday ??
+        existingSchedule?.weekday ??
+        schedule.defaultWeekday ??
+        null,
     );
     const enabled = dto.enabled ?? existingSchedule?.enabled ?? true;
 
