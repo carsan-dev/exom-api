@@ -56,12 +56,15 @@ export class LastSetVideoPolicyService {
         where: {
           client_id: clientId,
           date: { gte: start, lt: end },
-          trainings: { some: {} },
+          // A migrated scalar had no video obligation and did not anchor the
+          // month. Keep both facts until an explicit edit replaces its links.
+          trainings: { some: { legacy_video_exempt: false } },
         },
         orderBy: { date: 'asc' },
         select: {
           date: true,
           trainings: {
+            where: { legacy_video_exempt: false },
             select: {
               id: true,
               last_set_video_policy: true,

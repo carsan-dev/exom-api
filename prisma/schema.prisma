@@ -617,6 +617,7 @@ model PlanAssignmentTraining {
   position                Int
   last_set_video_policy   LastSetVideoPolicy @default(AUTO)
   requires_last_set_video Boolean            @default(false)
+  legacy_video_exempt     Boolean            @default(false)
 
   assignment PlanAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
   training   Training       @relation(fields: [training_id], references: [id], onDelete: Cascade)

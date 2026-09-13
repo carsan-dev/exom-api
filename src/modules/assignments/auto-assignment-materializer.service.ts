@@ -132,6 +132,7 @@ export class AutoAssignmentMaterializerService {
               select: {
                 training_id: true,
                 last_set_video_policy: true,
+                legacy_video_exempt: true,
               },
             },
           },
@@ -207,6 +208,7 @@ export class AutoAssignmentMaterializerService {
           const expected = desired.trainings[index];
           return (
             !expected ||
+            training.legacy_video_exempt ||
             training.training_id !== expected.training_id ||
             training.last_set_video_policy !== expected.last_set_video_policy
           );
