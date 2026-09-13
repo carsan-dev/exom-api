@@ -404,6 +404,7 @@ export class ProgressService {
     assignedTrainingExerciseIds: Set<string>,
     assignedExerciseIds: Set<string>,
     completedEntries: ExerciseCompletedEntry[],
+    exerciseIdByTrainingExerciseId: ReadonlyMap<string, string>,
   ): boolean {
     if (assignedTrainingExerciseIds.size === 0) {
       return false;
@@ -416,8 +417,20 @@ export class ProgressService {
     );
 
     if (completedTrainingExerciseIds.size > 0) {
-      return [...assignedTrainingExerciseIds].every((trainingExerciseId) =>
-        completedTrainingExerciseIds.has(trainingExerciseId),
+      // Legacy evidence remains at exercise level until its occurrence is known.
+      // Adding an ID elsewhere must not erase that evidence. Canonical entries
+      // only count for their exact occurrence, never via their exercise_id.
+      const legacyExerciseIds = new Set(
+        completedEntries
+          .filter((entry) => !entry.training_exercise_id)
+          .map((entry) => entry.exercise_id),
+      );
+      return [...assignedTrainingExerciseIds].every(
+        (trainingExerciseId) =>
+          completedTrainingExerciseIds.has(trainingExerciseId) ||
+          legacyExerciseIds.has(
+            exerciseIdByTrainingExerciseId.get(trainingExerciseId) ?? '',
+          ),
       );
     }
 
@@ -440,6 +453,7 @@ export class ProgressService {
         assignment.trainingExerciseIdsByTrainingId.get(trainingId) ?? new Set(),
         assignment.exerciseIdsByTrainingId.get(trainingId) ?? new Set(),
         completedEntries,
+        assignment.exerciseIdByTrainingExerciseId,
       ),
     );
     return [

@@ -210,6 +210,58 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     await poolTwo?.end();
   });
 
+  it('I007-P01: mixed formats preserve other training completion through edit, unmark and acknowledged replay', async () => {
+    const legacy = [exerciseOneId, exerciseTwoId].map((exercise_id) => ({
+      exercise_id,
+      completed_at: '2020-01-01T12:00:00.000Z',
+      sets: [{ set_number: 1, reps: 10, rir: 2 }],
+    }));
+    const original = await prismaOne.dayProgress.create({
+      data: {
+        client_id: clientId,
+        date: dateValue,
+        trainings_completed: [trainingOneId],
+        exercises_completed: legacy,
+      },
+    });
+    const dto = {
+      date,
+      exercise_id: exerciseThreeId,
+      training_exercise_id: trainingExerciseThreeId,
+    };
+    const apply = () =>
+      runProgressCommand(
+        'mixed-' + suffix,
+        String(original.sync_revision),
+        ['complete', dto],
+        () => serviceOne.markExerciseCompleted(clientId, dto),
+      );
+    await apply();
+    const completed = await readProgress();
+    expect(completed.training_completed).toBe(true);
+    expect(completed.trainings_completed).toEqual([
+      trainingOneId,
+      trainingTwoId,
+    ]);
+    expect(
+      completedExercises(completed.exercises_completed).slice(0, 2),
+    ).toEqual(legacy);
+    await serviceTwo.unmarkExercise(clientId, date, trainingExerciseOneId);
+    const unmarked = await readProgress();
+    expect(unmarked.training_completed).toBe(false);
+    expect(unmarked.trainings_completed).toEqual([trainingTwoId]);
+    expect(completedExercises(unmarked.exercises_completed)[0]).toEqual(
+      legacy[1],
+    );
+    await expect(apply()).resolves.toMatchObject({
+      sync_revision: unmarked.sync_revision,
+      operation_revision: completed.sync_revision,
+      training_completed: false,
+      trainings_completed: [trainingTwoId],
+    });
+    expect(await readProgress()).toEqual(unmarked);
+  });
+
   it('P4: a lost completion response replay cannot undo a later unmark', async () => {
     const dto = {
       date,

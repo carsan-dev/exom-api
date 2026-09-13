@@ -48,6 +48,24 @@ F007-01..07: [matriz vigente de la revisión](../../docs/operations/timed-interv
 
 ## Condición observable para una retirada posterior
 
+### I007-P01: completado de progreso mixto
+
+El cálculo de comandos de progreso conserva cada evidencia según su formato:
+una entrada con `training_exercise_id` cuenta solo para esa ocurrencia; una
+entrada sin él conserva la evidencia agregada por `exercise_id` del contrato
+legacy, aunque existan otras entradas canónicas en el día. No genera asociaciones
+ni copia rendimiento a ocurrencias repetidas. La ambigüedad legacy sigue abierta.
+El mapa de ocurrencia a ejercicio proviene del contexto de asignación/snapshot
+ya cargado. Marcar, completar y desmarcar reutilizan este cálculo, con los mismos
+locks, recibos y revisiones. `findDay` conserva su prioridad de confirmación
+histórica persistida; no se reasignan evidencias ambiguas sin esa confirmación.
+
+Las 69 asociaciones autorizadas previamente ya se aplicaron. Otras 23 en tres
+días tienen propuesta exacta con completado preservado, pendiente de despliegue
+y autorización propia; siguen existiendo 37 entradas legacy en producción.
+Evidencias, límites, hashes y recuperación:
+`../../docs/operations/issue007-p01-20260913/WORK.md`.
+
 La retirada sigue **BLOCKED** por ISSUE-007 para procedencia/ocurrencia ambigua y por compatibilidad instalada no acreditada. No bloquea esta fase, que exige transición preparada y decisión explícita, no eliminar inmediatamente.
 
 Para autorizar otra retirada deben concurrir: inventario actualizado también de scripts/SQL/jobs; auditoría de todos los propietarios con cero filas inequívocas pendientes y cero espejos divergentes; resolución documentada de cada población ambigua sin alterar histórico; sustituto probado de la captura BEFORE; telemetría no personal de formatos/versiones y política de versiones soportadas expresamente aprobada; evidencia de que clientes soportados y colas antiguas ya no dependen del campo; despliegue gradual y rollback de contratos. No hay TTL máximo de desconexión autorizado: esperar N días o migrar tres HEAD no demuestra ausencia de consumidores. Hasta entonces mantener lecturas, escrituras compatibles y campos. El criterio de ISSUE-007 solo cambia si aparece una fuente de procedencia/ocurrencia verificable o una decisión de producto explícita sobre la limitación.
