@@ -128,6 +128,111 @@ const url = process.env.TEST_DATABASE_URL;
       await pool.end();
     });
 
+    it.each([
+      ['rir_cycle_versions', 'UPDATE', 'revision = revision'],
+      ['rir_cycle_versions', 'DELETE', ''],
+      ['rir_protected_days', 'UPDATE', 'date = date'],
+      ['rir_protected_days', 'DELETE', ''],
+      ['rir_day_targets', 'UPDATE', 'target_rir = 9'],
+      ['rir_day_targets', 'DELETE', ''],
+    ])(
+      'ISSUE-075: %s %s rejects protected history with its intended SQL error',
+      async (table, operation, set) => {
+        await service.update(actor(), client, body());
+        await db.dayProgress.create({
+          data: {
+            client_id: client,
+            date: today,
+            exercises_completed: [{ exercise_id: exercise }],
+          },
+        });
+        // Table/operation/set come only from the fixed cases above, never user input.
+        const before = await pool.query(
+          `SELECT to_jsonb(r) row FROM ${table} r WHERE client_id=$1 ORDER BY to_jsonb(r)::text`,
+          [client],
+        );
+        expect(before.rowCount).toBeGreaterThan(0);
+        const statement =
+          operation === 'DELETE'
+            ? `DELETE FROM ${table} WHERE client_id=$1`
+            : `UPDATE ${table} SET ${set} WHERE client_id=$1`;
+        await expect(pool.query(statement, [client])).rejects.toMatchObject({
+          code: '23514',
+          message: 'RIR history is protected',
+        });
+        expect(
+          (
+            await pool.query(
+              `SELECT to_jsonb(r) row FROM ${table} r WHERE client_id=$1 ORDER BY to_jsonb(r)::text`,
+              [client],
+            )
+          ).rows,
+        ).toEqual(before.rows);
+      },
+    );
+
+    it('ISSUE-075: future targets stay editable while their identity stays immutable', async () => {
+      await assign(date(1));
+      await service.update(actor(), client, body());
+      await pool.query(
+        'UPDATE rir_day_targets SET target_rir=9 WHERE client_id=$1 AND date=$2::date',
+        [client, str(date(1))],
+      );
+      expect(await target(date(1))).toBe(9);
+      for (const set of [
+        "client_id='other-client'",
+        'date=date+1',
+        "training_exercise_id='other-occurrence'",
+        "training_id='other-training'",
+      ]) {
+        await expect(
+          pool.query(
+            `UPDATE rir_day_targets SET ${set} WHERE client_id=$1 AND date=$2::date`,
+            [client, str(date(1))],
+          ),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: 'RIR history is protected',
+        });
+      }
+      expect(await target(date(1))).toBe(9);
+    });
+
+    it('ISSUE-075: explicit owner deletion cascades all RIR history and preserves shared catalogue', async () => {
+      await service.update(actor(), client, body());
+      await db.dayProgress.create({
+        data: {
+          client_id: client,
+          date: today,
+          exercises_completed: [{ exercise_id: exercise }],
+        },
+      });
+      expect(
+        await db.rirCycleVersion.count({ where: { client_id: client } }),
+      ).toBe(1);
+      expect(
+        await db.rirProtectedDay.count({ where: { client_id: client } }),
+      ).toBe(1);
+      expect(
+        await db.rirDayTarget.count({ where: { client_id: client } }),
+      ).toBe(3);
+      await db.user.delete({ where: { id: client } });
+      expect(
+        await db.rirCycleVersion.count({ where: { client_id: client } }),
+      ).toBe(0);
+      expect(
+        await db.rirProtectedDay.count({ where: { client_id: client } }),
+      ).toBe(0);
+      expect(
+        await db.rirDayTarget.count({ where: { client_id: client } }),
+      ).toBe(0);
+      expect(await db.user.count({ where: { id: admin } })).toBe(1);
+      expect(await db.training.count({ where: { id: training } })).toBe(1);
+      expect(
+        await db.trainingExercise.count({ where: { training_id: training } }),
+      ).toBe(3);
+    });
+
     it('separates clients, weeks and repeated circuit occurrences; exposes day/today/detail', async () => {
       const other = randomUUID();
       await db.user.create({
