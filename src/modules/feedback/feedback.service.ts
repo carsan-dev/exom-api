@@ -24,6 +24,7 @@ import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { parseDateOnly } from '../../common/date-only';
+import { loadTrainingHistory } from '../../common/progress/training-history';
 
 @Injectable()
 export class FeedbackService {
@@ -91,14 +92,23 @@ export class FeedbackService {
           },
         },
       });
-      const trainingExercise = await this.prisma.trainingExercise.findFirst({
-        where: {
-          id: dto.training_exercise_id,
-          training_id: dto.training_id,
-          exercise_id: dto.exercise_id,
-        },
-        select: { id: true },
-      });
+      const history = (
+        await loadTrainingHistory(this.prisma, clientId, assignmentDate)
+      ).get(dto.training_id);
+      const trainingExercise = history
+        ? history.exercises.find(
+            (exercise) =>
+              exercise.id === dto.training_exercise_id &&
+              exercise.exercise_id === dto.exercise_id,
+          )
+        : await this.prisma.trainingExercise.findFirst({
+            where: {
+              id: dto.training_exercise_id,
+              training_id: dto.training_id,
+              exercise_id: dto.exercise_id,
+            },
+            select: { id: true },
+          });
       if (!assignment?.trainings.length || !trainingExercise) {
         throw new ForbiddenException(
           'El ejercicio no pertenece al entrenamiento asignado para esa fecha',

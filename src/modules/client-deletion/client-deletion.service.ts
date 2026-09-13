@@ -206,6 +206,7 @@ export class ClientDeletionService {
             UNION ALL SELECT 1 FROM meals WHERE position(${filename} in image_url) > 0
             UNION ALL SELECT 1 FROM achievements WHERE position(${filename} in icon_url) > 0
             UNION ALL SELECT 1 FROM diet_day_snapshots WHERE client_id <> ${clientId} AND position(${filename} in diet::text) > 0
+            UNION ALL SELECT 1 FROM training_day_snapshots WHERE client_id <> ${clientId} AND position(${filename} in payload::text) > 0
             UNION ALL SELECT 1 FROM managed_uploads WHERE owner_id <> ${clientId} AND object_key = ${key}
           ) AS found`;
           if (references[0]?.found) throw this.ambiguous();

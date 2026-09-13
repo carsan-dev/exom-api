@@ -1,4 +1,10 @@
 import { trainingPage } from '../../common/catalog-page';
+import { loadTrainingHistory } from '../../common/progress/training-history';
+import {
+  resolveTimedPrescription,
+  timedInstructions,
+  validateTimedConfig,
+} from './timed-prescription';
 import { inPageOrder } from '../../common/query-page';
 import {
   applyRirTargets,
@@ -66,6 +72,7 @@ type TrainingResponseLike = TrainingCatalogRecord & {
       order?: number;
       block_id?: string | null;
       position_in_block?: number | null;
+      target_rir?: number | null;
     }
   >;
 };
@@ -77,6 +84,7 @@ type TrainingProgressLike = {
 };
 
 type TrainingPrescriptionInput = {
+  timed_config?: unknown;
   reps_or_duration: string;
   measure_type?: TrainingMeasureType;
   target_value?: number;
@@ -86,6 +94,7 @@ type TrainingPrescriptionInput = {
 };
 
 type ExistingExercisePrescription = {
+  timed_config?: unknown;
   reps_or_duration: string;
   measure_type: TrainingMeasureType | null;
   target_value: number | null;
@@ -364,7 +373,33 @@ export class TrainingsService {
   private serializeTraining<T extends TrainingResponseLike>(training: T) {
     const types = this.resolveTrainingTypes(training);
     const blocks = training.blocks ?? [];
-    const flatExercises = (training.exercises ?? []).map((exercise) => {
+    const withInstructions = <E extends Record<string, unknown>>(
+      exercise: E,
+    ) => {
+      if (
+        exercise.timed_config == null ||
+        typeof exercise.target_value !== 'number'
+      )
+        return exercise;
+      const config = validateTimedConfig(exercise.timed_config);
+      const instructions = timedInstructions(exercise.target_value, config);
+      const detail = exercise.exercise;
+      return {
+        ...exercise,
+        timed_instructions: instructions,
+        ...(detail && typeof detail === 'object' && !Array.isArray(detail)
+          ? {
+              exercise: {
+                ...detail,
+                explanation_text:
+                  `${instructions}\n${'explanation_text' in detail && typeof detail.explanation_text === 'string' ? detail.explanation_text : ''}`.trim(),
+              },
+            }
+          : {}),
+      };
+    };
+    const flatExercises = (training.exercises ?? []).map((source) => {
+      const exercise = withInstructions(source);
       const block = blocks.find(
         (candidate) => candidate.id === exercise.block_id,
       );
@@ -400,7 +435,7 @@ export class TrainingsService {
         name: block.name,
         rounds: block.rounds,
         rest_between_rounds_seconds: block.rest_between_rounds_seconds,
-        exercises: block.exercises,
+        exercises: block.exercises.map(withInstructions),
       })),
     ].sort((left, right) => (left.order as number) - (right.order as number));
 
@@ -409,6 +444,10 @@ export class TrainingsService {
       type: this.resolveLegacyTrainingType(training, types),
       types,
       accentColor: training.accentColor ?? null,
+      blocks: blocks.map((block) => ({
+        ...block,
+        exercises: block.exercises.map(withInstructions),
+      })),
       exercises: flatExercises,
       items,
     };
@@ -648,6 +687,7 @@ export class TrainingsService {
         target_value_min: true,
         target_value_max: true,
         target_rir: true,
+        timed_config: true,
       },
     });
     const existingBlockIds = new Set(existingBlocks.map((block) => block.id));
@@ -692,6 +732,22 @@ export class TrainingsService {
     const deletedExerciseIds = new Set(
       [...existingExerciseIds].filter((id) => !nextExerciseIds.has(id)),
     );
+    const incomingTime = items.some((item) =>
+      (item.kind === 'CIRCUIT' ? item.exercises : [item]).some(
+        (exercise) =>
+          this.resolveExercisePrescription(
+            exercise,
+            exercise.id ? existingExerciseById.get(exercise.id) : undefined,
+          ).measure_type === TrainingMeasureType.SECONDS,
+      ),
+    );
+    if (incomingTime && existingExercises.length > 0) {
+      // Parent training write has acquired the catalogue barrier. Capture before
+      // deleting/replacing a formerly all-REPS training with timed occurrences.
+      await tx.$executeRaw(
+        Prisma.sql`SELECT exom_capture_before_time_write(${trainingId})`,
+      );
+    }
     await tx.trainingExercise.deleteMany({
       where: {
         training_id: trainingId,
@@ -760,6 +816,12 @@ export class TrainingsService {
             position_in_block: position,
             sets: 1,
             ...prescription,
+            timed_config:
+              resolveTimedPrescription(
+                exercise,
+                prescription,
+                exercise.id ? existingExerciseById.get(exercise.id) : undefined,
+              ) ?? Prisma.DbNull,
             ...(exercise.rir_override !== undefined && {
               rir_override:
                 exercise.rir_override === null
@@ -796,6 +858,12 @@ export class TrainingsService {
         position_in_block: null,
         sets: exercise.sets,
         ...prescription,
+        timed_config:
+          resolveTimedPrescription(
+            exercise,
+            prescription,
+            exercise.id ? existingExerciseById.get(exercise.id) : undefined,
+          ) ?? Prisma.DbNull,
         ...(exercise.rir_override !== undefined && {
           rir_override:
             exercise.rir_override === null
@@ -887,10 +955,22 @@ export class TrainingsService {
         ({ client_id, date }) => `${client_id}:${date.toISOString()}`,
       ),
     );
+    const histories = await tx.trainingDaySnapshot.findMany({
+      where: {
+        training_id: trainingId,
+        OR: assignments.map(({ client_id, date }) => ({ client_id, date })),
+      },
+      select: { client_id: true, date: true },
+    });
+    const historicalKeys = new Set(
+      histories.map(
+        ({ client_id, date }) => `${client_id}:${date.toISOString()}`,
+      ),
+    );
 
     for (const progress of progresses) {
       const key = `${progress.client_id}:${progress.date.toISOString()}`;
-      if (!assignedKeys.has(key)) continue;
+      if (!assignedKeys.has(key) || historicalKeys.has(key)) continue;
       const reconciled = reconcileTrainingProgress(
         progress.exercises_completed,
         currentExercises,
@@ -1492,9 +1572,14 @@ export class TrainingsService {
             },
           ]
         : [];
+    const timedHistory = await loadTrainingHistory(
+      this.prisma,
+      clientId,
+      target,
+    );
     const hasRecordedAssignmentProgress = candidateTrainingLinks.some((link) =>
       this.hasRecordedTrainingProgress(
-        link.training,
+        timedHistory.get(link.training.id) ?? link.training,
         progress,
         candidateTrainingLinks.length,
       ),
@@ -1503,7 +1588,7 @@ export class TrainingsService {
       (link) => link.training.is_active || hasRecordedAssignmentProgress,
     );
     const assignedTrainings = assignedTrainingLinks.map(
-      (link) => link.training,
+      (link) => timedHistory.get(link.training.id) ?? link.training,
     );
     const completedIds = new Set(progress?.trainings_completed ?? []);
     const completedEntries = Array.isArray(progress?.exercises_completed)
@@ -1549,15 +1634,21 @@ export class TrainingsService {
     const rirTargets = await loadRirTargets(this.prisma, clientId, target);
     const serializedTrainings = assignedTrainingLinks.map(
       ({ training, assignmentTrainingId, requiresLastSetVideo }) => ({
-        ...this.serializeTraining(applyRirTargets(training, rirTargets)),
+        ...this.serializeTraining(
+          applyRirTargets(
+            timedHistory.get(training.id) ?? training,
+            rirTargets,
+          ),
+        ),
         assignment_training_id: assignmentTrainingId,
         assignment_date: target.toISOString().split('T')[0],
         requires_last_set_video: requiresLastSetVideo,
         completed:
           completedIds.has(training.id) ||
-          (training.exercises.length > 0 &&
-            training.exercises.every((exercise) =>
-              currentCompletedTrainingExerciseIds.has(exercise.id),
+          ((timedHistory.get(training.id) ?? training).exercises.length > 0 &&
+            (timedHistory.get(training.id) ?? training).exercises.every(
+              (exercise) =>
+                currentCompletedTrainingExerciseIds.has(exercise.id),
             )) ||
           legacyDayCompletion,
       }),
@@ -1619,6 +1710,11 @@ export class TrainingsService {
     });
     const link = assignment?.trainings.find((item) => item.training_id === id);
     const isLegacyAssignment = assignment?.training_id === id;
+    const timedHistory = await loadTrainingHistory(
+      this.prisma,
+      clientId,
+      target,
+    );
     if (training.is_active === false) {
       const progress = await this.prisma.dayProgress.findUnique({
         where: { client_id_date: { client_id: clientId, date: target } },
@@ -1638,14 +1734,15 @@ export class TrainingsService {
         : assignment?.training
           ? [assignment.training]
           : [];
-      const hasRecordedAssignmentProgress = assignedTrainings.some(
-        (assignedTraining) =>
+      const hasRecordedAssignmentProgress =
+        progress != null &&
+        assignedTrainings.some((assignedTraining) =>
           this.hasRecordedTrainingProgress(
-            assignedTraining,
+            timedHistory.get(assignedTraining.id) ?? assignedTraining,
             progress,
             assignedTrainingCount,
           ),
-      );
+        );
       if ((!link && !isLegacyAssignment) || !hasRecordedAssignmentProgress) {
         throw new NotFoundException('Entrenamiento no encontrado');
       }
@@ -1653,7 +1750,7 @@ export class TrainingsService {
     return {
       ...this.serializeTraining(
         applyRirTargets(
-          training,
+          timedHistory.get(id) ?? training,
           await loadRirTargets(this.prisma, clientId, target),
         ),
       ),

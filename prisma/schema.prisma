@@ -147,6 +147,7 @@ enum CatalogColorType {
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
+  training_day_snapshots TrainingDaySnapshot[]
   rir_protected_days  RirProtectedDay[]
   rir_cycles          RirCycleVersion[]
   rir_targets         RirDayTarget[]
@@ -443,6 +444,7 @@ model Exercise {
 }
 
 model TrainingExercise {
+  timed_config         Json?
   rir_override         Json?
   id                   String               @id @default(uuid())
   training_id          String
@@ -464,7 +466,6 @@ model TrainingExercise {
   training      Training        @relation(fields: [training_id], references: [id], onDelete: Cascade)
   block         TrainingBlock?  @relation(fields: [block_id], references: [id], onDelete: Cascade)
   exercise      Exercise        @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
-  feedbackMedia FeedbackMedia[]
 
   @@unique([training_id, order])
   @@index([block_id, position_in_block])
@@ -696,6 +697,21 @@ model DietDaySnapshot {
 
   @@id([client_id, date, diet_id])
   @@map("diet_day_snapshots")
+}
+
+// Immutable temporal prescription; catalogue removal must not remove history.
+model TrainingDaySnapshot {
+  client_id   String
+  date        DateTime @db.Date
+  training_id String
+  payload     Json
+  captured_at DateTime @default(now()) @db.Timestamptz(6)
+  source      String   @default("captured")
+  version     Int      @default(1)
+  client      User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@id([client_id, date, training_id])
+  @@map("training_day_snapshots")
 }
 
 model RirProtectedDay {
@@ -970,7 +986,8 @@ model FeedbackMedia {
   client           User              @relation(fields: [client_id], references: [id], onDelete: Cascade)
   exercise         Exercise?         @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
   training         Training?         @relation(fields: [training_id], references: [id], onDelete: SetNull)
-  trainingExercise TrainingExercise? @relation(fields: [training_exercise_id], references: [id], onDelete: SetNull)
+  // Occurrence identity is validated against live catalogue or owned immutable
+  // history by feedback_occurrence_before; catalogue deletion must not erase it.
 
   @@unique([client_id, client_upload_id])
   @@index([status, reviewed_at, media_deleted_at])

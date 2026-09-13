@@ -5,6 +5,7 @@ import {
   ProgressActivity,
 } from '../../common/progress/aggregate-scope';
 import { progressCommand } from '../../common/progress/progress-command';
+import { loadTrainingHistory } from '../../common/progress/training-history';
 import {
   BadRequestException,
   ConflictException,
@@ -214,7 +215,7 @@ export class ProgressService {
       ? flattenHistoricalMeals(historicalDiet)
       : (assignment?.diet?.meals ?? []);
     const assignmentTrainings = assignment?.trainings ?? [];
-    const assignedTrainingLinks = assignmentTrainings.length
+    const currentTrainingLinks = assignmentTrainings.length
       ? assignmentTrainings.map((link) => ({
           training: link.training,
           requiresLastSetVideo: link.requires_last_set_video,
@@ -233,6 +234,11 @@ export class ProgressService {
             },
           ]
         : [];
+    const trainingHistory = await loadTrainingHistory(db, clientId, date);
+    const assignedTrainingLinks = currentTrainingLinks.map((link) => ({
+      ...link,
+      training: trainingHistory.get(link.training.id) ?? link.training,
+    }));
     const assignedTrainings = assignedTrainingLinks.map(
       (link) => link.training,
     );

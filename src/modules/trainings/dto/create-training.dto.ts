@@ -37,6 +37,13 @@ const trimOptionalString = ({ value }: { value: unknown }) =>
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 export class TrainingExerciseDto {
+  @ApiPropertyOptional({
+    description:
+      'Configuración temporal v1; segundos canónicos en target_value.',
+  })
+  @IsOptional()
+  @IsObject()
+  timed_config?: Record<string, unknown> | null;
   @IsOptional()
   @IsObject()
   rir_override?: Record<string, unknown> | null;
@@ -121,6 +128,13 @@ export class TrainingItemExerciseDto extends TrainingExerciseDto {
 }
 
 export class TrainingCircuitExerciseDto {
+  @ApiPropertyOptional({
+    description:
+      'Intervalos internos independientes del descanso del circuito.',
+  })
+  @IsOptional()
+  @IsObject()
+  timed_config?: Record<string, unknown> | null;
   @IsOptional()
   @IsObject()
   rir_override?: Record<string, unknown> | null;
