@@ -366,7 +366,16 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
       const second = two.runKey(key('guard-deadline')).finally(() => {
         secondFinished = true;
       });
-      await new Promise((resolve) => realTimeout(resolve, 100));
+      // Observe a decisive outcome while the first handler still holds its gate.
+      // A fixed100ms was a scheduler-speed assertion on loaded CI hosts. A buggy
+      // second entry still fails immediately; a blocked call still times out.
+      for (
+        let attempt = 0;
+        attempt < 200 && !secondFinished && calls === 1;
+        attempt++
+      ) {
+        await new Promise((resolve) => realTimeout(resolve, 10));
+      }
       const observedCalls = calls;
       const observedFinished = secondFinished;
       release.release();
