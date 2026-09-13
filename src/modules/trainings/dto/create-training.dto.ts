@@ -1,4 +1,15 @@
-import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
+import {
+  ApiProperty,
+  ApiPropertyOptional,
+  PartialType,
+  ApiExtraModels,
+  getSchemaPath,
+} from '@nestjs/swagger';
+import {
+  rirOverrideSchema,
+  rirSequenceSchema,
+  timedConfigSchema,
+} from '../../../contracts/prescription-schemas';
 import {
   ArrayMinSize,
   IsString,
@@ -38,12 +49,24 @@ const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 
 export class TrainingExerciseDto {
   @ApiPropertyOptional({
+    anyOf: [
+      timedConfigSchema,
+      { type: 'object', nullable: true, enum: [null] },
+    ],
+    nullable: true,
     description:
       'Configuración temporal v1; segundos canónicos en target_value.',
   })
   @IsOptional()
   @IsObject()
   timed_config?: Record<string, unknown> | null;
+  @ApiPropertyOptional({
+    anyOf: [
+      rirOverrideSchema,
+      { type: 'object', nullable: true, enum: [null] },
+    ],
+    nullable: true,
+  })
   @IsOptional()
   @IsObject()
   rir_override?: Record<string, unknown> | null;
@@ -129,12 +152,24 @@ export class TrainingItemExerciseDto extends TrainingExerciseDto {
 
 export class TrainingCircuitExerciseDto {
   @ApiPropertyOptional({
+    anyOf: [
+      timedConfigSchema,
+      { type: 'object', nullable: true, enum: [null] },
+    ],
+    nullable: true,
     description:
       'Intervalos internos independientes del descanso del circuito.',
   })
   @IsOptional()
   @IsObject()
   timed_config?: Record<string, unknown> | null;
+  @ApiPropertyOptional({
+    anyOf: [
+      rirOverrideSchema,
+      { type: 'object', nullable: true, enum: [null] },
+    ],
+    nullable: true,
+  })
   @IsOptional()
   @IsObject()
   rir_override?: Record<string, unknown> | null;
@@ -242,7 +277,14 @@ export class TrainingCircuitItemDto {
   exercises: TrainingCircuitExerciseDto[];
 }
 
+@ApiExtraModels(TrainingItemExerciseDto, TrainingCircuitItemDto)
 export class CreateTrainingDto {
+  @ApiPropertyOptional({
+    type: 'array',
+    items: rirSequenceSchema.items,
+    minItems: 1,
+    nullable: true,
+  })
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
@@ -330,7 +372,13 @@ export class CreateTrainingDto {
 
   @ApiPropertyOptional({
     description: 'Lista mixta de ejercicios sueltos y circuitos.',
-    type: [Object],
+    type: 'array',
+    items: {
+      oneOf: [
+        { $ref: getSchemaPath(TrainingItemExerciseDto) },
+        { $ref: getSchemaPath(TrainingCircuitItemDto) },
+      ],
+    },
   })
   @IsOptional()
   @IsArray()

@@ -4,7 +4,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { verifyDatabase, databaseUrl } = require('./test-database.cjs');
 function validateReport(report, mode) {
-  const minimum = mode === 'concurrency' ? 211 : 10;
+  const minimum = mode === 'concurrency' ? 224 : 19;
   if (report.success !== true || report.numPendingTests !== 0 || report.numTodoTests !== 0 ||
       report.numPendingTestSuites !== 0 || report.openHandles?.length ||
       !Number.isInteger(report.numPassedTests) || report.numPassedTests < minimum) {

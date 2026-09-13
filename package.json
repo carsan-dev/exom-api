@@ -7,6 +7,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "contract:check": "node scripts/infer-response-contracts.cjs && node scripts/export-openapi.cjs",
+    "contract:update": "node scripts/infer-response-contracts.cjs --write && npm run build && node scripts/export-openapi.cjs --write",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
@@ -45,11 +47,11 @@
     "@prisma/client": "7.10.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
+    "dotenv": "^16.4.7",
     "firebase-admin": "^13.7.0",
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1",
-    "dotenv": "^16.4.7"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -62,6 +64,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^22.10.7",
     "@types/supertest": "^6.0.2",
+    "ajv": "6.14.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",

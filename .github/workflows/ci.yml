@@ -46,6 +46,8 @@ jobs:
       - run: npm run prisma:format:check
       - run: npm run lint -- --no-fix
       - run: npm run build
+      - name: Detect HTTP contract drift
+        run: npm run contract:check
       - name: Verify disposable database before migrations
         run: node scripts/test-database.cjs
       - run: npm exec -- prisma migrate deploy
