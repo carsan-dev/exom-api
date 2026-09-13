@@ -983,7 +983,7 @@ describe('ProgressService', () => {
     ]);
   });
 
-  it('deduplicates a training occurrence when completing legacy progress', async () => {
+  it('rejects implicit deduplication when completing historical progress', async () => {
     prisma.planAssignment.findUnique.mockResolvedValue({
       training: {
         exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
@@ -1015,21 +1015,102 @@ describe('ProgressService', () => {
       }) => Promise.resolve({ ...input, ...input.create, ...input.update }),
     );
 
-    const result: unknown = await service.completeTraining('client-1', {
-      date: '2026-06-22',
+    await expect(
+      service.completeTraining('client-1', {
+        date: '2026-06-22',
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'PROGRESS_HISTORY_AMBIGUOUS' },
     });
+    expect(prisma.dayProgress.upsert).not.toHaveBeenCalled();
+  });
 
-    expect(result).toMatchObject({
-      update: {
-        exercises_completed: [
-          {
-            training_exercise_id: 'training-exercise-1',
-            exercise_id: 'exercise-1',
-            completed_at: '2026-06-22T10:01:00.000Z',
-          },
+  it.each(['mark', 'complete'] as const)(
+    'preserves conflicting sets and unknown fields when %s encounters duplicate history',
+    async (command) => {
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        training: {
+          exercises: [{ id: 'training-exercise-1', exercise_id: 'exercise-1' }],
+        },
+        diet: null,
+      });
+      const entries = [20, 30].map((weight_kg) => ({
+        training_exercise_id: 'training-exercise-1',
+        exercise_id: 'exercise-1',
+        completed_at: '2026-06-22T10:00:00.000Z',
+        sets: [{ set_number: 1, weight_kg, reps: 8, seconds: 60, rir: 0 }],
+        retained: { source: 'historical' },
+      }));
+      const before = structuredClone(entries);
+      prisma.dayProgress.findUnique.mockResolvedValue({
+        exercises_completed: entries,
+        meals_completed: [],
+        notes: null,
+      });
+      prisma.dayProgress.upsert.mockImplementation(({ update }) =>
+        Promise.resolve({ meals_completed: [], ...update }),
+      );
+      await expect(
+        command === 'mark'
+          ? service.markExerciseCompleted('client-1', {
+              date: '2026-06-22',
+              exercise_id: 'exercise-1',
+              training_exercise_id: 'training-exercise-1',
+            })
+          : service.completeTraining('client-1', { date: '2026-06-22' }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'PROGRESS_HISTORY_AMBIGUOUS' },
+      });
+      expect(entries).toEqual(before);
+      expect(prisma.dayProgress.upsert).not.toHaveBeenCalled();
+      expect(updateStreakSpy).not.toHaveBeenCalled();
+      expect(
+        challengesService.recalculateAutomaticProgress,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves an unattributed entry when marking one of two possible occurrences', async () => {
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      training: {
+        exercises: [
+          { id: 'training-exercise-1', exercise_id: 'exercise-1' },
+          { id: 'training-exercise-2', exercise_id: 'exercise-1' },
         ],
       },
+      diet: null,
     });
+    const legacy = {
+      exercise_id: 'exercise-1',
+      weight_used: 40,
+      completed_at: '2026-06-22T10:00:00.000Z',
+    };
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      exercises_completed: [legacy],
+      meals_completed: [],
+      notes: null,
+    });
+    prisma.dayProgress.upsert.mockImplementation(({ update }) =>
+      Promise.resolve({ meals_completed: [], ...update }),
+    );
+    await service.markExerciseCompleted('client-1', {
+      date: '2026-06-22',
+      exercise_id: 'exercise-1',
+      training_exercise_id: 'training-exercise-2',
+      weight_used: 50,
+    });
+    expect(
+      prisma.dayProgress.upsert.mock.calls[0][0].update.exercises_completed,
+    ).toEqual([
+      legacy,
+      expect.objectContaining({
+        training_exercise_id: 'training-exercise-2',
+        weight_used: 50,
+      }),
+    ]);
+    expect(legacy).not.toHaveProperty('training_exercise_id');
   });
 
   it('rejects duplicate set numbers', async () => {

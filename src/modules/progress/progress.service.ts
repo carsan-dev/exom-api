@@ -632,6 +632,35 @@ export class ProgressService {
     }
   }
 
+  private existingOccurrenceEntry(
+    entries: ExerciseCompletedEntry[],
+    trainingExerciseId: string,
+    exerciseIdByTrainingExerciseId: ReadonlyMap<string, string>,
+  ): ExerciseCompletedEntry | undefined {
+    const exerciseId = exerciseIdByTrainingExerciseId.get(trainingExerciseId);
+    const unique =
+      [...exerciseIdByTrainingExerciseId.values()].filter(
+        (id) => id === exerciseId,
+      ).length === 1;
+    const matches = entries.filter(
+      (entry) =>
+        entry.training_exercise_id === trainingExerciseId ||
+        (unique &&
+          !entry.training_exercise_id &&
+          entry.exercise_id === exerciseId),
+    );
+    if (matches.length > 1) {
+      // Completing or editing is not authorization to choose between historical
+      // records, even when their payloads happen to be identical.
+      throw new ConflictException({
+        code: 'PROGRESS_HISTORY_AMBIGUOUS',
+        message:
+          'Hay varios registros históricos para este ejercicio. Se conservan sin cambios; requieren revisión antes de editar o completar.',
+      });
+    }
+    return matches[0];
+  }
+
   async markExerciseCompleted(clientId: string, dto: MarkExerciseDto) {
     if (dto.sets) {
       if (
@@ -713,10 +742,10 @@ export class ProgressService {
           ? this.parseExercisesCompleted(existing.exercises_completed)
           : [];
 
-        const matchingEntry = currentExercises.find(
-          (entry) =>
-            entry.training_exercise_id === trainingExerciseId ||
-            (!entry.training_exercise_id && entry.exercise_id === exerciseId),
+        const matchingEntry = this.existingOccurrenceEntry(
+          currentExercises,
+          trainingExerciseId,
+          assignment.exerciseIdByTrainingExerciseId,
         );
         const replacement: ExerciseCompletedEntry = {
           ...matchingEntry,
@@ -758,9 +787,7 @@ export class ProgressService {
         let replaced = false;
         const completedExercises: ExerciseCompletedEntry[] = [];
         for (const entry of currentExercises) {
-          const matches =
-            entry.training_exercise_id === trainingExerciseId ||
-            (!entry.training_exercise_id && entry.exercise_id === exerciseId);
+          const matches = entry === matchingEntry;
           if (!matches) {
             completedExercises.push(entry);
           } else if (!replaced) {
@@ -886,11 +913,11 @@ export class ProgressService {
           assignment.trainingExerciseIdsByTrainingId.get(targetTrainingId) ??
           new Set<string>();
         for (const trainingExerciseId of targetExerciseIds) {
-          const exerciseId =
-            assignment.exerciseIdByTrainingExerciseId.get(trainingExerciseId)!;
-          const entry =
-            currentByTrainingExercise.get(trainingExerciseId) ??
-            currentByExercise.get(exerciseId);
+          const entry = this.existingOccurrenceEntry(
+            currentExercises,
+            trainingExerciseId,
+            assignment.exerciseIdByTrainingExerciseId,
+          );
           const trackingRequirement =
             assignment.trackingRequirementByTrainingExerciseId.get(
               trainingExerciseId,

@@ -262,6 +262,123 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     expect(await readProgress()).toEqual(unmarked);
   });
 
+  it.each(['mark', 'complete'] as const)(
+    'I007-P02: %s rejects conflicting historical rows without receipts or side effects, including retry',
+    async (command) => {
+      const entries = [20, 30].map((weight_kg) => ({
+        training_exercise_id: trainingExerciseOneId,
+        exercise_id: exerciseOneId,
+        completed_at: '2020-01-01T12:00:00.000Z',
+        sets: [{ set_number: 1, reps: 8, seconds: 60, weight_kg, rir: 0 }],
+        retained: { note: 'synthetic history' },
+      }));
+      const original = await prismaOne.dayProgress.create({
+        data: {
+          client_id: clientId,
+          date: dateValue,
+          exercises_completed: entries,
+          trainings_completed: [trainingOneId],
+          notes: 'preserved',
+        },
+      });
+      const apply = () =>
+        runProgressCommand(
+          'historical-' + suffix,
+          String(original.sync_revision),
+          [command],
+          () =>
+            command === 'mark'
+              ? serviceOne.markExerciseCompleted(clientId, {
+                  date,
+                  exercise_id: exerciseOneId,
+                  training_exercise_id: trainingExerciseOneId,
+                })
+              : serviceOne.completeTraining(clientId, {
+                  date,
+                  training_id: trainingOneId,
+                }),
+        );
+      for (let retry = 0; retry < 2; retry++) {
+        await expect(apply()).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'PROGRESS_HISTORY_AMBIGUOUS' },
+        });
+        expect(await readProgress()).toEqual(original);
+        expect(
+          await prismaOne.progressOperation.count({
+            where: { owner_id: clientId },
+          }),
+        ).toBe(0);
+      }
+      await serviceTwo.markExerciseCompleted(clientId, {
+        date,
+        exercise_id: exerciseThreeId,
+        training_exercise_id: trainingExerciseThreeId,
+      });
+      expect(
+        completedExercises((await readProgress()).exercises_completed).slice(
+          0,
+          2,
+        ),
+      ).toEqual(entries);
+    },
+  );
+
+  it('I007-P02: guard sees duplicate history committed by a writer while completion waits', async () => {
+    await serviceOne.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+    });
+    const original = await readProgress();
+    const entries = completedExercises(original.exercises_completed);
+    const blocker = await poolOne.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`exom:day-progress:${clientId}`],
+    );
+    await blocker.query(
+      'UPDATE day_progress SET exercises_completed=$1::jsonb WHERE id=$2',
+      [
+        JSON.stringify([...entries, { ...entries[0], weight_used: 99 }]),
+        original.id,
+      ],
+    );
+    const result = serviceTwo
+      .completeTraining(clientId, { date, training_id: trainingOneId })
+      .then(
+        () => ({ status: 200 }),
+        (error: unknown) => error,
+      );
+    let waiters = 0;
+    try {
+      for (let attempt = 0; attempt < 200 && waiters < 1; attempt++) {
+        waiters = (
+          await blocker.query<{ n: number }>(
+            "SELECT count(*)::int n FROM pg_locks WHERE locktype='advisory' AND NOT granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
+          )
+        ).rows[0].n;
+        if (!waiters) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      await blocker.query('COMMIT');
+      blocker.release();
+    }
+    expect(waiters).toBe(1);
+    await expect(result).resolves.toMatchObject({
+      status: 409,
+      response: { code: 'PROGRESS_HISTORY_AMBIGUOUS' },
+    });
+    expect((await readProgress()).exercises_completed).toEqual([
+      ...entries,
+      { ...entries[0], weight_used: 99 },
+    ]);
+    expect((await readProgress()).sync_revision).toBe(
+      original.sync_revision + 1,
+    );
+  });
+
   it('P4: a lost completion response replay cannot undo a later unmark', async () => {
     const dto = {
       date,

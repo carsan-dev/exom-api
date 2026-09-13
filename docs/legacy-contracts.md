@@ -60,12 +60,47 @@ ya cargado. Marcar, completar y desmarcar reutilizan este cálculo, con los mism
 locks, recibos y revisiones. `findDay` conserva su prioridad de confirmación
 histórica persistida; no se reasignan evidencias ambiguas sin esa confirmación.
 
-Las 69 asociaciones autorizadas previamente ya se aplicaron. Otras 23 en tres
-días tienen propuesta exacta con completado preservado, pendiente de despliegue
-y autorización propia; siguen existiendo 37 entradas legacy en producción.
+Las 92 asociaciones autorizadas (69 + 23) ya están aplicadas y verificadas.
+La auditoría residual del 13 de septiembre conserva 14 entradas sin ocurrencia
+(3 con dos candidatos y 11 sin candidato) y 14 grupos duplicados, todos idénticos
+a sus correspondientes registros del respaldo de julio. Dos grupos son
+idénticos, siete difieren solo en fecha de completado y cinco contienen pesos
+o series diferentes. No se borran, fusionan ni suman como sesiones adicionales.
 Evidencias, límites, hashes y recuperación:
-`../../docs/operations/issue007-p01-20260913/WORK.md`.
+`../../docs/operations/issue007-p01-apply-20260913/WORK.md` y
+`../../docs/operations/issue007-residual-20260913/WORK.md`.
 
-La retirada sigue **BLOCKED** por ISSUE-007 para procedencia/ocurrencia ambigua y por compatibilidad instalada no acreditada. No bloquea esta fase, que exige transición preparada y decisión explícita, no eliminar inmediatamente.
+### I007-P02: proteger el residual frente a comandos ordinarios
 
-Para autorizar otra retirada deben concurrir: inventario actualizado también de scripts/SQL/jobs; auditoría de todos los propietarios con cero filas inequívocas pendientes y cero espejos divergentes; resolución documentada de cada población ambigua sin alterar histórico; sustituto probado de la captura BEFORE; telemetría no personal de formatos/versiones y política de versiones soportadas expresamente aprobada; evidencia de que clientes soportados y colas antiguas ya no dependen del campo; despliegue gradual y rollback de contratos. No hay TTL máximo de desconexión autorizado: esperar N días o migrar tres HEAD no demuestra ausencia de consumidores. Hasta entonces mantener lecturas, escrituras compatibles y campos. El criterio de ISSUE-007 solo cambia si aparece una fuente de procedencia/ocurrencia verificable o una decisión de producto explícita sobre la limitación.
+Marcar un ejercicio o completar un entrenamiento rechaza con HTTP 409 y código
+`PROGRESS_HISTORY_AMBIGUOUS` si la ocurrencia objetivo consumiría más de una
+entrada histórica, incluso si son iguales. No elige la primera/última, no
+combina pesos/series y no guarda recibo de éxito. La comprobación comparte los
+locks y la transacción del comando; un retry conserva el rechazo y los datos.
+Las otras ocurrencias del día siguen siendo editables. La eliminación explícita
+de progreso o de un cliente conserva su contrato previo y no se utiliza como
+reparación de los duplicados.
+
+Una entrada sin ocurrencia solo puede reutilizarse al marcar cuando hay una
+única ocurrencia posible y una única entrada candidata. Si el ejercicio se
+repite, se conserva el registro no atribuido y se crea/edita únicamente la
+ocurrencia solicitada, sin copiarle el rendimiento histórico desconocido.
+
+La App reconoce ese conflicto como revisión requerida, conserva la operación,
+propietario, revisión y payload y bloquea operaciones posteriores del mismo día.
+El overlay, que no tiene contexto autoritativo de asignación, no atribuye una
+entrada legacy a una operación canónica ni elige entre duplicados; la respuesta
+confirmada del servidor puede resolver una asociación inequívoca. No cambia el
+formato persistido. La App anterior conserva los datos y termina en fallo tras
+los cinco reintentos acotados de un 409 desconocido; no se exige eliminar colas
+ni actualizar todos los dispositivos para proteger la DB con la API corregida.
+
+La política de conservación del residual y mantenimiento del contrato legacy
+fue aceptada expresamente por el usuario el 2026-09-13 (ADR-029). ISSUE-007 queda
+RESOLVED técnicamente con limitación histórica aceptada, sin declarar recuperada
+la información ausente. Véase `../../docs/operations/issue007-accepted-20260913/acceptance.json`.
+Implementación local validada; publicación de API/App pendiente.
+
+La compatibilidad legacy se mantiene por decisión aceptada ADR-029. ISSUE-007 está cerrado técnicamente con límite histórico aceptado; la retirada no forma parte de ese cierre y continúa condicionada a las evidencias siguientes. No se afirma ausencia de consumidores/colas instaladas.
+
+Para autorizar otra retirada deben concurrir: inventario actualizado también de scripts/SQL/jobs; auditoría de todos los propietarios con cero filas inequívocas pendientes y cero espejos divergentes; resolución documentada de cada población ambigua sin alterar histórico; sustituto probado de la captura BEFORE; telemetría no personal de formatos/versiones y política de versiones soportadas expresamente aprobada; evidencia de que clientes soportados y colas antiguas ya no dependen del campo; despliegue gradual y rollback de contratos. No hay TTL máximo de desconexión autorizado: esperar N días o migrar tres HEAD no demuestra ausencia de consumidores. Hasta entonces mantener lecturas, escrituras compatibles y campos. ADR-029 satisface la decisión explícita sobre la limitación para el cierre actual. Una fuente verificable nueva, un escritor que aumente la ambigüedad, pérdida de histórico o petición de retirada obliga a reabrir ISSUE-007.
