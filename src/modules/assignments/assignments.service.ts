@@ -1,3 +1,4 @@
+import { normalizeAssignmentInput } from './assignment-input';
 import {
   BadRequestException,
   ConflictException,
@@ -486,73 +487,6 @@ export class AssignmentsService {
     };
   }
 
-  private normalizeAssignmentInput(input: {
-    training_id?: string | null;
-    training_ids?: string[];
-    trainings?: Array<{
-      training_id: string;
-      last_set_video_policy?: LastSetVideoPolicy;
-      requires_last_set_video?: boolean;
-    }>;
-    diet_id?: string | null;
-    is_rest_day?: boolean;
-  }) {
-    const is_rest_day = input.is_rest_day ?? false;
-    const requestedTrainings =
-      input.trainings !== undefined
-        ? input.trainings.map((item) => ({
-            training_id: item.training_id,
-            last_set_video_policy:
-              item.last_set_video_policy ??
-              (item.requires_last_set_video === true
-                ? LastSetVideoPolicy.ALWAYS
-                : item.requires_last_set_video === false
-                  ? LastSetVideoPolicy.NEVER
-                  : LastSetVideoPolicy.AUTO),
-          }))
-        : null;
-    const requestedIds = requestedTrainings
-      ? requestedTrainings.map((item) => item.training_id)
-      : input.training_ids !== undefined
-        ? input.training_ids
-        : input.training_id
-          ? [input.training_id]
-          : [];
-    const training_ids = is_rest_day ? [] : requestedIds;
-    if (training_ids.length > 5) {
-      throw new BadRequestException(
-        'No puedes asignar más de 5 entrenamientos por día',
-      );
-    }
-    if (new Set(training_ids).size !== training_ids.length) {
-      throw new BadRequestException(
-        'No puedes repetir un entrenamiento en el mismo día',
-      );
-    }
-    const training_id = training_ids[0] ?? null;
-    const diet_id = is_rest_day ? null : (input.diet_id ?? null);
-
-    if (!is_rest_day && training_ids.length === 0 && !diet_id) {
-      throw new BadRequestException(
-        'Debes asignar un entrenamiento, una dieta o marcar descanso',
-      );
-    }
-
-    return {
-      training_id,
-      training_ids,
-      trainings: training_ids.map(
-        (id) =>
-          requestedTrainings?.find((item) => item.training_id === id) ?? {
-            training_id: id,
-            last_set_video_policy: LastSetVideoPolicy.AUTO,
-          },
-      ),
-      diet_id,
-      is_rest_day,
-    };
-  }
-
   private async assertClientExists(clientId: string) {
     const client = await this.prisma.user.findUnique({
       where: { id: clientId },
@@ -980,7 +914,7 @@ export class AssignmentsService {
     const normalizedDays = dto.days
       .map((day) => ({
         weekday: day.weekday,
-        ...this.normalizeAssignmentInput(day),
+        ...normalizeAssignmentInput(day),
       }))
       .sort((left, right) => left.weekday - right.weekday);
 
@@ -1098,7 +1032,7 @@ export class AssignmentsService {
     const weekdays = new Set<number>();
     const days = dto.days.map((day) => ({
       weekday: day.weekday,
-      ...this.normalizeAssignmentInput(day),
+      ...normalizeAssignmentInput(day),
     }));
     for (const day of days) {
       if (weekdays.has(day.weekday)) {
@@ -1205,7 +1139,7 @@ export class AssignmentsService {
   async bulkAssign(user: AuthenticatedUser, dto: BulkAssignmentDto) {
     await this.assertClientAccess(user, dto.client_id);
 
-    const normalizedInput = this.normalizeAssignmentInput(dto);
+    const normalizedInput = normalizeAssignmentInput(dto);
     await this.validatePlanReferences(
       normalizedInput.training_ids,
       normalizedInput.diet_id,
@@ -1308,7 +1242,7 @@ export class AssignmentsService {
         .reduce(
           (daysMap, day) => {
             const date = this.parseDate(day.date);
-            const normalizedInput = this.normalizeAssignmentInput(day);
+            const normalizedInput = normalizeAssignmentInput(day);
 
             daysMap.set(this.formatDate(date), {
               date,
@@ -1824,7 +1758,7 @@ export class AssignmentsService {
           training_id: link.training.id,
           last_set_video_policy: link.last_set_video_policy,
         }));
-        const normalizedInput = this.normalizeAssignmentInput({
+        const normalizedInput = normalizeAssignmentInput({
           ...(dto.trainings !== undefined
             ? { trainings: dto.trainings }
             : dto.training_ids !== undefined

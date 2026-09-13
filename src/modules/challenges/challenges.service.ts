@@ -1,3 +1,4 @@
+import { normalizeDate, evaluateAutomaticProgress } from './challenge-progress';
 import { AggregateRule } from '../../common/progress/aggregate-scope';
 import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import {
@@ -114,17 +115,8 @@ export class ChallengesService {
     return senderId ?? this.notifications.findSystemSenderId(recipientId);
   }
 
-  private normalizeDate(date: Date) {
-    return new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-    );
-  }
-
   private isBeforeToday(date: Date) {
-    return (
-      this.normalizeDate(date).getTime() <
-      this.normalizeDate(new Date()).getTime()
-    );
+    return normalizeDate(date).getTime() < normalizeDate(new Date()).getTime();
   }
 
   private assertDeadlineIsAssignable(
@@ -142,32 +134,6 @@ export class ChallengesService {
         'La fecha límite del reto no puede estar vencida',
       );
     }
-  }
-
-  private normalizeEndOfDay(date: Date) {
-    const normalized = new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-    );
-    normalized.setUTCHours(23, 59, 59, 999);
-    return normalized;
-  }
-
-  private getChallengeWindow(
-    assignedAt: Date,
-    deadline: Date | null,
-    asOf = new Date(),
-  ) {
-    const start = this.normalizeDate(assignedAt);
-    const now = asOf;
-    const deadlineEnd = deadline ? this.normalizeEndOfDay(deadline) : now;
-    const end = deadlineEnd.getTime() < now.getTime() ? deadlineEnd : now;
-
-    return { start, end };
-  }
-
-  private isDateInRange(date: Date, start: Date, end: Date) {
-    const value = date.getTime();
-    return value >= start.getTime() && value <= end.getTime();
   }
 
   private calculateCompletionRate(
@@ -798,59 +764,6 @@ export class ChallengesService {
     );
   }
 
-  private evaluateAutomaticProgress(
-    ruleKey: ChallengeRuleKey | null,
-    assignedAt: Date,
-    deadline: Date | null,
-    dayProgress: Array<{
-      date: Date;
-      training_completed: boolean;
-      meals_completed: string[];
-    }>,
-    bodyMetrics: Array<{
-      date: Date;
-      weight_kg: number | null;
-    }>,
-    streak: { current_days: number } | null,
-    asOf: Date,
-  ) {
-    const { start, end } = this.getChallengeWindow(assignedAt, deadline, asOf);
-
-    switch (ruleKey) {
-      case 'TRAINING_DAYS':
-        return dayProgress.filter(
-          (entry) =>
-            entry.training_completed &&
-            this.isDateInRange(entry.date, start, end),
-        ).length;
-      case 'MEAL_CHECKINS':
-        return dayProgress.reduce((total, entry) => {
-          if (!this.isDateInRange(entry.date, start, end)) {
-            return total;
-          }
-
-          return total + entry.meals_completed.length;
-        }, 0);
-      case 'WEIGHT_LOGS': {
-        const uniqueDays = new Set(
-          bodyMetrics
-            .filter(
-              (entry) =>
-                entry.weight_kg != null &&
-                this.isDateInRange(entry.date, start, end),
-            )
-            .map((entry) => this.normalizeDate(entry.date).toISOString()),
-        );
-
-        return uniqueDays.size;
-      }
-      case 'STREAK_DAYS':
-        return streak?.current_days ?? 0;
-      default:
-        return 0;
-    }
-  }
-
   async findAllForAdmin(
     adminId: string,
     adminRole: string,
@@ -1335,7 +1248,7 @@ export class ChallengesService {
 
     const earliestAssignedAt = assignments.reduce(
       (currentEarliest, assignment) => {
-        const assignedAt = this.normalizeDate(assignment.assigned_at);
+        const assignedAt = normalizeDate(assignment.assigned_at);
 
         if (
           !currentEarliest ||
@@ -1390,7 +1303,7 @@ export class ChallengesService {
 
     await Promise.all(
       assignments.map(async (assignment) => {
-        const currentValue = this.evaluateAutomaticProgress(
+        const currentValue = evaluateAutomaticProgress(
           assignment.challenge.rule_key as ChallengeRuleKey | null,
           assignment.assigned_at,
           assignment.challenge.deadline,
