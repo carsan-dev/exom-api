@@ -8,6 +8,15 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { databasePoolConfig } from './pool-config';
+import { startupError } from '../startup-error';
+
+function createPool() {
+  try {
+    return new Pool(databasePoolConfig());
+  } catch (error) {
+    throw startupError('database-configuration', error);
+  }
+}
 
 @Injectable()
 export class PrismaService
@@ -19,7 +28,7 @@ export class PrismaService
   readonly postgresqlPool: Pool;
 
   constructor() {
-    const pool = new Pool(databasePoolConfig());
+    const pool = createPool();
 
     super({
       adapter: new PrismaPg(pool),
@@ -36,11 +45,16 @@ export class PrismaService
       await this.$connect();
       // adapter-pg may connect lazily; readiness must verify a real connection.
       await this.postgresqlPool.query('SELECT 1');
-    } catch {
-      await this.postgresqlPool.end();
-      throw new Error(
-        'Database connection failed; verify connectivity and TLS configuration',
-      );
+    } catch (error) {
+      const failure = startupError('database', error);
+      try {
+        await this.postgresqlPool.end();
+      } catch {
+        this.logger.error(
+          'Database startup cleanup failed; original failure preserved',
+        );
+      }
+      throw failure;
     }
     this.logger.log('Database connected');
   }

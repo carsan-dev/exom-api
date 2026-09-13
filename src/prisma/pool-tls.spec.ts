@@ -96,22 +96,33 @@ describe('verified PostgreSQL TLS and connection failures', () => {
       }
     },
   );
-  it('fails service startup without logging or throwing credentials and closes its pool', async () => {
-    const previous = { ...process.env };
-    try {
-      process.env.DATABASE_URL = `postgresql://fixture:synthetic-secret@127.0.0.1:${port}/fixture`;
-      process.env.NODE_ENV = 'production';
-      process.env.DATABASE_POOL_CONNECTION_TIMEOUT_MS = '500';
-      delete process.env.DATABASE_SSL_MODE;
-      delete process.env.DATABASE_SSL_CA;
-      const service = new PrismaService();
-      await expect(service.onModuleInit()).rejects.toThrow(
-        'Database connection failed; verify connectivity and TLS configuration',
-      );
-      expect(service.postgresqlPool.ended).toBe(true);
-      await service.onModuleDestroy();
-    } finally {
-      process.env = previous;
-    }
-  });
+  it.each([false, true])(
+    'reports the TLS failure even if pool cleanup fails (%s)',
+    async (cleanupFails) => {
+      const previous = { ...process.env };
+      try {
+        process.env.DATABASE_URL = `postgresql://fixture:synthetic-secret@127.0.0.1:${port}/fixture`;
+        process.env.NODE_ENV = 'production';
+        process.env.DATABASE_POOL_CONNECTION_TIMEOUT_MS = '500';
+        delete process.env.DATABASE_SSL_MODE;
+        delete process.env.DATABASE_SSL_CA;
+        const service = new PrismaService();
+        if (cleanupFails) {
+          jest
+            .spyOn(service.postgresqlPool, 'end')
+            .mockImplementationOnce(() => {
+              throw new Error('synthetic-cleanup-secret');
+            });
+        }
+        await expect(service.onModuleInit()).rejects.toThrow(
+          'DEPTH_ZERO_SELF_SIGNED_CERT',
+        );
+        expect(service.postgresqlPool.ended).toBe(!cleanupFails);
+        await service.onModuleDestroy();
+        expect(service.postgresqlPool.ended).toBe(true);
+      } finally {
+        process.env = previous;
+      }
+    },
+  );
 });
