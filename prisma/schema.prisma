@@ -148,24 +148,24 @@ enum CatalogColorType {
 
 model User {
   training_day_snapshots TrainingDaySnapshot[]
-  rir_protected_days  RirProtectedDay[]
-  rir_cycles          RirCycleVersion[]
-  rir_targets         RirDayTarget[]
-  id                  String            @id @default(uuid())
-  email               String            @unique
-  firebase_uid        String            @unique
-  role                Role              @default(CLIENT)
-  auth_provider       AuthProvider      @default(email)
-  is_active           Boolean           @default(true)
-  identity_pending    Boolean           @default(false)
-  sessions_revoked_at DateTime?
-  is_archived         Boolean           @default(false)
-  is_locked           Boolean           @default(false)
-  login_attempts      Int               @default(0)
-  locked_at           DateTime?
-  fcm_token           String?
-  created_at          DateTime          @default(now())
-  updated_at          DateTime          @updatedAt
+  rir_protected_days     RirProtectedDay[]
+  rir_cycles             RirCycleVersion[]
+  rir_targets            RirDayTarget[]
+  id                     String                @id @default(uuid())
+  email                  String                @unique
+  firebase_uid           String                @unique
+  role                   Role                  @default(CLIENT)
+  auth_provider          AuthProvider          @default(email)
+  is_active              Boolean               @default(true)
+  identity_pending       Boolean               @default(false)
+  sessions_revoked_at    DateTime?
+  is_archived            Boolean               @default(false)
+  is_locked              Boolean               @default(false)
+  login_attempts         Int                   @default(0)
+  locked_at              DateTime?
+  fcm_token              String?
+  created_at             DateTime              @default(now())
+  updated_at             DateTime              @updatedAt
 
   profile                     Profile?
   adminOf                     AdminClientAssignment[] @relation("AdminAssignments")
@@ -463,9 +463,9 @@ model TrainingExercise {
   /// Descanso entre series, en segundos.
   rest_seconds         Int                  @default(60)
 
-  training      Training        @relation(fields: [training_id], references: [id], onDelete: Cascade)
-  block         TrainingBlock?  @relation(fields: [block_id], references: [id], onDelete: Cascade)
-  exercise      Exercise        @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
+  training Training       @relation(fields: [training_id], references: [id], onDelete: Cascade)
+  block    TrainingBlock? @relation(fields: [block_id], references: [id], onDelete: Cascade)
+  exercise Exercise       @relation(fields: [exercise_id], references: [id], onDelete: Restrict)
 
   @@unique([training_id, order])
   @@index([block_id, position_in_block])
@@ -983,9 +983,9 @@ model FeedbackMedia {
   created_at           DateTime       @default(now())
   updated_at           DateTime       @updatedAt
 
-  client           User              @relation(fields: [client_id], references: [id], onDelete: Cascade)
-  exercise         Exercise?         @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
-  training         Training?         @relation(fields: [training_id], references: [id], onDelete: SetNull)
+  client   User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  exercise Exercise? @relation(fields: [exercise_id], references: [id], onDelete: SetNull)
+  training Training? @relation(fields: [training_id], references: [id], onDelete: SetNull)
   // Occurrence identity is validated against live catalogue or owned immutable
   // history by feedback_occurrence_before; catalogue deletion must not erase it.
 
