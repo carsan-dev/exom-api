@@ -261,14 +261,14 @@ model DurableWork {
   kind            String
   payload         Json
   owner_id        String?
-  owner           User?     @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  owner           User?     @relation(fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   status          String    @default("PENDING")
   attempts        Int       @default(0)
   claim_token     String?
   lease_until     DateTime?
-  next_attempt_at DateTime  @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
+  next_attempt_at DateTime  @default(dbgenerated("timezone('UTC'::text, CURRENT_TIMESTAMP)"))
   last_error      String?
-  created_at      DateTime  @default(dbgenerated("timezone('UTC', CURRENT_TIMESTAMP)"))
+  created_at      DateTime  @default(dbgenerated("timezone('UTC'::text, CURRENT_TIMESTAMP)"))
   completed_at    DateTime?
 
   @@index([status, next_attempt_at])
@@ -992,7 +992,7 @@ model FeedbackMedia {
   @@unique([client_id, client_upload_id])
   @@index([status, reviewed_at, media_deleted_at])
   @@index([client_id, created_at, id])
-  @@index([client_id, assignment_date, training_id, training_exercise_id])
+  @@index([client_id, assignment_date, training_id, training_exercise_id], map: "feedback_media_client_id_assignment_date_training_id_training_e")
   @@map("feedback_media")
 }
 
@@ -1098,7 +1098,7 @@ model ProgressOperation {
   payload_hash String
   response     Json
   created_at   DateTime @default(now())
-  owner        User     @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  owner        User     @relation(fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@id([owner_id, id])
   @@map("progress_operations")
