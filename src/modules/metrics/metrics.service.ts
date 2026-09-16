@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { metricsOverview } from './metrics-overview';
+import { MetricsOverviewQueryDto } from './dto/metrics-overview-query.dto';
 import { PaginationDto, paginate } from '../../common/dto/pagination.dto';
 import { AchievementsService } from '../achievements/achievements.service';
 import { CreateBodyMetricDto } from './dto/create-metric.dto';
@@ -38,6 +40,19 @@ const METRIC_FIELDS = [
 
 @Injectable()
 export class MetricsService {
+  getOverview(clientId: string, query: MetricsOverviewQueryDto) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        return metricsOverview(tx, clientId, query);
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        timeout: 30000,
+      },
+    );
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly challengesService: ChallengesService,

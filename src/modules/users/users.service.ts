@@ -1206,6 +1206,17 @@ export class UsersService {
     return this.calendarService.getWeekSummary(clientId, weekStart);
   }
 
+  async getClientMetricsOverview(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    query: import('../metrics/dto/metrics-overview-query.dto').MetricsOverviewQueryDto,
+  ) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+    await this.assertClientExists(clientId);
+    return this.metricsService.getOverview(clientId, query);
+  }
+
   async getClientMetrics(
     adminId: string,
     adminRole: string,

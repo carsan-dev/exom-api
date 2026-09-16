@@ -2658,6 +2658,38 @@
               }
             ]
           },
+          "digestion_level": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "energy_level": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "fatigue_level": {
             "anyOf": [
               {
@@ -2690,6 +2722,22 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "hunger_level": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 1,
+                "nullable": true,
+                "type": "integer"
               },
               {
                 "enum": [
@@ -7431,6 +7479,58 @@
               }
             ]
           },
+          "digestion_level": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "nullable": true,
+                    "type": "integer"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "energy_level": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "nullable": true,
+                    "type": "integer"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "fatigue_level": {
             "anyOf": [
               {
@@ -7485,6 +7585,32 @@
                 "anyOf": [
                   {
                     "type": "string"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "hunger_level": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "nullable": true,
+                    "type": "integer"
                   },
                   {
                     "enum": [
@@ -12654,6 +12780,169 @@
       },
       "Wire235": {
         "properties": {
+          "chart_from": {
+            "type": "string"
+          },
+          "chart_to": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "page": {
+            "type": "number"
+          },
+          "series": {
+            "$ref": "#/components/schemas/Wire236"
+          },
+          "to": {
+            "type": "string"
+          },
+          "total_pages": {
+            "type": "number"
+          },
+          "weekly_period_rule": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "from",
+          "to",
+          "chart_from",
+          "chart_to",
+          "page",
+          "total_pages",
+          "weekly_period_rule",
+          "series"
+        ],
+        "type": "object"
+      },
+      "Wire236": {
+        "items": {
+          "$ref": "#/components/schemas/Wire237"
+        },
+        "type": "array"
+      },
+      "Wire237": {
+        "properties": {
+          "change": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "count": {
+            "type": "number"
+          },
+          "first": {
+            "$ref": "#/components/schemas/Wire238"
+          },
+          "group": {
+            "enum": [
+              "body",
+              "habits",
+              "nutrition"
+            ]
+          },
+          "incomplete_count": {
+            "type": "number"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last": {
+            "$ref": "#/components/schemas/Wire238"
+          },
+          "points": {
+            "$ref": "#/components/schemas/Wire240"
+          },
+          "source": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "unit",
+          "group",
+          "source",
+          "first",
+          "last",
+          "change",
+          "count",
+          "incomplete_count",
+          "points"
+        ],
+        "type": "object"
+      },
+      "Wire238": {
+        "anyOf": [
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          },
+          {
+            "$ref": "#/components/schemas/Wire239"
+          }
+        ]
+      },
+      "Wire239": {
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "end_date": {
+            "$ref": "#/components/schemas/Wire73"
+          },
+          "provenance": {
+            "type": "string"
+          },
+          "quality": {
+            "enum": [
+              "complete",
+              "partial",
+              "missing"
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/Wire60"
+          }
+        },
+        "required": [
+          "date",
+          "value",
+          "quality",
+          "provenance"
+        ],
+        "type": "object"
+      },
+      "Wire24": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Wire25"
+          },
+          {
+            "$ref": "#/components/schemas/Wire26"
+          }
+        ]
+      },
+      "Wire240": {
+        "items": {
+          "$ref": "#/components/schemas/Wire239"
+        },
+        "type": "array"
+      },
+      "Wire241": {
+        "properties": {
           "arm_left_cm": {
             "$ref": "#/components/schemas/Wire60"
           },
@@ -12745,7 +13034,7 @@
         ],
         "type": "object"
       },
-      "Wire236": {
+      "Wire242": {
         "anyOf": [
           {
             "enum": [
@@ -12754,17 +13043,17 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire235"
+            "$ref": "#/components/schemas/Wire241"
           }
         ]
       },
-      "Wire237": {
+      "Wire243": {
         "items": {
-          "$ref": "#/components/schemas/Wire238"
+          "$ref": "#/components/schemas/Wire244"
         },
         "type": "array"
       },
-      "Wire238": {
+      "Wire244": {
         "properties": {
           "date": {
             "type": "string"
@@ -12779,10 +13068,10 @@
         ],
         "type": "object"
       },
-      "Wire239": {
+      "Wire245": {
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/Wire240"
+            "$ref": "#/components/schemas/Wire246"
           },
           "limit": {
             "type": "number"
@@ -12806,29 +13095,19 @@
         ],
         "type": "object"
       },
-      "Wire24": {
-        "anyOf": [
-          {
-            "$ref": "#/components/schemas/Wire25"
-          },
-          {
-            "$ref": "#/components/schemas/Wire26"
-          }
-        ]
-      },
-      "Wire240": {
+      "Wire246": {
         "items": {
-          "$ref": "#/components/schemas/Wire235"
+          "$ref": "#/components/schemas/Wire241"
         },
         "type": "array"
       },
-      "Wire241": {
+      "Wire247": {
         "properties": {
           "counts": {
-            "$ref": "#/components/schemas/Wire242"
+            "$ref": "#/components/schemas/Wire248"
           },
           "oldest": {
-            "$ref": "#/components/schemas/Wire244"
+            "$ref": "#/components/schemas/Wire250"
           }
         },
         "required": [
@@ -12837,13 +13116,13 @@
         ],
         "type": "object"
       },
-      "Wire242": {
+      "Wire248": {
         "items": {
-          "$ref": "#/components/schemas/Wire243"
+          "$ref": "#/components/schemas/Wire249"
         },
         "type": "array"
       },
-      "Wire243": {
+      "Wire249": {
         "properties": {
           "_count": {
             "type": "number"
@@ -12862,13 +13141,44 @@
         ],
         "type": "object"
       },
-      "Wire244": {
+      "Wire25": {
+        "properties": {
+          "achievement_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "unlock_source": {
+            "enum": [
+              "AUTOMATIC",
+              "MANUAL"
+            ]
+          },
+          "unlocked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "achievement_id",
+          "unlocked_at",
+          "unlock_source"
+        ],
+        "type": "object"
+      },
+      "Wire250": {
         "items": {
-          "$ref": "#/components/schemas/Wire245"
+          "$ref": "#/components/schemas/Wire251"
         },
         "type": "array"
       },
-      "Wire245": {
+      "Wire251": {
         "properties": {
           "attempts": {
             "type": "number"
@@ -12909,17 +13219,17 @@
         ],
         "type": "object"
       },
-      "Wire246": {
+      "Wire252": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire247"
+            "$ref": "#/components/schemas/Wire253"
           },
           {
-            "$ref": "#/components/schemas/Wire251"
+            "$ref": "#/components/schemas/Wire257"
           }
         ]
       },
-      "Wire247": {
+      "Wire253": {
         "properties": {
           "body": {
             "type": "string"
@@ -12942,7 +13252,7 @@
             "$ref": "#/components/schemas/Wire39"
           },
           "recipient": {
-            "$ref": "#/components/schemas/Wire248"
+            "$ref": "#/components/schemas/Wire254"
           },
           "recipient_id": {
             "type": "string"
@@ -12988,13 +13298,13 @@
         ],
         "type": "object"
       },
-      "Wire248": {
+      "Wire254": {
         "properties": {
           "email": {
             "type": "string"
           },
           "profile": {
-            "$ref": "#/components/schemas/Wire249"
+            "$ref": "#/components/schemas/Wire255"
           }
         },
         "required": [
@@ -13003,7 +13313,7 @@
         ],
         "type": "object"
       },
-      "Wire249": {
+      "Wire255": {
         "anyOf": [
           {
             "enum": [
@@ -13012,42 +13322,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire250"
+            "$ref": "#/components/schemas/Wire256"
           }
         ]
       },
-      "Wire25": {
-        "properties": {
-          "achievement_id": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "unlock_source": {
-            "enum": [
-              "AUTOMATIC",
-              "MANUAL"
-            ]
-          },
-          "unlocked_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "user_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "user_id",
-          "achievement_id",
-          "unlocked_at",
-          "unlock_source"
-        ],
-        "type": "object"
-      },
-      "Wire250": {
+      "Wire256": {
         "properties": {
           "avatar_url": {
             "$ref": "#/components/schemas/Wire9"
@@ -13066,13 +13345,13 @@
         ],
         "type": "object"
       },
-      "Wire251": {
+      "Wire257": {
         "properties": {
           "failed": {
             "type": "number"
           },
           "queued": {
-            "$ref": "#/components/schemas/Wire252"
+            "$ref": "#/components/schemas/Wire258"
           },
           "sent": {
             "type": "number"
@@ -13091,17 +13370,17 @@
         ],
         "type": "object"
       },
-      "Wire252": {
+      "Wire258": {
         "anyOf": [
           {
             "type": "number"
           }
         ]
       },
-      "Wire253": {
+      "Wire259": {
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/Wire254"
+            "$ref": "#/components/schemas/Wire260"
           },
           "limit": {
             "type": "number"
@@ -13125,13 +13404,32 @@
         ],
         "type": "object"
       },
-      "Wire254": {
+      "Wire26": {
+        "properties": {
+          "achievement_id": {
+            "type": "string"
+          },
+          "granted_users": {
+            "type": "number"
+          },
+          "requested_users": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "achievement_id",
+          "requested_users",
+          "granted_users"
+        ],
+        "type": "object"
+      },
+      "Wire260": {
         "items": {
-          "$ref": "#/components/schemas/Wire247"
+          "$ref": "#/components/schemas/Wire253"
         },
         "type": "array"
       },
-      "Wire255": {
+      "Wire261": {
         "properties": {
           "failed": {
             "type": "number"
@@ -13150,13 +13448,13 @@
         ],
         "type": "object"
       },
-      "Wire256": {
+      "Wire262": {
         "items": {
-          "$ref": "#/components/schemas/Wire257"
+          "$ref": "#/components/schemas/Wire263"
         },
         "type": "array"
       },
-      "Wire257": {
+      "Wire263": {
         "properties": {
           "body": {
             "type": "string"
@@ -13171,7 +13469,7 @@
             ]
           },
           "delivery_info": {
-            "$ref": "#/components/schemas/Wire259"
+            "$ref": "#/components/schemas/Wire265"
           },
           "description": {
             "type": "string"
@@ -13204,7 +13502,7 @@
             "$ref": "#/components/schemas/Wire39"
           },
           "variable_help": {
-            "$ref": "#/components/schemas/Wire258"
+            "$ref": "#/components/schemas/Wire264"
           },
           "variables": {
             "$ref": "#/components/schemas/Wire43"
@@ -13228,14 +13526,14 @@
         ],
         "type": "object"
       },
-      "Wire258": {
+      "Wire264": {
         "additionalProperties": {
           "type": "string"
         },
         "properties": {},
         "type": "object"
       },
-      "Wire259": {
+      "Wire265": {
         "properties": {
           "description": {
             "type": "string"
@@ -13254,26 +13552,7 @@
         ],
         "type": "object"
       },
-      "Wire26": {
-        "properties": {
-          "achievement_id": {
-            "type": "string"
-          },
-          "granted_users": {
-            "type": "number"
-          },
-          "requested_users": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "achievement_id",
-          "requested_users",
-          "granted_users"
-        ],
-        "type": "object"
-      },
-      "Wire260": {
+      "Wire266": {
         "properties": {
           "body": {
             "type": "string"
@@ -13288,7 +13567,7 @@
             ]
           },
           "delivery_info": {
-            "$ref": "#/components/schemas/Wire261"
+            "$ref": "#/components/schemas/Wire267"
           },
           "description": {
             "type": "string"
@@ -13336,7 +13615,7 @@
             "$ref": "#/components/schemas/Wire39"
           },
           "variable_help": {
-            "$ref": "#/components/schemas/Wire258"
+            "$ref": "#/components/schemas/Wire264"
           },
           "variables": {
             "$ref": "#/components/schemas/Wire43"
@@ -13360,7 +13639,7 @@
         ],
         "type": "object"
       },
-      "Wire261": {
+      "Wire267": {
         "properties": {
           "cron": {
             "$ref": "#/components/schemas/Wire73"
@@ -13408,17 +13687,17 @@
         ],
         "type": "object"
       },
-      "Wire262": {
+      "Wire268": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire260"
+            "$ref": "#/components/schemas/Wire266"
           },
           {
-            "$ref": "#/components/schemas/Wire263"
+            "$ref": "#/components/schemas/Wire269"
           }
         ]
       },
-      "Wire263": {
+      "Wire269": {
         "properties": {
           "deleted": {
             "enum": [
@@ -13436,10 +13715,21 @@
         ],
         "type": "object"
       },
-      "Wire264": {
+      "Wire27": {
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "Wire270": {
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/Wire265"
+            "$ref": "#/components/schemas/Wire271"
           },
           "limit": {
             "type": "number"
@@ -13463,13 +13753,13 @@
         ],
         "type": "object"
       },
-      "Wire265": {
+      "Wire271": {
         "items": {
-          "$ref": "#/components/schemas/Wire266"
+          "$ref": "#/components/schemas/Wire272"
         },
         "type": "array"
       },
-      "Wire266": {
+      "Wire272": {
         "properties": {
           "body": {
             "type": "string"
@@ -13534,7 +13824,7 @@
         ],
         "type": "object"
       },
-      "Wire267": {
+      "Wire273": {
         "properties": {
           "count": {
             "type": "number"
@@ -13545,7 +13835,7 @@
         ],
         "type": "object"
       },
-      "Wire268": {
+      "Wire274": {
         "properties": {
           "updated": {
             "type": "number"
@@ -13556,7 +13846,7 @@
         ],
         "type": "object"
       },
-      "Wire269": {
+      "Wire275": {
         "properties": {
           "deleted": {
             "type": "number"
@@ -13567,18 +13857,7 @@
         ],
         "type": "object"
       },
-      "Wire27": {
-        "properties": {
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "type": "object"
-      },
-      "Wire270": {
+      "Wire276": {
         "properties": {
           "avatar_url": {
             "$ref": "#/components/schemas/Wire9"
@@ -13632,7 +13911,7 @@
             "type": "string"
           },
           "user": {
-            "$ref": "#/components/schemas/Wire271"
+            "$ref": "#/components/schemas/Wire277"
           },
           "user_id": {
             "type": "string"
@@ -13659,7 +13938,7 @@
         ],
         "type": "object"
       },
-      "Wire271": {
+      "Wire277": {
         "properties": {
           "email": {
             "type": "string"
@@ -13672,7 +13951,7 @@
             ]
           },
           "streak": {
-            "$ref": "#/components/schemas/Wire272"
+            "$ref": "#/components/schemas/Wire278"
           }
         },
         "required": [
@@ -13682,7 +13961,7 @@
         ],
         "type": "object"
       },
-      "Wire272": {
+      "Wire278": {
         "anyOf": [
           {
             "enum": [
@@ -13691,11 +13970,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire273"
+            "$ref": "#/components/schemas/Wire279"
           }
         ]
       },
-      "Wire273": {
+      "Wire279": {
         "properties": {
           "current_days": {
             "type": "number"
@@ -13706,17 +13985,40 @@
         ],
         "type": "object"
       },
-      "Wire274": {
+      "Wire28": {
+        "properties": {
+          "achievements_evaluated": {
+            "type": "number"
+          },
+          "granted": {
+            "type": "number"
+          },
+          "revoked": {
+            "type": "number"
+          },
+          "users_evaluated": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "achievements_evaluated",
+          "users_evaluated",
+          "granted",
+          "revoked"
+        ],
+        "type": "object"
+      },
+      "Wire280": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire275"
+            "$ref": "#/components/schemas/Wire281"
           },
           {
-            "$ref": "#/components/schemas/Wire276"
+            "$ref": "#/components/schemas/Wire282"
           }
         ]
       },
-      "Wire275": {
+      "Wire281": {
         "properties": {
           "bytes": {
             "$ref": "#/components/schemas/Wire60"
@@ -13762,7 +14064,7 @@
         ],
         "type": "object"
       },
-      "Wire276": {
+      "Wire282": {
         "properties": {
           "content_type": {
             "type": "string"
@@ -13814,7 +14116,7 @@
         ],
         "type": "object"
       },
-      "Wire277": {
+      "Wire283": {
         "properties": {
           "success": {
             "enum": [
@@ -13828,17 +14130,17 @@
         ],
         "type": "object"
       },
-      "Wire278": {
+      "Wire284": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire279"
+            "$ref": "#/components/schemas/Wire285"
           },
           {
-            "$ref": "#/components/schemas/Wire283"
+            "$ref": "#/components/schemas/Wire289"
           }
         ]
       },
-      "Wire279": {
+      "Wire285": {
         "properties": {
           "admin_reply_sent_at": {
             "enum": [
@@ -13860,7 +14162,7 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire280"
+            "$ref": "#/components/schemas/Wire286"
           },
           "exercises_completed": {
             "$ref": "#/components/schemas/Wire95"
@@ -13902,36 +14204,13 @@
         ],
         "type": "object"
       },
-      "Wire28": {
-        "properties": {
-          "achievements_evaluated": {
-            "type": "number"
-          },
-          "granted": {
-            "type": "number"
-          },
-          "revoked": {
-            "type": "number"
-          },
-          "users_evaluated": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "achievements_evaluated",
-          "users_evaluated",
-          "granted",
-          "revoked"
-        ],
-        "type": "object"
-      },
-      "Wire280": {
+      "Wire286": {
         "items": {
-          "$ref": "#/components/schemas/Wire281"
+          "$ref": "#/components/schemas/Wire287"
         },
         "type": "array"
       },
-      "Wire281": {
+      "Wire287": {
         "properties": {
           "captured_at": {
             "format": "date-time",
@@ -13945,7 +14224,7 @@
             "type": "string"
           },
           "diet": {
-            "$ref": "#/components/schemas/Wire282"
+            "$ref": "#/components/schemas/Wire288"
           },
           "diet_id": {
             "type": "string"
@@ -13971,7 +14250,7 @@
         ],
         "type": "object"
       },
-      "Wire282": {
+      "Wire288": {
         "properties": {
           "created_at": {
             "type": "string"
@@ -14033,7 +14312,7 @@
         ],
         "type": "object"
       },
-      "Wire283": {
+      "Wire289": {
         "properties": {
           "admin_reply_sent_at": {
             "$ref": "#/components/schemas/Wire39"
@@ -14053,7 +14332,7 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire280"
+            "$ref": "#/components/schemas/Wire286"
           },
           "exercises_completed": {},
           "id": {
@@ -14100,12 +14379,39 @@
         ],
         "type": "object"
       },
-      "Wire284": {
+      "Wire29": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Wire30"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "totalPages": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "data",
+          "total",
+          "page",
+          "limit",
+          "totalPages"
+        ],
+        "type": "object"
+      },
+      "Wire290": {
         "additionalProperties": {},
         "properties": {},
         "type": "object"
       },
-      "Wire285": {
+      "Wire291": {
         "properties": {
           "admin_reply_sent_at": {
             "$ref": "#/components/schemas/Wire39"
@@ -14168,17 +14474,17 @@
         ],
         "type": "object"
       },
-      "Wire286": {
+      "Wire292": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire285"
+            "$ref": "#/components/schemas/Wire291"
           },
           {
-            "$ref": "#/components/schemas/Wire287"
+            "$ref": "#/components/schemas/Wire293"
           }
         ]
       },
-      "Wire287": {
+      "Wire293": {
         "properties": {
           "message": {
             "type": "string"
@@ -14189,17 +14495,17 @@
         ],
         "type": "object"
       },
-      "Wire288": {
+      "Wire294": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire285"
+            "$ref": "#/components/schemas/Wire291"
           },
           {
-            "$ref": "#/components/schemas/Wire289"
+            "$ref": "#/components/schemas/Wire295"
           }
         ]
       },
-      "Wire289": {
+      "Wire295": {
         "properties": {
           "message": {
             "type": "string"
@@ -14210,34 +14516,7 @@
         ],
         "type": "object"
       },
-      "Wire29": {
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/Wire30"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          },
-          "totalPages": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "data",
-          "total",
-          "page",
-          "limit",
-          "totalPages"
-        ],
-        "type": "object"
-      },
-      "Wire290": {
+      "Wire296": {
         "properties": {
           "status": {
             "type": "string"
@@ -14248,7 +14527,7 @@
         ],
         "type": "object"
       },
-      "Wire291": {
+      "Wire297": {
         "properties": {
           "android_store_url": {
             "type": "string"
@@ -14317,329 +14596,38 @@
         ],
         "type": "object"
       },
-      "Wire292": {
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/Wire293"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          },
-          "totalPages": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "data",
-          "total",
-          "page",
-          "limit",
-          "totalPages"
-        ],
-        "type": "object"
-      },
-      "Wire293": {
-        "items": {
-          "$ref": "#/components/schemas/Wire294"
-        },
-        "type": "array"
-      },
-      "Wire294": {
-        "properties": {
-          "archived_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "average_daily_steps": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "client_feedback_read_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "client_feedback_sent_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "client_feedback_text": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "client_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "fatigue_level": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "food_quality": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "general_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "hydration_enabled": {
-            "enum": [
-              false,
-              true
-            ]
-          },
-          "hydration_level": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "id": {
-            "type": "string"
-          },
-          "improvement_app_rating": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "improvement_areas": {
-            "$ref": "#/components/schemas/Wire43"
-          },
-          "improvement_feedback_text": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "improvement_service_rating": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "mood": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "muscle_pain_zones": {},
-          "nutrition_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "nutrition_quality": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "pain_intensity": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "recovery_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "reviewed_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "sleep_hours_range": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "status": {
-            "enum": [
-              "DRAFT",
-              "SUBMITTED",
-              "REVIEWED"
-            ]
-          },
-          "stress_enabled": {
-            "enum": [
-              false,
-              true
-            ]
-          },
-          "stress_level": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "submitted_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "training_effort": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "training_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "training_progress": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "training_sessions": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "week_end_date": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "week_start_date": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status",
-          "created_at",
-          "id",
-          "updated_at",
-          "client_id",
-          "week_start_date",
-          "week_end_date",
-          "submitted_at",
-          "training_effort",
-          "training_sessions",
-          "average_daily_steps",
-          "training_progress",
-          "training_notes",
-          "nutrition_quality",
-          "hydration_enabled",
-          "hydration_level",
-          "food_quality",
-          "nutrition_notes",
-          "sleep_hours_range",
-          "fatigue_level",
-          "muscle_pain_zones",
-          "pain_intensity",
-          "recovery_notes",
-          "mood",
-          "stress_enabled",
-          "stress_level",
-          "general_notes",
-          "improvement_app_rating",
-          "improvement_service_rating",
-          "improvement_areas",
-          "improvement_feedback_text",
-          "client_feedback_text",
-          "client_feedback_sent_at",
-          "client_feedback_read_at",
-          "reviewed_at",
-          "archived_at"
-        ],
-        "type": "object"
-      },
-      "Wire295": {
-        "properties": {
-          "success": {
-            "enum": [
-              false,
-              true
-            ]
-          }
-        },
-        "required": [
-          "success"
-        ],
-        "type": "object"
-      },
-      "Wire296": {
-        "properties": {
-          "archived": {
-            "type": "number"
-          },
-          "reviewed": {
-            "type": "number"
-          },
-          "submitted": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "total",
-          "submitted",
-          "reviewed",
-          "archived"
-        ],
-        "type": "object"
-      },
-      "Wire297": {
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/Wire298"
-          },
-          "limit": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "total": {
-            "type": "number"
-          },
-          "totalPages": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "data",
-          "total",
-          "page",
-          "limit",
-          "totalPages"
-        ],
-        "type": "object"
-      },
       "Wire298": {
-        "items": {
-          "$ref": "#/components/schemas/Wire299"
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Wire299"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "totalPages": {
+            "type": "number"
+          }
         },
-        "type": "array"
+        "required": [
+          "data",
+          "total",
+          "page",
+          "limit",
+          "totalPages"
+        ],
+        "type": "object"
       },
       "Wire299": {
-        "properties": {
-          "admin_comments": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "archived_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "average_daily_steps": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "client": {
-            "$ref": "#/components/schemas/Wire300"
-          },
-          "client_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "DRAFT",
-              "SUBMITTED",
-              "REVIEWED"
-            ]
-          },
-          "submitted_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "week_end_date": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "week_start_date": {
-            "format": "date-time",
-            "type": "string"
-          }
+        "items": {
+          "$ref": "#/components/schemas/Wire300"
         },
-        "required": [
-          "status",
-          "created_at",
-          "id",
-          "client_id",
-          "client",
-          "week_start_date",
-          "week_end_date",
-          "submitted_at",
-          "average_daily_steps",
-          "admin_comments",
-          "archived_at"
-        ],
-        "type": "object"
+        "type": "array"
       },
       "Wire3": {
         "properties": {
@@ -14680,6 +14668,309 @@
       },
       "Wire300": {
         "properties": {
+          "archived_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "average_daily_steps": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "client_feedback_read_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "client_feedback_sent_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "client_feedback_text": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "digestion_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "energy_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "fatigue_level": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "food_quality": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "general_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "hunger_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "hydration_enabled": {
+            "enum": [
+              false,
+              true
+            ]
+          },
+          "hydration_level": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "id": {
+            "type": "string"
+          },
+          "improvement_app_rating": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "improvement_areas": {
+            "$ref": "#/components/schemas/Wire43"
+          },
+          "improvement_feedback_text": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "improvement_service_rating": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "mood": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "muscle_pain_zones": {},
+          "nutrition_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "nutrition_quality": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "pain_intensity": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "recovery_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "reviewed_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "sleep_hours_range": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "SUBMITTED",
+              "REVIEWED"
+            ]
+          },
+          "stress_enabled": {
+            "enum": [
+              false,
+              true
+            ]
+          },
+          "stress_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "submitted_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "training_effort": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "training_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "training_progress": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "training_sessions": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "week_end_date": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "week_start_date": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "created_at",
+          "id",
+          "updated_at",
+          "client_id",
+          "week_start_date",
+          "week_end_date",
+          "submitted_at",
+          "training_effort",
+          "training_sessions",
+          "average_daily_steps",
+          "training_progress",
+          "training_notes",
+          "nutrition_quality",
+          "hydration_enabled",
+          "hydration_level",
+          "food_quality",
+          "nutrition_notes",
+          "sleep_hours_range",
+          "fatigue_level",
+          "muscle_pain_zones",
+          "pain_intensity",
+          "recovery_notes",
+          "mood",
+          "stress_enabled",
+          "stress_level",
+          "hunger_level",
+          "energy_level",
+          "digestion_level",
+          "general_notes",
+          "improvement_app_rating",
+          "improvement_service_rating",
+          "improvement_areas",
+          "improvement_feedback_text",
+          "client_feedback_text",
+          "client_feedback_sent_at",
+          "client_feedback_read_at",
+          "reviewed_at",
+          "archived_at"
+        ],
+        "type": "object"
+      },
+      "Wire301": {
+        "properties": {
+          "success": {
+            "enum": [
+              false,
+              true
+            ]
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "type": "object"
+      },
+      "Wire302": {
+        "properties": {
+          "archived": {
+            "type": "number"
+          },
+          "reviewed": {
+            "type": "number"
+          },
+          "submitted": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "total",
+          "submitted",
+          "reviewed",
+          "archived"
+        ],
+        "type": "object"
+      },
+      "Wire303": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Wire304"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "totalPages": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "data",
+          "total",
+          "page",
+          "limit",
+          "totalPages"
+        ],
+        "type": "object"
+      },
+      "Wire304": {
+        "items": {
+          "$ref": "#/components/schemas/Wire305"
+        },
+        "type": "array"
+      },
+      "Wire305": {
+        "properties": {
+          "admin_comments": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "archived_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "average_daily_steps": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "client": {
+            "$ref": "#/components/schemas/Wire306"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "SUBMITTED",
+              "REVIEWED"
+            ]
+          },
+          "submitted_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "week_end_date": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "week_start_date": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "created_at",
+          "id",
+          "client_id",
+          "client",
+          "week_start_date",
+          "week_end_date",
+          "submitted_at",
+          "average_daily_steps",
+          "admin_comments",
+          "archived_at"
+        ],
+        "type": "object"
+      },
+      "Wire306": {
+        "properties": {
           "email": {
             "type": "string"
           },
@@ -14687,7 +14978,7 @@
             "type": "string"
           },
           "profile": {
-            "$ref": "#/components/schemas/Wire301"
+            "$ref": "#/components/schemas/Wire307"
           }
         },
         "required": [
@@ -14697,7 +14988,7 @@
         ],
         "type": "object"
       },
-      "Wire301": {
+      "Wire307": {
         "anyOf": [
           {
             "enum": [
@@ -14706,11 +14997,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire302"
+            "$ref": "#/components/schemas/Wire308"
           }
         ]
       },
-      "Wire302": {
+      "Wire308": {
         "properties": {
           "avatar_url": {
             "$ref": "#/components/schemas/Wire9"
@@ -14729,7 +15020,7 @@
         ],
         "type": "object"
       },
-      "Wire303": {
+      "Wire309": {
         "properties": {
           "admin_comments": {
             "$ref": "#/components/schemas/Wire9"
@@ -14741,7 +15032,7 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "client": {
-            "$ref": "#/components/schemas/Wire304"
+            "$ref": "#/components/schemas/Wire310"
           },
           "client_feedback_read_at": {
             "$ref": "#/components/schemas/Wire39"
@@ -14759,6 +15050,12 @@
             "format": "date-time",
             "type": "string"
           },
+          "digestion_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "energy_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
           "fatigue_level": {
             "$ref": "#/components/schemas/Wire9"
           },
@@ -14767,6 +15064,9 @@
           },
           "general_notes": {
             "$ref": "#/components/schemas/Wire9"
+          },
+          "hunger_level": {
+            "$ref": "#/components/schemas/Wire60"
           },
           "hydration_enabled": {
             "enum": [
@@ -14886,6 +15186,9 @@
           "mood",
           "stress_enabled",
           "stress_level",
+          "hunger_level",
+          "energy_level",
+          "digestion_level",
           "general_notes",
           "improvement_app_rating",
           "improvement_service_rating",
@@ -14899,266 +15202,6 @@
           "archived_at"
         ],
         "type": "object"
-      },
-      "Wire304": {
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "profile": {
-            "$ref": "#/components/schemas/Wire305"
-          }
-        },
-        "required": [
-          "profile",
-          "id",
-          "email"
-        ],
-        "type": "object"
-      },
-      "Wire305": {
-        "anyOf": [
-          {
-            "enum": [
-              null
-            ],
-            "nullable": true
-          },
-          {
-            "$ref": "#/components/schemas/Wire306"
-          }
-        ]
-      },
-      "Wire306": {
-        "properties": {
-          "avatar_url": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "first_name": {
-            "type": "string"
-          },
-          "last_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "first_name",
-          "last_name",
-          "avatar_url"
-        ],
-        "type": "object"
-      },
-      "Wire307": {
-        "properties": {
-          "admin_comments": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "archived_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "average_daily_steps": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "client_feedback_read_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "client_feedback_sent_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "client_feedback_text": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "client_id": {
-            "type": "string"
-          },
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "fatigue_level": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "food_quality": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "general_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "hydration_enabled": {
-            "enum": [
-              false,
-              true
-            ]
-          },
-          "hydration_level": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "id": {
-            "type": "string"
-          },
-          "improvement_app_rating": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "improvement_areas": {
-            "$ref": "#/components/schemas/Wire43"
-          },
-          "improvement_feedback_text": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "improvement_service_rating": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "mood": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "muscle_pain_zones": {},
-          "nutrition_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "nutrition_quality": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "pain_intensity": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "recovery_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "reviewed_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "sleep_hours_range": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "status": {
-            "enum": [
-              "DRAFT",
-              "SUBMITTED",
-              "REVIEWED"
-            ]
-          },
-          "stress_enabled": {
-            "enum": [
-              false,
-              true
-            ]
-          },
-          "stress_level": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "submitted_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "training_effort": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "training_notes": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "training_progress": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "training_sessions": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "week_end_date": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "week_start_date": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "status",
-          "created_at",
-          "id",
-          "updated_at",
-          "client_id",
-          "week_start_date",
-          "week_end_date",
-          "submitted_at",
-          "training_effort",
-          "training_sessions",
-          "average_daily_steps",
-          "training_progress",
-          "training_notes",
-          "nutrition_quality",
-          "hydration_enabled",
-          "hydration_level",
-          "food_quality",
-          "nutrition_notes",
-          "sleep_hours_range",
-          "fatigue_level",
-          "muscle_pain_zones",
-          "pain_intensity",
-          "recovery_notes",
-          "mood",
-          "stress_enabled",
-          "stress_level",
-          "general_notes",
-          "improvement_app_rating",
-          "improvement_service_rating",
-          "improvement_areas",
-          "improvement_feedback_text",
-          "admin_comments",
-          "client_feedback_text",
-          "client_feedback_sent_at",
-          "client_feedback_read_at",
-          "reviewed_at",
-          "archived_at"
-        ],
-        "type": "object"
-      },
-      "Wire308": {
-        "properties": {
-          "client_id": {
-            "type": "string"
-          },
-          "current_days": {
-            "type": "number"
-          },
-          "id": {
-            "type": "string"
-          },
-          "last_active_date": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "longest_days": {
-            "type": "number"
-          },
-          "tracking_started_at": {
-            "$ref": "#/components/schemas/Wire39"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "updated_at",
-          "client_id",
-          "current_days",
-          "longest_days",
-          "last_active_date",
-          "tracking_started_at"
-        ],
-        "type": "object"
-      },
-      "Wire309": {
-        "items": {
-          "$ref": "#/components/schemas/Wire310"
-        },
-        "type": "array"
       },
       "Wire31": {
         "properties": {
@@ -15242,95 +15285,367 @@
       },
       "Wire310": {
         "properties": {
-          "created_at": {
-            "format": "date-time",
+          "email": {
             "type": "string"
           },
           "id": {
             "type": "string"
           },
-          "item_count": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
+          "profile": {
+            "$ref": "#/components/schemas/Wire311"
           }
         },
         "required": [
-          "item_count",
-          "name",
-          "created_at",
+          "profile",
           "id",
-          "updated_at"
+          "email"
         ],
         "type": "object"
       },
       "Wire311": {
-        "properties": {
-          "created_at": {
-            "format": "date-time",
-            "type": "string"
+        "anyOf": [
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
           },
-          "id": {
-            "type": "string"
-          },
-          "item_count": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
-            "type": "string"
+          {
+            "$ref": "#/components/schemas/Wire312"
           }
-        },
-        "required": [
-          "item_count",
-          "name",
-          "created_at",
-          "id",
-          "updated_at"
-        ],
-        "type": "object"
+        ]
       },
       "Wire312": {
         "properties": {
-          "created_at": {
-            "format": "date-time",
+          "avatar_url": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "first_name": {
             "type": "string"
           },
-          "id": {
-            "type": "string"
-          },
-          "item_count": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "updated_at": {
-            "format": "date-time",
+          "last_name": {
             "type": "string"
           }
         },
         "required": [
-          "item_count",
-          "name",
-          "created_at",
-          "id",
-          "updated_at"
+          "first_name",
+          "last_name",
+          "avatar_url"
         ],
         "type": "object"
       },
       "Wire313": {
         "properties": {
+          "admin_comments": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "archived_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "average_daily_steps": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "client_feedback_read_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "client_feedback_sent_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "client_feedback_text": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "digestion_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "energy_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "fatigue_level": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "food_quality": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "general_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "hunger_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "hydration_enabled": {
+            "enum": [
+              false,
+              true
+            ]
+          },
+          "hydration_level": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "id": {
+            "type": "string"
+          },
+          "improvement_app_rating": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "improvement_areas": {
+            "$ref": "#/components/schemas/Wire43"
+          },
+          "improvement_feedback_text": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "improvement_service_rating": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "mood": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "muscle_pain_zones": {},
+          "nutrition_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "nutrition_quality": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "pain_intensity": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "recovery_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "reviewed_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "sleep_hours_range": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "SUBMITTED",
+              "REVIEWED"
+            ]
+          },
+          "stress_enabled": {
+            "enum": [
+              false,
+              true
+            ]
+          },
+          "stress_level": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "submitted_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "training_effort": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "training_notes": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "training_progress": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "training_sessions": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "week_end_date": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "week_start_date": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "created_at",
+          "id",
+          "updated_at",
+          "client_id",
+          "week_start_date",
+          "week_end_date",
+          "submitted_at",
+          "training_effort",
+          "training_sessions",
+          "average_daily_steps",
+          "training_progress",
+          "training_notes",
+          "nutrition_quality",
+          "hydration_enabled",
+          "hydration_level",
+          "food_quality",
+          "nutrition_notes",
+          "sleep_hours_range",
+          "fatigue_level",
+          "muscle_pain_zones",
+          "pain_intensity",
+          "recovery_notes",
+          "mood",
+          "stress_enabled",
+          "stress_level",
+          "hunger_level",
+          "energy_level",
+          "digestion_level",
+          "general_notes",
+          "improvement_app_rating",
+          "improvement_service_rating",
+          "improvement_areas",
+          "improvement_feedback_text",
+          "admin_comments",
+          "client_feedback_text",
+          "client_feedback_sent_at",
+          "client_feedback_read_at",
+          "reviewed_at",
+          "archived_at"
+        ],
+        "type": "object"
+      },
+      "Wire314": {
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "current_days": {
+            "type": "number"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_active_date": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "longest_days": {
+            "type": "number"
+          },
+          "tracking_started_at": {
+            "$ref": "#/components/schemas/Wire39"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "updated_at",
+          "client_id",
+          "current_days",
+          "longest_days",
+          "last_active_date",
+          "tracking_started_at"
+        ],
+        "type": "object"
+      },
+      "Wire315": {
+        "items": {
+          "$ref": "#/components/schemas/Wire316"
+        },
+        "type": "array"
+      },
+      "Wire316": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_count",
+          "name",
+          "created_at",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "Wire317": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_count",
+          "name",
+          "created_at",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "Wire318": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "item_count": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_count",
+          "name",
+          "created_at",
+          "id",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "Wire319": {
+        "properties": {
           "data": {
-            "$ref": "#/components/schemas/Wire314"
+            "$ref": "#/components/schemas/Wire320"
           },
           "limit": {
             "type": "number"
@@ -15354,13 +15669,32 @@
         ],
         "type": "object"
       },
-      "Wire314": {
+      "Wire32": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Wire33"
+          }
+        },
+        "required": [
+          "profile",
+          "id",
+          "email"
+        ],
+        "type": "object"
+      },
+      "Wire320": {
         "items": {
-          "$ref": "#/components/schemas/Wire315"
+          "$ref": "#/components/schemas/Wire321"
         },
         "type": "array"
       },
-      "Wire315": {
+      "Wire321": {
         "properties": {
           "accentColor": {
             "$ref": "#/components/schemas/Wire9"
@@ -15385,7 +15719,7 @@
             "type": "number"
           },
           "group": {
-            "$ref": "#/components/schemas/Wire316"
+            "$ref": "#/components/schemas/Wire322"
           },
           "group_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -15456,7 +15790,7 @@
         ],
         "type": "object"
       },
-      "Wire316": {
+      "Wire322": {
         "anyOf": [
           {
             "enum": [
@@ -15465,11 +15799,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire317"
+            "$ref": "#/components/schemas/Wire323"
           }
         ]
       },
-      "Wire317": {
+      "Wire323": {
         "properties": {
           "id": {
             "type": "string"
@@ -15484,17 +15818,17 @@
         ],
         "type": "object"
       },
-      "Wire318": {
+      "Wire324": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire319"
+            "$ref": "#/components/schemas/Wire325"
           },
           {
-            "$ref": "#/components/schemas/Wire343"
+            "$ref": "#/components/schemas/Wire349"
           }
         ]
       },
-      "Wire319": {
+      "Wire325": {
         "properties": {
           "accentColor": {
             "$ref": "#/components/schemas/Wire9"
@@ -15506,7 +15840,7 @@
             "$ref": "#/components/schemas/Wire9"
           },
           "blocks": {
-            "$ref": "#/components/schemas/Wire331"
+            "$ref": "#/components/schemas/Wire337"
           },
           "completed": {
             "enum": [
@@ -15530,7 +15864,7 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire320"
+            "$ref": "#/components/schemas/Wire326"
           },
           "group_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -15545,7 +15879,7 @@
             ]
           },
           "items": {
-            "$ref": "#/components/schemas/Wire336"
+            "$ref": "#/components/schemas/Wire342"
           },
           "level": {
             "enum": [
@@ -15564,10 +15898,10 @@
             ]
           },
           "rir_proposal": {
-            "$ref": "#/components/schemas/Wire326"
+            "$ref": "#/components/schemas/Wire332"
           },
           "tags": {
-            "$ref": "#/components/schemas/Wire323"
+            "$ref": "#/components/schemas/Wire329"
           },
           "total_volume": {
             "$ref": "#/components/schemas/Wire60"
@@ -15576,7 +15910,7 @@
             "type": "string"
           },
           "types": {
-            "$ref": "#/components/schemas/Wire335"
+            "$ref": "#/components/schemas/Wire341"
           },
           "updated_at": {
             "type": "string"
@@ -15618,41 +15952,22 @@
         ],
         "type": "object"
       },
-      "Wire32": {
-        "properties": {
-          "email": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "profile": {
-            "$ref": "#/components/schemas/Wire33"
-          }
-        },
-        "required": [
-          "profile",
-          "id",
-          "email"
-        ],
-        "type": "object"
-      },
-      "Wire320": {
+      "Wire326": {
         "items": {
-          "$ref": "#/components/schemas/Wire321"
+          "$ref": "#/components/schemas/Wire327"
         },
         "type": "array"
       },
-      "Wire321": {
+      "Wire327": {
         "properties": {
           "block": {
-            "$ref": "#/components/schemas/Wire324"
+            "$ref": "#/components/schemas/Wire330"
           },
           "block_id": {
             "$ref": "#/components/schemas/Wire9"
           },
           "exercise": {
-            "$ref": "#/components/schemas/Wire322"
+            "$ref": "#/components/schemas/Wire328"
           },
           "exercise_id": {
             "type": "string"
@@ -15661,7 +15976,7 @@
             "type": "string"
           },
           "measure_type": {
-            "$ref": "#/components/schemas/Wire330"
+            "$ref": "#/components/schemas/Wire336"
           },
           "order": {
             "type": "number"
@@ -15682,7 +15997,7 @@
             "type": "number"
           },
           "rir_override": {
-            "$ref": "#/components/schemas/Wire326"
+            "$ref": "#/components/schemas/Wire332"
           },
           "sets": {
             "type": "number"
@@ -15700,7 +16015,7 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "timed_config": {
-            "$ref": "#/components/schemas/Wire326"
+            "$ref": "#/components/schemas/Wire332"
           },
           "training_id": {
             "type": "string"
@@ -15729,7 +16044,7 @@
         ],
         "type": "object"
       },
-      "Wire322": {
+      "Wire328": {
         "properties": {
           "common_errors_text": {
             "$ref": "#/components/schemas/Wire9"
@@ -15741,7 +16056,7 @@
             "$ref": "#/components/schemas/Wire9"
           },
           "equipment": {
-            "$ref": "#/components/schemas/Wire323"
+            "$ref": "#/components/schemas/Wire329"
           },
           "explanation_text": {
             "$ref": "#/components/schemas/Wire9"
@@ -15763,7 +16078,7 @@
             ]
           },
           "muscle_groups": {
-            "$ref": "#/components/schemas/Wire323"
+            "$ref": "#/components/schemas/Wire329"
           },
           "name": {
             "type": "string"
@@ -15803,13 +16118,13 @@
         ],
         "type": "object"
       },
-      "Wire323": {
+      "Wire329": {
         "items": {
           "type": "string"
         },
         "type": "array"
       },
-      "Wire324": {
+      "Wire33": {
         "anyOf": [
           {
             "enum": [
@@ -15818,11 +16133,24 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire325"
+            "$ref": "#/components/schemas/Wire34"
           }
         ]
       },
-      "Wire325": {
+      "Wire330": {
+        "anyOf": [
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          },
+          {
+            "$ref": "#/components/schemas/Wire331"
+          }
+        ]
+      },
+      "Wire331": {
         "properties": {
           "created_at": {
             "type": "string"
@@ -15868,7 +16196,7 @@
         ],
         "type": "object"
       },
-      "Wire326": {
+      "Wire332": {
         "anyOf": [
           {
             "enum": [
@@ -15895,21 +16223,21 @@
             "type": "boolean"
           },
           {
-            "$ref": "#/components/schemas/Wire327"
+            "$ref": "#/components/schemas/Wire333"
           },
           {
-            "$ref": "#/components/schemas/Wire329"
+            "$ref": "#/components/schemas/Wire335"
           }
         ]
       },
-      "Wire327": {
+      "Wire333": {
         "additionalProperties": {
-          "$ref": "#/components/schemas/Wire328"
+          "$ref": "#/components/schemas/Wire334"
         },
         "properties": {},
         "type": "object"
       },
-      "Wire328": {
+      "Wire334": {
         "anyOf": [
           {
             "enum": [
@@ -15936,33 +16264,20 @@
             "type": "boolean"
           },
           {
-            "$ref": "#/components/schemas/Wire327"
+            "$ref": "#/components/schemas/Wire333"
           },
           {
-            "$ref": "#/components/schemas/Wire329"
+            "$ref": "#/components/schemas/Wire335"
           }
         ]
       },
-      "Wire329": {
+      "Wire335": {
         "items": {
-          "$ref": "#/components/schemas/Wire326"
+          "$ref": "#/components/schemas/Wire332"
         },
         "type": "array"
       },
-      "Wire33": {
-        "anyOf": [
-          {
-            "enum": [
-              null
-            ],
-            "nullable": true
-          },
-          {
-            "$ref": "#/components/schemas/Wire34"
-          }
-        ]
-      },
-      "Wire330": {
+      "Wire336": {
         "anyOf": [
           {
             "enum": [
@@ -15984,19 +16299,19 @@
           }
         ]
       },
-      "Wire331": {
+      "Wire337": {
         "items": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire338"
         },
         "type": "array"
       },
-      "Wire332": {
+      "Wire338": {
         "properties": {
           "created_at": {
             "type": "string"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire333"
+            "$ref": "#/components/schemas/Wire339"
           },
           "id": {
             "type": "string"
@@ -16040,20 +16355,39 @@
         ],
         "type": "object"
       },
-      "Wire333": {
+      "Wire339": {
         "items": {
-          "$ref": "#/components/schemas/Wire334"
+          "$ref": "#/components/schemas/Wire340"
         },
         "type": "array"
       },
-      "Wire334": {
+      "Wire34": {
+        "properties": {
+          "avatar_url": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name",
+          "avatar_url"
+        ],
+        "type": "object"
+      },
+      "Wire340": {
         "additionalProperties": {},
         "properties": {
           "block_id": {
             "$ref": "#/components/schemas/Wire9"
           },
           "exercise": {
-            "$ref": "#/components/schemas/Wire322"
+            "$ref": "#/components/schemas/Wire328"
           },
           "exercise_id": {
             "type": "string"
@@ -16062,7 +16396,7 @@
             "type": "string"
           },
           "measure_type": {
-            "$ref": "#/components/schemas/Wire330"
+            "$ref": "#/components/schemas/Wire336"
           },
           "order": {
             "type": "number"
@@ -16083,7 +16417,7 @@
             "type": "number"
           },
           "rir_override": {
-            "$ref": "#/components/schemas/Wire326"
+            "$ref": "#/components/schemas/Wire332"
           },
           "sets": {
             "type": "number"
@@ -16101,7 +16435,7 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "timed_config": {
-            "$ref": "#/components/schemas/Wire326"
+            "$ref": "#/components/schemas/Wire332"
           },
           "training_id": {
             "type": "string"
@@ -16129,32 +16463,32 @@
         ],
         "type": "object"
       },
-      "Wire335": {
+      "Wire341": {
         "items": {
           "type": "string"
         },
         "type": "array"
       },
-      "Wire336": {
+      "Wire342": {
         "items": {
-          "$ref": "#/components/schemas/Wire337"
+          "$ref": "#/components/schemas/Wire343"
         },
         "type": "array"
       },
-      "Wire337": {
+      "Wire343": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire338"
+            "$ref": "#/components/schemas/Wire344"
           },
           {
-            "$ref": "#/components/schemas/Wire341"
+            "$ref": "#/components/schemas/Wire347"
           }
         ]
       },
-      "Wire338": {
+      "Wire344": {
         "properties": {
           "block": {
-            "$ref": "#/components/schemas/Wire339"
+            "$ref": "#/components/schemas/Wire345"
           },
           "block_id": {
             "$ref": "#/components/schemas/Wire75"
@@ -16172,7 +16506,7 @@
             "type": "string"
           },
           "order": {
-            "$ref": "#/components/schemas/Wire252"
+            "$ref": "#/components/schemas/Wire258"
           },
           "position_in_block": {
             "$ref": "#/components/schemas/Wire76"
@@ -16187,7 +16521,7 @@
         ],
         "type": "object"
       },
-      "Wire339": {
+      "Wire345": {
         "anyOf": [
           {
             "enum": [
@@ -16196,30 +16530,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire340"
+            "$ref": "#/components/schemas/Wire346"
           }
         ]
       },
-      "Wire34": {
-        "properties": {
-          "avatar_url": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "first_name": {
-            "type": "string"
-          },
-          "last_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "first_name",
-          "last_name",
-          "avatar_url"
-        ],
-        "type": "object"
-      },
-      "Wire340": {
+      "Wire346": {
         "properties": {
           "id": {
             "type": "string"
@@ -16253,10 +16568,10 @@
         ],
         "type": "object"
       },
-      "Wire341": {
+      "Wire347": {
         "properties": {
           "exercises": {
-            "$ref": "#/components/schemas/Wire342"
+            "$ref": "#/components/schemas/Wire348"
           },
           "id": {
             "type": "string"
@@ -16298,13 +16613,13 @@
         ],
         "type": "object"
       },
-      "Wire342": {
+      "Wire348": {
         "items": {
-          "$ref": "#/components/schemas/Wire284"
+          "$ref": "#/components/schemas/Wire290"
         },
         "type": "array"
       },
-      "Wire343": {
+      "Wire349": {
         "properties": {
           "accentColor": {
             "$ref": "#/components/schemas/Wire9"
@@ -16316,7 +16631,7 @@
             "$ref": "#/components/schemas/Wire9"
           },
           "blocks": {
-            "$ref": "#/components/schemas/Wire348"
+            "$ref": "#/components/schemas/Wire354"
           },
           "completed": {
             "enum": [
@@ -16341,10 +16656,10 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire346"
+            "$ref": "#/components/schemas/Wire352"
           },
           "group": {
-            "$ref": "#/components/schemas/Wire344"
+            "$ref": "#/components/schemas/Wire350"
           },
           "group_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -16359,7 +16674,7 @@
             ]
           },
           "items": {
-            "$ref": "#/components/schemas/Wire336"
+            "$ref": "#/components/schemas/Wire342"
           },
           "level": {
             "enum": [
@@ -16432,7 +16747,7 @@
         ],
         "type": "object"
       },
-      "Wire344": {
+      "Wire35": {
         "anyOf": [
           {
             "enum": [
@@ -16441,11 +16756,24 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire345"
+            "$ref": "#/components/schemas/Wire36"
           }
         ]
       },
-      "Wire345": {
+      "Wire350": {
+        "anyOf": [
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          },
+          {
+            "$ref": "#/components/schemas/Wire351"
+          }
+        ]
+      },
+      "Wire351": {
         "properties": {
           "id": {
             "type": "string"
@@ -16460,16 +16788,16 @@
         ],
         "type": "object"
       },
-      "Wire346": {
+      "Wire352": {
         "items": {
-          "$ref": "#/components/schemas/Wire347"
+          "$ref": "#/components/schemas/Wire353"
         },
         "type": "array"
       },
-      "Wire347": {
+      "Wire353": {
         "properties": {
           "block": {
-            "$ref": "#/components/schemas/Wire339"
+            "$ref": "#/components/schemas/Wire345"
           },
           "block_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -16484,7 +16812,7 @@
             "type": "string"
           },
           "measure_type": {
-            "$ref": "#/components/schemas/Wire330"
+            "$ref": "#/components/schemas/Wire336"
           },
           "order": {
             "type": "number"
@@ -16548,20 +16876,20 @@
         ],
         "type": "object"
       },
-      "Wire348": {
+      "Wire354": {
         "items": {
-          "$ref": "#/components/schemas/Wire349"
+          "$ref": "#/components/schemas/Wire355"
         },
         "type": "array"
       },
-      "Wire349": {
+      "Wire355": {
         "properties": {
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire350"
+            "$ref": "#/components/schemas/Wire356"
           },
           "id": {
             "type": "string"
@@ -16606,26 +16934,13 @@
         ],
         "type": "object"
       },
-      "Wire35": {
-        "anyOf": [
-          {
-            "enum": [
-              null
-            ],
-            "nullable": true
-          },
-          {
-            "$ref": "#/components/schemas/Wire36"
-          }
-        ]
-      },
-      "Wire350": {
+      "Wire356": {
         "items": {
-          "$ref": "#/components/schemas/Wire351"
+          "$ref": "#/components/schemas/Wire357"
         },
         "type": "array"
       },
-      "Wire351": {
+      "Wire357": {
         "additionalProperties": {},
         "properties": {
           "block_id": {
@@ -16641,7 +16956,7 @@
             "type": "string"
           },
           "measure_type": {
-            "$ref": "#/components/schemas/Wire330"
+            "$ref": "#/components/schemas/Wire336"
           },
           "order": {
             "type": "number"
@@ -16704,7 +17019,7 @@
         ],
         "type": "object"
       },
-      "Wire352": {
+      "Wire358": {
         "properties": {
           "date": {
             "type": "string"
@@ -16716,7 +17031,7 @@
             ]
           },
           "trainings": {
-            "$ref": "#/components/schemas/Wire353"
+            "$ref": "#/components/schemas/Wire359"
           }
         },
         "required": [
@@ -16726,80 +17041,11 @@
         ],
         "type": "object"
       },
-      "Wire353": {
-        "items": {
-          "$ref": "#/components/schemas/Wire318"
-        },
-        "type": "array"
-      },
-      "Wire354": {
-        "properties": {
-          "tags": {
-            "$ref": "#/components/schemas/Wire43"
-          }
-        },
-        "required": [
-          "tags"
-        ],
-        "type": "object"
-      },
-      "Wire355": {
-        "properties": {
-          "affected_count": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "affected_count"
-        ],
-        "type": "object"
-      },
-      "Wire356": {
-        "properties": {
-          "types": {
-            "$ref": "#/components/schemas/Wire357"
-          }
-        },
-        "required": [
-          "types"
-        ],
-        "type": "object"
-      },
-      "Wire357": {
-        "items": {
-          "$ref": "#/components/schemas/Wire358"
-        },
-        "type": "array"
-      },
-      "Wire358": {
-        "properties": {
-          "color": {
-            "type": "string"
-          },
-          "value": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "value",
-          "color"
-        ],
-        "type": "object"
-      },
       "Wire359": {
-        "properties": {
-          "affected_count": {
-            "type": "number"
-          },
-          "value": {
-            "type": "string"
-          }
+        "items": {
+          "$ref": "#/components/schemas/Wire324"
         },
-        "required": [
-          "value",
-          "affected_count"
-        ],
-        "type": "object"
+        "type": "array"
       },
       "Wire36": {
         "properties": {
@@ -16822,16 +17068,12 @@
       },
       "Wire360": {
         "properties": {
-          "affected_count": {
-            "type": "number"
-          },
-          "values": {
+          "tags": {
             "$ref": "#/components/schemas/Wire43"
           }
         },
         "required": [
-          "values",
-          "affected_count"
+          "tags"
         ],
         "type": "object"
       },
@@ -16839,18 +17081,31 @@
         "properties": {
           "affected_count": {
             "type": "number"
-          },
-          "value": {
-            "type": "string"
           }
         },
         "required": [
-          "value",
           "affected_count"
         ],
         "type": "object"
       },
       "Wire362": {
+        "properties": {
+          "types": {
+            "$ref": "#/components/schemas/Wire363"
+          }
+        },
+        "required": [
+          "types"
+        ],
+        "type": "object"
+      },
+      "Wire363": {
+        "items": {
+          "$ref": "#/components/schemas/Wire364"
+        },
+        "type": "array"
+      },
+      "Wire364": {
         "properties": {
           "color": {
             "type": "string"
@@ -16865,7 +17120,7 @@
         ],
         "type": "object"
       },
-      "Wire363": {
+      "Wire365": {
         "properties": {
           "affected_count": {
             "type": "number"
@@ -16880,7 +17135,7 @@
         ],
         "type": "object"
       },
-      "Wire364": {
+      "Wire366": {
         "properties": {
           "affected_count": {
             "type": "number"
@@ -16895,26 +17150,99 @@
         ],
         "type": "object"
       },
-      "Wire365": {
+      "Wire367": {
+        "properties": {
+          "affected_count": {
+            "type": "number"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "affected_count"
+        ],
+        "type": "object"
+      },
+      "Wire368": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "color"
+        ],
+        "type": "object"
+      },
+      "Wire369": {
+        "properties": {
+          "affected_count": {
+            "type": "number"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "affected_count"
+        ],
+        "type": "object"
+      },
+      "Wire37": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire366"
+            "enum": [
+              null
+            ],
+            "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire377"
-          },
-          {
-            "$ref": "#/components/schemas/Wire378"
+            "$ref": "#/components/schemas/Wire38"
           }
         ]
       },
-      "Wire366": {
+      "Wire370": {
+        "properties": {
+          "affected_count": {
+            "type": "number"
+          },
+          "values": {
+            "$ref": "#/components/schemas/Wire43"
+          }
+        },
+        "required": [
+          "values",
+          "affected_count"
+        ],
+        "type": "object"
+      },
+      "Wire371": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Wire372"
+          },
+          {
+            "$ref": "#/components/schemas/Wire383"
+          },
+          {
+            "$ref": "#/components/schemas/Wire384"
+          }
+        ]
+      },
+      "Wire372": {
         "properties": {
           "accentColor": {
             "$ref": "#/components/schemas/Wire9"
           },
           "blocks": {
-            "$ref": "#/components/schemas/Wire371"
+            "$ref": "#/components/schemas/Wire377"
           },
           "cooldown_description": {
             "$ref": "#/components/schemas/Wire9"
@@ -16933,10 +17261,10 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire367"
+            "$ref": "#/components/schemas/Wire373"
           },
           "group": {
-            "$ref": "#/components/schemas/Wire344"
+            "$ref": "#/components/schemas/Wire350"
           },
           "group_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -16951,7 +17279,7 @@
             ]
           },
           "items": {
-            "$ref": "#/components/schemas/Wire373"
+            "$ref": "#/components/schemas/Wire379"
           },
           "level": {
             "enum": [
@@ -17014,16 +17342,16 @@
         ],
         "type": "object"
       },
-      "Wire367": {
+      "Wire373": {
         "items": {
-          "$ref": "#/components/schemas/Wire368"
+          "$ref": "#/components/schemas/Wire374"
         },
         "type": "array"
       },
-      "Wire368": {
+      "Wire374": {
         "properties": {
           "block": {
-            "$ref": "#/components/schemas/Wire369"
+            "$ref": "#/components/schemas/Wire375"
           },
           "block_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -17038,7 +17366,7 @@
             "type": "string"
           },
           "measure_type": {
-            "$ref": "#/components/schemas/Wire330"
+            "$ref": "#/components/schemas/Wire336"
           },
           "order": {
             "type": "number"
@@ -17102,7 +17430,7 @@
         ],
         "type": "object"
       },
-      "Wire369": {
+      "Wire375": {
         "anyOf": [
           {
             "enum": [
@@ -17111,24 +17439,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire370"
+            "$ref": "#/components/schemas/Wire376"
           }
         ]
       },
-      "Wire37": {
-        "anyOf": [
-          {
-            "enum": [
-              null
-            ],
-            "nullable": true
-          },
-          {
-            "$ref": "#/components/schemas/Wire38"
-          }
-        ]
-      },
-      "Wire370": {
+      "Wire376": {
         "properties": {
           "id": {
             "type": "string"
@@ -17162,20 +17477,20 @@
         ],
         "type": "object"
       },
-      "Wire371": {
+      "Wire377": {
         "items": {
-          "$ref": "#/components/schemas/Wire372"
+          "$ref": "#/components/schemas/Wire378"
         },
         "type": "array"
       },
-      "Wire372": {
+      "Wire378": {
         "properties": {
           "created_at": {
             "format": "date-time",
             "type": "string"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire350"
+            "$ref": "#/components/schemas/Wire356"
           },
           "id": {
             "type": "string"
@@ -17220,26 +17535,45 @@
         ],
         "type": "object"
       },
-      "Wire373": {
+      "Wire379": {
         "items": {
-          "$ref": "#/components/schemas/Wire374"
+          "$ref": "#/components/schemas/Wire380"
         },
         "type": "array"
       },
-      "Wire374": {
+      "Wire38": {
+        "properties": {
+          "avatar_url": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "first_name",
+          "last_name",
+          "avatar_url"
+        ],
+        "type": "object"
+      },
+      "Wire380": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Wire375"
+            "$ref": "#/components/schemas/Wire381"
           },
           {
-            "$ref": "#/components/schemas/Wire376"
+            "$ref": "#/components/schemas/Wire382"
           }
         ]
       },
-      "Wire375": {
+      "Wire381": {
         "properties": {
           "block": {
-            "$ref": "#/components/schemas/Wire369"
+            "$ref": "#/components/schemas/Wire375"
           },
           "block_id": {
             "$ref": "#/components/schemas/Wire75"
@@ -17257,7 +17591,7 @@
             "type": "string"
           },
           "order": {
-            "$ref": "#/components/schemas/Wire252"
+            "$ref": "#/components/schemas/Wire258"
           },
           "position_in_block": {
             "$ref": "#/components/schemas/Wire76"
@@ -17272,10 +17606,10 @@
         ],
         "type": "object"
       },
-      "Wire376": {
+      "Wire382": {
         "properties": {
           "exercises": {
-            "$ref": "#/components/schemas/Wire342"
+            "$ref": "#/components/schemas/Wire348"
           },
           "id": {
             "type": "string"
@@ -17317,7 +17651,7 @@
         ],
         "type": "object"
       },
-      "Wire377": {
+      "Wire383": {
         "properties": {
           "accentColor": {
             "$ref": "#/components/schemas/Wire9"
@@ -17329,7 +17663,7 @@
             "$ref": "#/components/schemas/Wire9"
           },
           "blocks": {
-            "$ref": "#/components/schemas/Wire331"
+            "$ref": "#/components/schemas/Wire337"
           },
           "cooldown_description": {
             "$ref": "#/components/schemas/Wire9"
@@ -17347,7 +17681,7 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire320"
+            "$ref": "#/components/schemas/Wire326"
           },
           "group_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -17362,7 +17696,7 @@
             ]
           },
           "items": {
-            "$ref": "#/components/schemas/Wire336"
+            "$ref": "#/components/schemas/Wire342"
           },
           "level": {
             "enum": [
@@ -17381,10 +17715,10 @@
             ]
           },
           "rir_proposal": {
-            "$ref": "#/components/schemas/Wire326"
+            "$ref": "#/components/schemas/Wire332"
           },
           "tags": {
-            "$ref": "#/components/schemas/Wire323"
+            "$ref": "#/components/schemas/Wire329"
           },
           "total_volume": {
             "$ref": "#/components/schemas/Wire60"
@@ -17393,7 +17727,7 @@
             "type": "string"
           },
           "types": {
-            "$ref": "#/components/schemas/Wire335"
+            "$ref": "#/components/schemas/Wire341"
           },
           "updated_at": {
             "type": "string"
@@ -17434,7 +17768,7 @@
         ],
         "type": "object"
       },
-      "Wire378": {
+      "Wire384": {
         "properties": {
           "accentColor": {
             "$ref": "#/components/schemas/Wire9"
@@ -17446,7 +17780,7 @@
             "$ref": "#/components/schemas/Wire9"
           },
           "blocks": {
-            "$ref": "#/components/schemas/Wire348"
+            "$ref": "#/components/schemas/Wire354"
           },
           "cooldown_description": {
             "$ref": "#/components/schemas/Wire9"
@@ -17465,10 +17799,10 @@
             "$ref": "#/components/schemas/Wire60"
           },
           "exercises": {
-            "$ref": "#/components/schemas/Wire346"
+            "$ref": "#/components/schemas/Wire352"
           },
           "group": {
-            "$ref": "#/components/schemas/Wire344"
+            "$ref": "#/components/schemas/Wire350"
           },
           "group_id": {
             "$ref": "#/components/schemas/Wire9"
@@ -17483,7 +17817,7 @@
             ]
           },
           "items": {
-            "$ref": "#/components/schemas/Wire336"
+            "$ref": "#/components/schemas/Wire342"
           },
           "level": {
             "enum": [
@@ -17555,7 +17889,7 @@
         ],
         "type": "object"
       },
-      "Wire379": {
+      "Wire385": {
         "properties": {
           "message": {
             "type": "string"
@@ -17566,29 +17900,10 @@
         ],
         "type": "object"
       },
-      "Wire38": {
-        "properties": {
-          "avatar_url": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "first_name": {
-            "type": "string"
-          },
-          "last_name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "first_name",
-          "last_name",
-          "avatar_url"
-        ],
-        "type": "object"
-      },
-      "Wire380": {
+      "Wire386": {
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/Wire381"
+            "$ref": "#/components/schemas/Wire387"
           },
           "limit": {
             "type": "number"
@@ -17612,13 +17927,13 @@
         ],
         "type": "object"
       },
-      "Wire381": {
+      "Wire387": {
         "items": {
-          "$ref": "#/components/schemas/Wire382"
+          "$ref": "#/components/schemas/Wire388"
         },
         "type": "array"
       },
-      "Wire382": {
+      "Wire388": {
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -17643,7 +17958,7 @@
             ]
           },
           "profile": {
-            "$ref": "#/components/schemas/Wire383"
+            "$ref": "#/components/schemas/Wire389"
           },
           "role": {
             "enum": [
@@ -17664,7 +17979,7 @@
         ],
         "type": "object"
       },
-      "Wire383": {
+      "Wire389": {
         "anyOf": [
           {
             "enum": [
@@ -17673,11 +17988,25 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire384"
+            "$ref": "#/components/schemas/Wire390"
           }
         ]
       },
-      "Wire384": {
+      "Wire39": {
+        "anyOf": [
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          },
+          {
+            "format": "date-time",
+            "type": "string"
+          }
+        ]
+      },
+      "Wire390": {
         "properties": {
           "avatar_url": {
             "$ref": "#/components/schemas/Wire9"
@@ -17696,7 +18025,7 @@
         ],
         "type": "object"
       },
-      "Wire385": {
+      "Wire391": {
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -17721,7 +18050,7 @@
             ]
           },
           "profile": {
-            "$ref": "#/components/schemas/Wire386"
+            "$ref": "#/components/schemas/Wire392"
           },
           "role": {
             "enum": [
@@ -17742,7 +18071,7 @@
         ],
         "type": "object"
       },
-      "Wire386": {
+      "Wire392": {
         "anyOf": [
           {
             "enum": [
@@ -17751,11 +18080,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire387"
+            "$ref": "#/components/schemas/Wire393"
           }
         ]
       },
-      "Wire387": {
+      "Wire393": {
         "properties": {
           "avatar_url": {
             "$ref": "#/components/schemas/Wire9"
@@ -17774,7 +18103,7 @@
         ],
         "type": "object"
       },
-      "Wire388": {
+      "Wire394": {
         "properties": {
           "message": {
             "type": "string"
@@ -17785,7 +18114,7 @@
         ],
         "type": "object"
       },
-      "Wire389": {
+      "Wire395": {
         "properties": {
           "message": {
             "type": "string"
@@ -17796,21 +18125,7 @@
         ],
         "type": "object"
       },
-      "Wire39": {
-        "anyOf": [
-          {
-            "enum": [
-              null
-            ],
-            "nullable": true
-          },
-          {
-            "format": "date-time",
-            "type": "string"
-          }
-        ]
-      },
-      "Wire390": {
+      "Wire396": {
         "properties": {
           "message": {
             "type": "string"
@@ -17821,7 +18136,7 @@
         ],
         "type": "object"
       },
-      "Wire391": {
+      "Wire397": {
         "properties": {
           "message": {
             "type": "string"
@@ -17832,10 +18147,10 @@
         ],
         "type": "object"
       },
-      "Wire392": {
+      "Wire398": {
         "properties": {
           "data": {
-            "$ref": "#/components/schemas/Wire393"
+            "$ref": "#/components/schemas/Wire399"
           },
           "limit": {
             "type": "number"
@@ -17859,13 +18174,51 @@
         ],
         "type": "object"
       },
-      "Wire393": {
+      "Wire399": {
         "items": {
-          "$ref": "#/components/schemas/Wire394"
+          "$ref": "#/components/schemas/Wire400"
         },
         "type": "array"
       },
-      "Wire394": {
+      "Wire4": {
+        "properties": {
+          "criteria_types": {
+            "$ref": "#/components/schemas/Wire5"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "total",
+          "criteria_types"
+        ],
+        "type": "object"
+      },
+      "Wire40": {
+        "properties": {
+          "approved": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "pending": {
+            "type": "number"
+          },
+          "rejected": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "pending",
+          "approved",
+          "rejected",
+          "failed"
+        ],
+        "type": "object"
+      },
+      "Wire400": {
         "properties": {
           "active_admins_count": {
             "type": "number"
@@ -17922,7 +18275,7 @@
         ],
         "type": "object"
       },
-      "Wire395": {
+      "Wire401": {
         "properties": {
           "id": {
             "type": "string"
@@ -17944,10 +18297,10 @@
         ],
         "type": "object"
       },
-      "Wire396": {
+      "Wire402": {
         "properties": {
           "active_admins": {
-            "$ref": "#/components/schemas/Wire397"
+            "$ref": "#/components/schemas/Wire403"
           },
           "client_id": {
             "type": "string"
@@ -17959,13 +18312,13 @@
         ],
         "type": "object"
       },
-      "Wire397": {
+      "Wire403": {
         "items": {
-          "$ref": "#/components/schemas/Wire398"
+          "$ref": "#/components/schemas/Wire404"
         },
         "type": "array"
       },
-      "Wire398": {
+      "Wire404": {
         "properties": {
           "assigned_at": {
             "format": "date-time",
@@ -17978,7 +18331,7 @@
             "type": "string"
           },
           "profile": {
-            "$ref": "#/components/schemas/Wire399"
+            "$ref": "#/components/schemas/Wire405"
           }
         },
         "required": [
@@ -17989,7 +18342,7 @@
         ],
         "type": "object"
       },
-      "Wire399": {
+      "Wire405": {
         "anyOf": [
           {
             "enum": [
@@ -17998,49 +18351,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire400"
+            "$ref": "#/components/schemas/Wire406"
           }
         ]
       },
-      "Wire4": {
-        "properties": {
-          "criteria_types": {
-            "$ref": "#/components/schemas/Wire5"
-          },
-          "total": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "total",
-          "criteria_types"
-        ],
-        "type": "object"
-      },
-      "Wire40": {
-        "properties": {
-          "approved": {
-            "type": "number"
-          },
-          "failed": {
-            "type": "number"
-          },
-          "pending": {
-            "type": "number"
-          },
-          "rejected": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "pending",
-          "approved",
-          "rejected",
-          "failed"
-        ],
-        "type": "object"
-      },
-      "Wire400": {
+      "Wire406": {
         "properties": {
           "avatar_url": {
             "$ref": "#/components/schemas/Wire9"
@@ -18059,7 +18374,7 @@
         ],
         "type": "object"
       },
-      "Wire401": {
+      "Wire407": {
         "properties": {
           "auth_provider": {
             "enum": [
@@ -18069,7 +18384,7 @@
             ]
           },
           "bodyMetrics": {
-            "$ref": "#/components/schemas/Wire240"
+            "$ref": "#/components/schemas/Wire246"
           },
           "created_at": {
             "format": "date-time",
@@ -18131,7 +18446,7 @@
             "$ref": "#/components/schemas/Wire39"
           },
           "streak": {
-            "$ref": "#/components/schemas/Wire402"
+            "$ref": "#/components/schemas/Wire408"
           },
           "updated_at": {
             "format": "date-time",
@@ -18160,7 +18475,7 @@
         ],
         "type": "object"
       },
-      "Wire402": {
+      "Wire408": {
         "anyOf": [
           {
             "enum": [
@@ -18169,11 +18484,11 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire308"
+            "$ref": "#/components/schemas/Wire314"
           }
         ]
       },
-      "Wire403": {
+      "Wire409": {
         "anyOf": [
           {
             "enum": [
@@ -18182,14 +18497,20 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire404"
+            "$ref": "#/components/schemas/Wire410"
           },
           {
-            "$ref": "#/components/schemas/Wire408"
+            "$ref": "#/components/schemas/Wire414"
           }
         ]
       },
-      "Wire404": {
+      "Wire41": {
+        "items": {
+          "$ref": "#/components/schemas/Wire42"
+        },
+        "type": "array"
+      },
+      "Wire410": {
         "properties": {
           "admin_reply_sent_at": {
             "enum": [
@@ -18211,7 +18532,7 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire405"
+            "$ref": "#/components/schemas/Wire411"
           },
           "exercises_completed": {
             "$ref": "#/components/schemas/Wire95"
@@ -18260,13 +18581,13 @@
         ],
         "type": "object"
       },
-      "Wire405": {
+      "Wire411": {
         "items": {
-          "$ref": "#/components/schemas/Wire406"
+          "$ref": "#/components/schemas/Wire412"
         },
         "type": "array"
       },
-      "Wire406": {
+      "Wire412": {
         "properties": {
           "captured_at": {
             "format": "date-time",
@@ -18280,7 +18601,7 @@
             "type": "string"
           },
           "diet": {
-            "$ref": "#/components/schemas/Wire407"
+            "$ref": "#/components/schemas/Wire413"
           },
           "diet_id": {
             "type": "string"
@@ -18306,7 +18627,7 @@
         ],
         "type": "object"
       },
-      "Wire407": {
+      "Wire413": {
         "properties": {
           "created_at": {
             "type": "string"
@@ -18372,7 +18693,7 @@
         ],
         "type": "object"
       },
-      "Wire408": {
+      "Wire414": {
         "properties": {
           "admin_reply_sent_at": {
             "$ref": "#/components/schemas/Wire39"
@@ -18392,10 +18713,10 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire405"
+            "$ref": "#/components/schemas/Wire411"
           },
           "exercises_completed": {
-            "$ref": "#/components/schemas/Wire409"
+            "$ref": "#/components/schemas/Wire415"
           },
           "id": {
             "type": "string"
@@ -18404,7 +18725,7 @@
             "$ref": "#/components/schemas/Wire43"
           },
           "meals_completed_details": {
-            "$ref": "#/components/schemas/Wire411"
+            "$ref": "#/components/schemas/Wire417"
           },
           "notes": {
             "$ref": "#/components/schemas/Wire9"
@@ -18445,19 +18766,13 @@
         ],
         "type": "object"
       },
-      "Wire409": {
+      "Wire415": {
         "items": {
-          "$ref": "#/components/schemas/Wire410"
+          "$ref": "#/components/schemas/Wire416"
         },
         "type": "array"
       },
-      "Wire41": {
-        "items": {
-          "$ref": "#/components/schemas/Wire42"
-        },
-        "type": "array"
-      },
-      "Wire410": {
+      "Wire416": {
         "properties": {
           "exercise_id": {
             "type": "string"
@@ -18472,13 +18787,13 @@
         ],
         "type": "object"
       },
-      "Wire411": {
+      "Wire417": {
         "items": {
-          "$ref": "#/components/schemas/Wire412"
+          "$ref": "#/components/schemas/Wire418"
         },
         "type": "array"
       },
-      "Wire412": {
+      "Wire418": {
         "properties": {
           "meal_id": {
             "type": "string"
@@ -18493,47 +18808,11 @@
         ],
         "type": "object"
       },
-      "Wire413": {
+      "Wire419": {
         "items": {
-          "$ref": "#/components/schemas/Wire414"
+          "$ref": "#/components/schemas/Wire420"
         },
         "type": "array"
-      },
-      "Wire414": {
-        "properties": {
-          "date": {
-            "type": "string"
-          },
-          "value": {
-            "$ref": "#/components/schemas/Wire60"
-          }
-        },
-        "required": [
-          "date",
-          "value"
-        ],
-        "type": "object"
-      },
-      "Wire415": {
-        "items": {
-          "$ref": "#/components/schemas/Wire416"
-        },
-        "type": "array"
-      },
-      "Wire416": {
-        "properties": {
-          "date": {
-            "type": "string"
-          },
-          "value": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "date",
-          "value"
-        ],
-        "type": "object"
       },
       "Wire42": {
         "properties": {
@@ -18554,6 +18833,42 @@
           "resource_id",
           "has_pending_approval",
           "pending_approval_actions"
+        ],
+        "type": "object"
+      },
+      "Wire420": {
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Wire60"
+          }
+        },
+        "required": [
+          "date",
+          "value"
+        ],
+        "type": "object"
+      },
+      "Wire421": {
+        "items": {
+          "$ref": "#/components/schemas/Wire422"
+        },
+        "type": "array"
+      },
+      "Wire422": {
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "value"
         ],
         "type": "object"
       },
@@ -21252,7 +21567,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire392"
+                      "$ref": "#/components/schemas/Wire398"
                     },
                     "success": {
                       "enum": [
@@ -21391,7 +21706,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire401"
+                      "$ref": "#/components/schemas/Wire407"
                     },
                     "success": {
                       "enum": [
@@ -21487,7 +21802,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire395"
+                      "$ref": "#/components/schemas/Wire401"
                     },
                     "success": {
                       "enum": [
@@ -21553,7 +21868,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire396"
+                      "$ref": "#/components/schemas/Wire402"
                     },
                     "success": {
                       "enum": [
@@ -21647,7 +21962,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire396"
+                      "$ref": "#/components/schemas/Wire402"
                     },
                     "success": {
                       "enum": [
@@ -21945,7 +22260,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire239"
+                      "$ref": "#/components/schemas/Wire245"
                     },
                     "success": {
                       "enum": [
@@ -22019,7 +22334,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire235"
+                      "$ref": "#/components/schemas/Wire241"
                     },
                     "success": {
                       "enum": [
@@ -22121,7 +22436,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire415"
+                      "$ref": "#/components/schemas/Wire421"
                     },
                     "success": {
                       "enum": [
@@ -22167,6 +22482,100 @@
         ]
       }
     },
+    "/api/v1/admin/clients/{id}/metrics/overview": {
+      "get": {
+        "operationId": "UsersController_getClientMetricsOverview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "example": "2026-09-16",
+              "type": "string"
+            }
+          },
+          {
+            "description": "90 civil days per chart page, newest first",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Wire235"
+                    },
+                    "success": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean"
+                    },
+                    "timestamp": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data",
+                    "timestamp"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Respuesta HTTP serializada"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Rechazo de validación/autorización, conflicto o fallo temporal; se conserva el código HTTP real y el recibo público cuando aplica."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Comparativas y gráficos paginados de métricas",
+        "tags": [
+          "Admin - Users"
+        ]
+      }
+    },
     "/api/v1/admin/clients/{id}/metrics/weight-history": {
       "get": {
         "operationId": "UsersController_getClientWeightHistory",
@@ -22187,7 +22596,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire413"
+                      "$ref": "#/components/schemas/Wire419"
                     },
                     "success": {
                       "enum": [
@@ -22271,7 +22680,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire235"
+                      "$ref": "#/components/schemas/Wire241"
                     },
                     "success": {
                       "enum": [
@@ -22367,7 +22776,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire401"
+                      "$ref": "#/components/schemas/Wire407"
                     },
                     "success": {
                       "enum": [
@@ -22463,7 +22872,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire403"
+                      "$ref": "#/components/schemas/Wire409"
                     },
                     "success": {
                       "enum": [
@@ -22549,7 +22958,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire285"
+                      "$ref": "#/components/schemas/Wire291"
                     },
                     "success": {
                       "enum": [
@@ -22646,7 +23055,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire379"
+                      "$ref": "#/components/schemas/Wire385"
                     },
                     "success": {
                       "enum": [
@@ -22803,7 +23212,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire380"
+                      "$ref": "#/components/schemas/Wire386"
                     },
                     "success": {
                       "enum": [
@@ -22887,7 +23296,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire385"
+                      "$ref": "#/components/schemas/Wire391"
                     },
                     "success": {
                       "enum": [
@@ -22973,7 +23382,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire385"
+                      "$ref": "#/components/schemas/Wire391"
                     },
                     "success": {
                       "enum": [
@@ -23067,7 +23476,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire385"
+                      "$ref": "#/components/schemas/Wire391"
                     },
                     "success": {
                       "enum": [
@@ -23153,7 +23562,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire389"
+                      "$ref": "#/components/schemas/Wire395"
                     },
                     "success": {
                       "enum": [
@@ -23239,7 +23648,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire391"
+                      "$ref": "#/components/schemas/Wire397"
                     },
                     "success": {
                       "enum": [
@@ -23343,7 +23752,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire388"
+                      "$ref": "#/components/schemas/Wire394"
                     },
                     "success": {
                       "enum": [
@@ -23429,7 +23838,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire390"
+                      "$ref": "#/components/schemas/Wire396"
                     },
                     "success": {
                       "enum": [
@@ -31716,7 +32125,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire239"
+                      "$ref": "#/components/schemas/Wire245"
                     },
                     "success": {
                       "enum": [
@@ -31781,7 +32190,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire235"
+                      "$ref": "#/components/schemas/Wire241"
                     },
                     "success": {
                       "enum": [
@@ -31847,7 +32256,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire236"
+                      "$ref": "#/components/schemas/Wire242"
                     },
                     "success": {
                       "enum": [
@@ -31893,6 +32302,92 @@
         ]
       }
     },
+    "/api/v1/metrics/overview": {
+      "get": {
+        "operationId": "MetricsController_getOverview",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "example": "2026-09-16",
+              "type": "string"
+            }
+          },
+          {
+            "description": "90 civil days per chart page, newest first",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Wire235"
+                    },
+                    "success": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean"
+                    },
+                    "timestamp": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data",
+                    "timestamp"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Respuesta HTTP serializada"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Rechazo de validación/autorización, conflicto o fallo temporal; se conserva el código HTTP real y el recibo público cuando aplica."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Comparativas y gráficos paginados del cliente autenticado",
+        "tags": [
+          "Metrics"
+        ]
+      }
+    },
     "/api/v1/metrics/weight-history": {
       "get": {
         "operationId": "MetricsController_getWeightHistory",
@@ -31904,7 +32399,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire237"
+                      "$ref": "#/components/schemas/Wire243"
                     },
                     "success": {
                       "enum": [
@@ -31961,7 +32456,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire241"
+                      "$ref": "#/components/schemas/Wire247"
                     },
                     "success": {
                       "enum": [
@@ -32093,7 +32588,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire253"
+                      "$ref": "#/components/schemas/Wire259"
                     },
                     "success": {
                       "enum": [
@@ -32203,7 +32698,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire264"
+                      "$ref": "#/components/schemas/Wire270"
                     },
                     "success": {
                       "enum": [
@@ -32260,7 +32755,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire269"
+                      "$ref": "#/components/schemas/Wire275"
                     },
                     "success": {
                       "enum": [
@@ -32317,7 +32812,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire268"
+                      "$ref": "#/components/schemas/Wire274"
                     },
                     "success": {
                       "enum": [
@@ -32374,7 +32869,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire267"
+                      "$ref": "#/components/schemas/Wire273"
                     },
                     "success": {
                       "enum": [
@@ -32441,7 +32936,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire246"
+                      "$ref": "#/components/schemas/Wire252"
                     },
                     "success": {
                       "enum": [
@@ -32554,7 +33049,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire251"
+                      "$ref": "#/components/schemas/Wire257"
                     },
                     "success": {
                       "enum": [
@@ -32611,7 +33106,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire255"
+                      "$ref": "#/components/schemas/Wire261"
                     },
                     "success": {
                       "enum": [
@@ -32668,7 +33163,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire256"
+                      "$ref": "#/components/schemas/Wire262"
                     },
                     "success": {
                       "enum": [
@@ -32733,7 +33228,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire257"
+                      "$ref": "#/components/schemas/Wire263"
                     },
                     "success": {
                       "enum": [
@@ -32799,7 +33294,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire262"
+                      "$ref": "#/components/schemas/Wire268"
                     },
                     "success": {
                       "enum": [
@@ -32873,7 +33368,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire257"
+                      "$ref": "#/components/schemas/Wire263"
                     },
                     "success": {
                       "enum": [
@@ -32949,7 +33444,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire260"
+                      "$ref": "#/components/schemas/Wire266"
                     },
                     "success": {
                       "enum": [
@@ -33015,7 +33510,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire247"
+                      "$ref": "#/components/schemas/Wire253"
                     },
                     "success": {
                       "enum": [
@@ -33072,7 +33567,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire277"
+                      "$ref": "#/components/schemas/Wire283"
                     },
                     "success": {
                       "enum": [
@@ -33137,7 +33632,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire270"
+                      "$ref": "#/components/schemas/Wire276"
                     },
                     "success": {
                       "enum": [
@@ -33202,7 +33697,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire270"
+                      "$ref": "#/components/schemas/Wire276"
                     },
                     "success": {
                       "enum": [
@@ -33259,7 +33754,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire274"
+                      "$ref": "#/components/schemas/Wire280"
                     },
                     "success": {
                       "enum": [
@@ -33326,7 +33821,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire278"
+                      "$ref": "#/components/schemas/Wire284"
                     },
                     "success": {
                       "enum": [
@@ -33410,7 +33905,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire285"
+                      "$ref": "#/components/schemas/Wire291"
                     },
                     "success": {
                       "enum": [
@@ -33486,7 +33981,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire284"
+                      "$ref": "#/components/schemas/Wire290"
                     },
                     "success": {
                       "enum": [
@@ -33577,7 +34072,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire286"
+                      "$ref": "#/components/schemas/Wire292"
                     },
                     "success": {
                       "enum": [
@@ -33661,7 +34156,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire285"
+                      "$ref": "#/components/schemas/Wire291"
                     },
                     "success": {
                       "enum": [
@@ -33752,7 +34247,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire288"
+                      "$ref": "#/components/schemas/Wire294"
                     },
                     "success": {
                       "enum": [
@@ -33836,7 +34331,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire285"
+                      "$ref": "#/components/schemas/Wire291"
                     },
                     "success": {
                       "enum": [
@@ -33893,7 +34388,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire290"
+                      "$ref": "#/components/schemas/Wire296"
                     },
                     "success": {
                       "enum": [
@@ -33946,7 +34441,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire291"
+                      "$ref": "#/components/schemas/Wire297"
                     },
                     "success": {
                       "enum": [
@@ -34018,7 +34513,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire291"
+                      "$ref": "#/components/schemas/Wire297"
                     },
                     "success": {
                       "enum": [
@@ -34145,7 +34640,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire297"
+                      "$ref": "#/components/schemas/Wire303"
                     },
                     "success": {
                       "enum": [
@@ -34220,7 +34715,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire307"
+                      "$ref": "#/components/schemas/Wire313"
                     },
                     "success": {
                       "enum": [
@@ -34340,7 +34835,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire292"
+                      "$ref": "#/components/schemas/Wire298"
                     },
                     "success": {
                       "enum": [
@@ -34406,7 +34901,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire294"
+                      "$ref": "#/components/schemas/Wire300"
                     },
                     "success": {
                       "enum": [
@@ -34492,7 +34987,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire295"
+                      "$ref": "#/components/schemas/Wire301"
                     },
                     "success": {
                       "enum": [
@@ -34569,7 +35064,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire296"
+                      "$ref": "#/components/schemas/Wire302"
                     },
                     "success": {
                       "enum": [
@@ -34635,7 +35130,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire303"
+                      "$ref": "#/components/schemas/Wire309"
                     },
                     "success": {
                       "enum": [
@@ -34729,7 +35224,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire307"
+                      "$ref": "#/components/schemas/Wire313"
                     },
                     "success": {
                       "enum": [
@@ -34825,7 +35320,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire307"
+                      "$ref": "#/components/schemas/Wire313"
                     },
                     "success": {
                       "enum": [
@@ -34921,7 +35416,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire307"
+                      "$ref": "#/components/schemas/Wire313"
                     },
                     "success": {
                       "enum": [
@@ -35017,7 +35512,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire307"
+                      "$ref": "#/components/schemas/Wire313"
                     },
                     "success": {
                       "enum": [
@@ -35094,7 +35589,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire308"
+                      "$ref": "#/components/schemas/Wire314"
                     },
                     "success": {
                       "enum": [
@@ -35160,7 +35655,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire308"
+                      "$ref": "#/components/schemas/Wire314"
                     },
                     "success": {
                       "enum": [
@@ -35217,7 +35712,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire309"
+                      "$ref": "#/components/schemas/Wire315"
                     },
                     "success": {
                       "enum": [
@@ -35281,7 +35776,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire311"
+                      "$ref": "#/components/schemas/Wire317"
                     },
                     "success": {
                       "enum": [
@@ -35393,7 +35888,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire312"
+                      "$ref": "#/components/schemas/Wire318"
                     },
                     "success": {
                       "enum": [
@@ -35578,7 +36073,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire313"
+                      "$ref": "#/components/schemas/Wire319"
                     },
                     "success": {
                       "enum": [
@@ -35643,7 +36138,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire366"
+                      "$ref": "#/components/schemas/Wire372"
                     },
                     "success": {
                       "enum": [
@@ -35709,7 +36204,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire352"
+                      "$ref": "#/components/schemas/Wire358"
                     },
                     "success": {
                       "enum": [
@@ -35776,7 +36271,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire355"
+                      "$ref": "#/components/schemas/Wire361"
                     },
                     "success": {
                       "enum": [
@@ -35832,7 +36327,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire354"
+                      "$ref": "#/components/schemas/Wire360"
                     },
                     "success": {
                       "enum": [
@@ -35899,7 +36394,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire364"
+                      "$ref": "#/components/schemas/Wire370"
                     },
                     "success": {
                       "enum": [
@@ -35966,7 +36461,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire363"
+                      "$ref": "#/components/schemas/Wire369"
                     },
                     "success": {
                       "enum": [
@@ -36032,7 +36527,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire363"
+                      "$ref": "#/components/schemas/Wire369"
                     },
                     "success": {
                       "enum": [
@@ -36098,7 +36593,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire318"
+                      "$ref": "#/components/schemas/Wire324"
                     },
                     "success": {
                       "enum": [
@@ -36155,7 +36650,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire356"
+                      "$ref": "#/components/schemas/Wire362"
                     },
                     "success": {
                       "enum": [
@@ -36222,7 +36717,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire360"
+                      "$ref": "#/components/schemas/Wire366"
                     },
                     "success": {
                       "enum": [
@@ -36289,7 +36784,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire359"
+                      "$ref": "#/components/schemas/Wire365"
                     },
                     "success": {
                       "enum": [
@@ -36355,7 +36850,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire361"
+                      "$ref": "#/components/schemas/Wire367"
                     },
                     "success": {
                       "enum": [
@@ -36431,7 +36926,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire362"
+                      "$ref": "#/components/schemas/Wire368"
                     },
                     "success": {
                       "enum": [
@@ -36588,7 +37083,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire365"
+                      "$ref": "#/components/schemas/Wire371"
                     },
                     "success": {
                       "enum": [
@@ -36662,7 +37157,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire366"
+                      "$ref": "#/components/schemas/Wire372"
                     },
                     "success": {
                       "enum": [
@@ -36792,7 +37287,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire275"
+                      "$ref": "#/components/schemas/Wire281"
                     },
                     "success": {
                       "enum": [
@@ -36858,7 +37353,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire274"
+                      "$ref": "#/components/schemas/Wire280"
                     },
                     "success": {
                       "enum": [
@@ -36925,7 +37420,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire274"
+                      "$ref": "#/components/schemas/Wire280"
                     },
                     "success": {
                       "enum": [
@@ -36991,7 +37486,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire275"
+                      "$ref": "#/components/schemas/Wire281"
                     },
                     "success": {
                       "enum": [
@@ -37076,7 +37571,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire275"
+                      "$ref": "#/components/schemas/Wire281"
                     },
                     "success": {
                       "enum": [

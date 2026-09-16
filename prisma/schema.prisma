@@ -857,10 +857,13 @@ model WeeklyRecap {
   recovery_notes    String?
 
   // Step 4: General feelings
-  mood           String?
-  stress_enabled Boolean @default(false)
-  stress_level   Int?
-  general_notes  String?
+  mood            String?
+  stress_enabled  Boolean @default(false)
+  stress_level    Int?
+  hunger_level    Int?
+  energy_level    Int?
+  digestion_level Int?
+  general_notes   String?
 
   // Improvement section
   improvement_app_rating     Int?

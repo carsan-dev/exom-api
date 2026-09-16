@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 import { UsersService } from './users.service';
+import { MetricsOverviewQueryDto } from '../metrics/dto/metrics-overview-query.dto';
 import { ArchiveClientDto } from './dto/archive-client.dto';
 import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
@@ -422,6 +423,22 @@ export class UsersController {
       admin.role,
       clientId,
       pagination,
+    );
+  }
+
+  @Get('clients/:id/metrics/overview')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Comparativas y gráficos paginados de métricas' })
+  getClientMetricsOverview(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: MetricsOverviewQueryDto,
+  ) {
+    return this.usersService.getClientMetricsOverview(
+      admin.id,
+      admin.role,
+      clientId,
+      query,
     );
   }
 
