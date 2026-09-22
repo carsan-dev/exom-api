@@ -1244,9 +1244,124 @@
       "dataOptional": false,
       "parameters": []
     },
-    "ProgressController_getDayProgress": {
+    "ProgressPhotosController_getOwnHistory": {
       "schema": {
         "$ref": "#/components/schemas/Wire284"
+      },
+      "dataOptional": false,
+      "parameters": []
+    },
+    "ProgressPhotosController_getOwnSession": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire286"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "ProgressPhotosController_createOwnSession": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire286"
+      },
+      "dataOptional": false,
+      "parameters": []
+    },
+    "ProgressPhotosController_associateOwnPhoto": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire288"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "ProgressPhotosController_readPhotoFile": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire289"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "photoId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "AdminProgressPhotosController_getHistory": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire284"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "clientId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "AdminProgressPhotosController_getSession": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire286"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "clientId",
+          "in": "path",
+          "required": true
+        },
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "AdminProgressPhotosController_createSession": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire286"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "clientId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "AdminProgressPhotosController_associatePhoto": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire288"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "clientId",
+          "in": "path",
+          "required": true
+        },
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
+    "ProgressController_getDayProgress": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire304"
       },
       "dataOptional": false,
       "parameters": [
@@ -1259,7 +1374,7 @@
     },
     "ProgressController_getPreviousExercisePerformances": {
       "schema": {
-        "$ref": "#/components/schemas/Wire290"
+        "$ref": "#/components/schemas/Wire310"
       },
       "dataOptional": false,
       "parameters": [
@@ -1277,7 +1392,7 @@
     },
     "ProgressController_markExerciseCompleted": {
       "schema": {
-        "$ref": "#/components/schemas/Wire291"
+        "$ref": "#/components/schemas/Wire311"
       },
       "dataOptional": false,
       "parameters": [
@@ -1295,7 +1410,7 @@
     },
     "ProgressController_completeTraining": {
       "schema": {
-        "$ref": "#/components/schemas/Wire291"
+        "$ref": "#/components/schemas/Wire311"
       },
       "dataOptional": false,
       "parameters": [
@@ -1313,7 +1428,7 @@
     },
     "ProgressController_unmarkExercise": {
       "schema": {
-        "$ref": "#/components/schemas/Wire292"
+        "$ref": "#/components/schemas/Wire312"
       },
       "dataOptional": false,
       "parameters": [
@@ -1341,7 +1456,7 @@
     },
     "ProgressController_markMealCompleted": {
       "schema": {
-        "$ref": "#/components/schemas/Wire291"
+        "$ref": "#/components/schemas/Wire311"
       },
       "dataOptional": false,
       "parameters": [
@@ -1359,7 +1474,7 @@
     },
     "ProgressController_unmarkMeal": {
       "schema": {
-        "$ref": "#/components/schemas/Wire294"
+        "$ref": "#/components/schemas/Wire314"
       },
       "dataOptional": false,
       "parameters": [
@@ -1387,21 +1502,21 @@
     },
     "PublicConfigController_health": {
       "schema": {
-        "$ref": "#/components/schemas/Wire296"
+        "$ref": "#/components/schemas/Wire316"
       },
       "dataOptional": false,
       "parameters": []
     },
     "PublicConfigController_getMobileConfig": {
       "schema": {
-        "$ref": "#/components/schemas/Wire297"
+        "$ref": "#/components/schemas/Wire317"
       },
       "dataOptional": false,
       "parameters": []
     },
     "PublicConfigController_updateMobileRelease": {
       "schema": {
-        "$ref": "#/components/schemas/Wire297"
+        "$ref": "#/components/schemas/Wire317"
       },
       "dataOptional": false,
       "parameters": [
@@ -1414,14 +1529,14 @@
     },
     "RecapsController_findMyRecaps": {
       "schema": {
-        "$ref": "#/components/schemas/Wire298"
+        "$ref": "#/components/schemas/Wire318"
       },
       "dataOptional": false,
       "parameters": []
     },
     "RecapsController_getMyRecapById": {
       "schema": {
-        "$ref": "#/components/schemas/Wire300"
+        "$ref": "#/components/schemas/Wire320"
       },
       "dataOptional": false,
       "parameters": [
@@ -1434,7 +1549,7 @@
     },
     "RecapsController_markFeedbackAsRead": {
       "schema": {
-        "$ref": "#/components/schemas/Wire301"
+        "$ref": "#/components/schemas/Wire321"
       },
       "dataOptional": false,
       "parameters": [
@@ -1447,21 +1562,21 @@
     },
     "RecapsController_getStats": {
       "schema": {
-        "$ref": "#/components/schemas/Wire302"
+        "$ref": "#/components/schemas/Wire322"
       },
       "dataOptional": false,
       "parameters": []
     },
     "RecapsController_findForAdmin": {
       "schema": {
-        "$ref": "#/components/schemas/Wire303"
+        "$ref": "#/components/schemas/Wire323"
       },
       "dataOptional": false,
       "parameters": []
     },
     "RecapsController_findOne": {
       "schema": {
-        "$ref": "#/components/schemas/Wire309"
+        "$ref": "#/components/schemas/Wire329"
       },
       "dataOptional": false,
       "parameters": [
@@ -1474,14 +1589,14 @@
     },
     "RecapsController_create": {
       "schema": {
-        "$ref": "#/components/schemas/Wire313"
+        "$ref": "#/components/schemas/Wire333"
       },
       "dataOptional": false,
       "parameters": []
     },
     "RecapsController_update": {
       "schema": {
-        "$ref": "#/components/schemas/Wire313"
+        "$ref": "#/components/schemas/Wire333"
       },
       "dataOptional": false,
       "parameters": [
@@ -1494,7 +1609,7 @@
     },
     "RecapsController_submit": {
       "schema": {
-        "$ref": "#/components/schemas/Wire313"
+        "$ref": "#/components/schemas/Wire333"
       },
       "dataOptional": false,
       "parameters": [
@@ -1507,7 +1622,7 @@
     },
     "RecapsController_review": {
       "schema": {
-        "$ref": "#/components/schemas/Wire313"
+        "$ref": "#/components/schemas/Wire333"
       },
       "dataOptional": false,
       "parameters": [
@@ -1520,7 +1635,7 @@
     },
     "RecapsController_archive": {
       "schema": {
-        "$ref": "#/components/schemas/Wire313"
+        "$ref": "#/components/schemas/Wire333"
       },
       "dataOptional": false,
       "parameters": [
@@ -1533,14 +1648,14 @@
     },
     "StreaksController_getStreak": {
       "schema": {
-        "$ref": "#/components/schemas/Wire314"
+        "$ref": "#/components/schemas/Wire334"
       },
       "dataOptional": false,
       "parameters": []
     },
     "StreaksController_resetStreak": {
       "schema": {
-        "$ref": "#/components/schemas/Wire314"
+        "$ref": "#/components/schemas/Wire334"
       },
       "dataOptional": false,
       "parameters": [
@@ -1553,21 +1668,21 @@
     },
     "TrainingGroupsController_findAll": {
       "schema": {
-        "$ref": "#/components/schemas/Wire315"
+        "$ref": "#/components/schemas/Wire335"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingGroupsController_create": {
       "schema": {
-        "$ref": "#/components/schemas/Wire317"
+        "$ref": "#/components/schemas/Wire337"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingGroupsController_update": {
       "schema": {
-        "$ref": "#/components/schemas/Wire318"
+        "$ref": "#/components/schemas/Wire338"
       },
       "dataOptional": false,
       "parameters": [
@@ -1591,14 +1706,14 @@
     },
     "TrainingsController_findAll": {
       "schema": {
-        "$ref": "#/components/schemas/Wire319"
+        "$ref": "#/components/schemas/Wire339"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_findToday": {
       "schema": {
-        "$ref": "#/components/schemas/Wire324"
+        "$ref": "#/components/schemas/Wire344"
       },
       "dataOptional": false,
       "parameters": [
@@ -1611,7 +1726,7 @@
     },
     "TrainingsController_findDay": {
       "schema": {
-        "$ref": "#/components/schemas/Wire358"
+        "$ref": "#/components/schemas/Wire378"
       },
       "dataOptional": false,
       "parameters": [
@@ -1624,42 +1739,42 @@
     },
     "TrainingsController_findAllTags": {
       "schema": {
-        "$ref": "#/components/schemas/Wire360"
+        "$ref": "#/components/schemas/Wire380"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_updateGroupMembership": {
       "schema": {
-        "$ref": "#/components/schemas/Wire361"
+        "$ref": "#/components/schemas/Wire381"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_findAllTypes": {
       "schema": {
-        "$ref": "#/components/schemas/Wire362"
+        "$ref": "#/components/schemas/Wire382"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_renameType": {
       "schema": {
-        "$ref": "#/components/schemas/Wire365"
+        "$ref": "#/components/schemas/Wire385"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_deleteTypes": {
       "schema": {
-        "$ref": "#/components/schemas/Wire366"
+        "$ref": "#/components/schemas/Wire386"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_deleteType": {
       "schema": {
-        "$ref": "#/components/schemas/Wire367"
+        "$ref": "#/components/schemas/Wire387"
       },
       "dataOptional": false,
       "parameters": [
@@ -1672,7 +1787,7 @@
     },
     "TrainingsController_updateTypeColor": {
       "schema": {
-        "$ref": "#/components/schemas/Wire368"
+        "$ref": "#/components/schemas/Wire388"
       },
       "dataOptional": false,
       "parameters": [
@@ -1685,21 +1800,21 @@
     },
     "TrainingsController_renameTag": {
       "schema": {
-        "$ref": "#/components/schemas/Wire369"
+        "$ref": "#/components/schemas/Wire389"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_deleteTags": {
       "schema": {
-        "$ref": "#/components/schemas/Wire370"
+        "$ref": "#/components/schemas/Wire390"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_deleteTag": {
       "schema": {
-        "$ref": "#/components/schemas/Wire369"
+        "$ref": "#/components/schemas/Wire389"
       },
       "dataOptional": false,
       "parameters": [
@@ -1712,7 +1827,7 @@
     },
     "TrainingsController_findOne": {
       "schema": {
-        "$ref": "#/components/schemas/Wire371"
+        "$ref": "#/components/schemas/Wire391"
       },
       "dataOptional": false,
       "parameters": [
@@ -1730,14 +1845,14 @@
     },
     "TrainingsController_create": {
       "schema": {
-        "$ref": "#/components/schemas/Wire372"
+        "$ref": "#/components/schemas/Wire392"
       },
       "dataOptional": false,
       "parameters": []
     },
     "TrainingsController_update": {
       "schema": {
-        "$ref": "#/components/schemas/Wire372"
+        "$ref": "#/components/schemas/Wire392"
       },
       "dataOptional": false,
       "parameters": [
@@ -1808,21 +1923,21 @@
     },
     "UsersController_updateFcmToken": {
       "schema": {
-        "$ref": "#/components/schemas/Wire385"
+        "$ref": "#/components/schemas/Wire405"
       },
       "dataOptional": false,
       "parameters": []
     },
     "UsersController_findAll": {
       "schema": {
-        "$ref": "#/components/schemas/Wire386"
+        "$ref": "#/components/schemas/Wire406"
       },
       "dataOptional": false,
       "parameters": []
     },
     "UsersController_createAdmin": {
       "schema": {
-        "$ref": "#/components/schemas/Wire391"
+        "$ref": "#/components/schemas/Wire411"
       },
       "dataOptional": false,
       "parameters": [
@@ -1835,7 +1950,7 @@
     },
     "UsersController_createClient": {
       "schema": {
-        "$ref": "#/components/schemas/Wire391"
+        "$ref": "#/components/schemas/Wire411"
       },
       "dataOptional": false,
       "parameters": [
@@ -1848,7 +1963,7 @@
     },
     "UsersController_updateUser": {
       "schema": {
-        "$ref": "#/components/schemas/Wire391"
+        "$ref": "#/components/schemas/Wire411"
       },
       "dataOptional": false,
       "parameters": [
@@ -1866,7 +1981,7 @@
     },
     "UsersController_updateUserStatus": {
       "schema": {
-        "$ref": "#/components/schemas/Wire394"
+        "$ref": "#/components/schemas/Wire414"
       },
       "dataOptional": false,
       "parameters": [
@@ -1884,7 +1999,7 @@
     },
     "UsersController_resendInvitation": {
       "schema": {
-        "$ref": "#/components/schemas/Wire395"
+        "$ref": "#/components/schemas/Wire415"
       },
       "dataOptional": false,
       "parameters": [
@@ -1897,7 +2012,7 @@
     },
     "UsersController_unlockUser": {
       "schema": {
-        "$ref": "#/components/schemas/Wire396"
+        "$ref": "#/components/schemas/Wire416"
       },
       "dataOptional": false,
       "parameters": [
@@ -1910,7 +2025,7 @@
     },
     "UsersController_updateRole": {
       "schema": {
-        "$ref": "#/components/schemas/Wire397"
+        "$ref": "#/components/schemas/Wire417"
       },
       "dataOptional": false,
       "parameters": [
@@ -1923,14 +2038,14 @@
     },
     "UsersController_getMyClients": {
       "schema": {
-        "$ref": "#/components/schemas/Wire398"
+        "$ref": "#/components/schemas/Wire418"
       },
       "dataOptional": false,
       "parameters": []
     },
     "UsersController_archiveClient": {
       "schema": {
-        "$ref": "#/components/schemas/Wire401"
+        "$ref": "#/components/schemas/Wire421"
       },
       "dataOptional": false,
       "parameters": [
@@ -1943,7 +2058,7 @@
     },
     "UsersController_getClientAssignments": {
       "schema": {
-        "$ref": "#/components/schemas/Wire402"
+        "$ref": "#/components/schemas/Wire422"
       },
       "dataOptional": false,
       "parameters": [
@@ -1956,7 +2071,7 @@
     },
     "UsersController_updateClientAssignments": {
       "schema": {
-        "$ref": "#/components/schemas/Wire402"
+        "$ref": "#/components/schemas/Wire422"
       },
       "dataOptional": false,
       "parameters": [
@@ -1969,7 +2084,7 @@
     },
     "UsersController_getClientProfile": {
       "schema": {
-        "$ref": "#/components/schemas/Wire407"
+        "$ref": "#/components/schemas/Wire427"
       },
       "dataOptional": false,
       "parameters": [
@@ -1982,7 +2097,7 @@
     },
     "UsersController_updateClientProfile": {
       "schema": {
-        "$ref": "#/components/schemas/Wire407"
+        "$ref": "#/components/schemas/Wire427"
       },
       "dataOptional": false,
       "parameters": [
@@ -1995,7 +2110,7 @@
     },
     "UsersController_getClientDayProgress": {
       "schema": {
-        "$ref": "#/components/schemas/Wire409"
+        "$ref": "#/components/schemas/Wire429"
       },
       "dataOptional": false,
       "parameters": [
@@ -2008,7 +2123,7 @@
     },
     "UsersController_replyToTrainingNote": {
       "schema": {
-        "$ref": "#/components/schemas/Wire291"
+        "$ref": "#/components/schemas/Wire311"
       },
       "dataOptional": false,
       "parameters": [
@@ -2104,7 +2219,7 @@
     },
     "UsersController_getClientWeightHistory": {
       "schema": {
-        "$ref": "#/components/schemas/Wire419"
+        "$ref": "#/components/schemas/Wire439"
       },
       "dataOptional": false,
       "parameters": [
@@ -2117,7 +2232,7 @@
     },
     "UsersController_getClientBodyHistory": {
       "schema": {
-        "$ref": "#/components/schemas/Wire421"
+        "$ref": "#/components/schemas/Wire441"
       },
       "dataOptional": false,
       "parameters": [
@@ -9233,16 +9348,282 @@
       ]
     },
     "Wire284": {
-      "anyOf": [
-        {
+      "type": "object",
+      "properties": {
+        "data": {
           "$ref": "#/components/schemas/Wire285"
         },
-        {
-          "$ref": "#/components/schemas/Wire289"
+        "total": {
+          "type": "number"
+        },
+        "page": {
+          "type": "number"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "totalPages": {
+          "type": "number"
         }
+      },
+      "required": [
+        "data",
+        "total",
+        "page",
+        "limit",
+        "totalPages"
       ]
     },
     "Wire285": {
+      "type": "array",
+      "items": {
+        "$ref": "#/components/schemas/Wire286"
+      }
+    },
+    "Wire286": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "session_date": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "is_complete": {
+          "enum": [
+            false,
+            true
+          ]
+        },
+        "photos": {
+          "$ref": "#/components/schemas/Wire287"
+        }
+      },
+      "required": [
+        "id",
+        "session_date",
+        "created_at",
+        "updated_at",
+        "is_complete",
+        "photos"
+      ]
+    },
+    "Wire287": {
+      "type": "array",
+      "items": {
+        "$ref": "#/components/schemas/Wire288"
+      }
+    },
+    "Wire288": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "view": {
+          "enum": [
+            "FRONT",
+            "LEFT",
+            "RIGHT",
+            "BACK"
+          ]
+        },
+        "state": {
+          "enum": [
+            "ACTIVE",
+            "REPLACED"
+          ]
+        },
+        "replaces_photo_id": {
+          "$ref": "#/components/schemas/Wire9"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "image_url": {
+          "type": "string"
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "view",
+        "state",
+        "replaces_photo_id",
+        "created_at",
+        "image_url",
+        "content_type",
+        "bytes"
+      ]
+    },
+    "Wire289": {
+      "type": "object",
+      "properties": {
+        "options": {
+          "$ref": "#/components/schemas/Wire290"
+        },
+        "stream": {},
+        "logger": {
+          "$ref": "#/components/schemas/Wire292"
+        }
+      },
+      "required": [
+        "options",
+        "stream",
+        "logger"
+      ]
+    },
+    "Wire290": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "$ref": "#/components/schemas/Wire73"
+        },
+        "disposition": {
+          "$ref": "#/components/schemas/Wire291"
+        },
+        "length": {
+          "$ref": "#/components/schemas/Wire258"
+        }
+      }
+    },
+    "Wire291": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/components/schemas/Wire43"
+        }
+      ]
+    },
+    "Wire292": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "$ref": "#/components/schemas/Wire73"
+        },
+        "options": {
+          "$ref": "#/components/schemas/Wire293"
+        },
+        "localInstanceRef": {
+          "$ref": "#/components/schemas/Wire294"
+        },
+        "localInstance": {
+          "$ref": "#/components/schemas/Wire295"
+        },
+        "registerLocalInstanceRef": {}
+      },
+      "required": [
+        "options",
+        "localInstance",
+        "registerLocalInstanceRef"
+      ]
+    },
+    "Wire293": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "enum": [
+            false,
+            true
+          ]
+        }
+      }
+    },
+    "Wire294": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Wire295"
+        }
+      ]
+    },
+    "Wire295": {
+      "type": "object",
+      "properties": {
+        "debug": {
+          "$ref": "#/components/schemas/Wire296"
+        },
+        "verbose": {
+          "$ref": "#/components/schemas/Wire298"
+        },
+        "fatal": {
+          "$ref": "#/components/schemas/Wire300"
+        },
+        "setLogLevels": {
+          "$ref": "#/components/schemas/Wire302"
+        }
+      }
+    },
+    "Wire296": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Wire297"
+        }
+      ]
+    },
+    "Wire297": {
+      "type": "object",
+      "properties": {}
+    },
+    "Wire298": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Wire299"
+        }
+      ]
+    },
+    "Wire299": {
+      "type": "object",
+      "properties": {}
+    },
+    "Wire300": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Wire301"
+        }
+      ]
+    },
+    "Wire301": {
+      "type": "object",
+      "properties": {}
+    },
+    "Wire302": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Wire303"
+        }
+      ]
+    },
+    "Wire303": {
+      "type": "object",
+      "properties": {}
+    },
+    "Wire304": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Wire305"
+        },
+        {
+          "$ref": "#/components/schemas/Wire309"
+        }
+      ]
+    },
+    "Wire305": {
       "type": "object",
       "properties": {
         "client_id": {
@@ -9289,7 +9670,7 @@
           "nullable": true
         },
         "diet_history": {
-          "$ref": "#/components/schemas/Wire286"
+          "$ref": "#/components/schemas/Wire306"
         }
       },
       "required": [
@@ -9306,17 +9687,17 @@
         "diet_history"
       ]
     },
-    "Wire286": {
+    "Wire306": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire287"
+        "$ref": "#/components/schemas/Wire307"
       }
     },
-    "Wire287": {
+    "Wire307": {
       "type": "object",
       "properties": {
         "diet": {
-          "$ref": "#/components/schemas/Wire288"
+          "$ref": "#/components/schemas/Wire308"
         },
         "client_id": {
           "type": "string"
@@ -9352,7 +9733,7 @@
         "captured_at"
       ]
     },
-    "Wire288": {
+    "Wire308": {
       "type": "object",
       "properties": {
         "group": {
@@ -9414,11 +9795,11 @@
         "group_id"
       ]
     },
-    "Wire289": {
+    "Wire309": {
       "type": "object",
       "properties": {
         "diet_history": {
-          "$ref": "#/components/schemas/Wire286"
+          "$ref": "#/components/schemas/Wire306"
         },
         "created_at": {
           "type": "string",
@@ -9481,12 +9862,12 @@
         "admin_reply_sent_at"
       ]
     },
-    "Wire290": {
+    "Wire310": {
       "type": "object",
       "properties": {},
       "additionalProperties": {}
     },
-    "Wire291": {
+    "Wire311": {
       "type": "object",
       "properties": {
         "created_at": {
@@ -9549,17 +9930,17 @@
         "admin_reply_sent_at"
       ]
     },
-    "Wire292": {
+    "Wire312": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/Wire291"
+          "$ref": "#/components/schemas/Wire311"
         },
         {
-          "$ref": "#/components/schemas/Wire293"
+          "$ref": "#/components/schemas/Wire313"
         }
       ]
     },
-    "Wire293": {
+    "Wire313": {
       "type": "object",
       "properties": {
         "message": {
@@ -9570,17 +9951,17 @@
         "message"
       ]
     },
-    "Wire294": {
+    "Wire314": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/Wire291"
+          "$ref": "#/components/schemas/Wire311"
         },
         {
-          "$ref": "#/components/schemas/Wire295"
+          "$ref": "#/components/schemas/Wire315"
         }
       ]
     },
-    "Wire295": {
+    "Wire315": {
       "type": "object",
       "properties": {
         "message": {
@@ -9591,7 +9972,7 @@
         "message"
       ]
     },
-    "Wire296": {
+    "Wire316": {
       "type": "object",
       "properties": {
         "status": {
@@ -9602,7 +9983,7 @@
         "status"
       ]
     },
-    "Wire297": {
+    "Wire317": {
       "type": "object",
       "properties": {
         "android_store_url": {
@@ -9671,11 +10052,11 @@
         "privacy_policy_url"
       ]
     },
-    "Wire298": {
+    "Wire318": {
       "type": "object",
       "properties": {
         "data": {
-          "$ref": "#/components/schemas/Wire299"
+          "$ref": "#/components/schemas/Wire319"
         },
         "total": {
           "type": "number"
@@ -9698,13 +10079,13 @@
         "totalPages"
       ]
     },
-    "Wire299": {
+    "Wire319": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire300"
+        "$ref": "#/components/schemas/Wire320"
       }
     },
-    "Wire300": {
+    "Wire320": {
       "type": "object",
       "properties": {
         "status": {
@@ -9879,7 +10260,7 @@
         "archived_at"
       ]
     },
-    "Wire301": {
+    "Wire321": {
       "type": "object",
       "properties": {
         "success": {
@@ -9893,7 +10274,7 @@
         "success"
       ]
     },
-    "Wire302": {
+    "Wire322": {
       "type": "object",
       "properties": {
         "total": {
@@ -9916,11 +10297,11 @@
         "archived"
       ]
     },
-    "Wire303": {
+    "Wire323": {
       "type": "object",
       "properties": {
         "data": {
-          "$ref": "#/components/schemas/Wire304"
+          "$ref": "#/components/schemas/Wire324"
         },
         "total": {
           "type": "number"
@@ -9943,13 +10324,13 @@
         "totalPages"
       ]
     },
-    "Wire304": {
+    "Wire324": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire305"
+        "$ref": "#/components/schemas/Wire325"
       }
     },
-    "Wire305": {
+    "Wire325": {
       "type": "object",
       "properties": {
         "status": {
@@ -9970,7 +10351,7 @@
           "type": "string"
         },
         "client": {
-          "$ref": "#/components/schemas/Wire306"
+          "$ref": "#/components/schemas/Wire326"
         },
         "week_start_date": {
           "type": "string",
@@ -10007,11 +10388,11 @@
         "archived_at"
       ]
     },
-    "Wire306": {
+    "Wire326": {
       "type": "object",
       "properties": {
         "profile": {
-          "$ref": "#/components/schemas/Wire307"
+          "$ref": "#/components/schemas/Wire327"
         },
         "id": {
           "type": "string"
@@ -10026,7 +10407,7 @@
         "email"
       ]
     },
-    "Wire307": {
+    "Wire327": {
       "anyOf": [
         {
           "enum": [
@@ -10035,11 +10416,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire308"
+          "$ref": "#/components/schemas/Wire328"
         }
       ]
     },
-    "Wire308": {
+    "Wire328": {
       "type": "object",
       "properties": {
         "first_name": {
@@ -10058,11 +10439,11 @@
         "avatar_url"
       ]
     },
-    "Wire309": {
+    "Wire329": {
       "type": "object",
       "properties": {
         "client": {
-          "$ref": "#/components/schemas/Wire310"
+          "$ref": "#/components/schemas/Wire330"
         },
         "status": {
           "enum": [
@@ -10241,11 +10622,11 @@
         "archived_at"
       ]
     },
-    "Wire310": {
+    "Wire330": {
       "type": "object",
       "properties": {
         "profile": {
-          "$ref": "#/components/schemas/Wire311"
+          "$ref": "#/components/schemas/Wire331"
         },
         "id": {
           "type": "string"
@@ -10260,7 +10641,7 @@
         "email"
       ]
     },
-    "Wire311": {
+    "Wire331": {
       "anyOf": [
         {
           "enum": [
@@ -10269,11 +10650,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire312"
+          "$ref": "#/components/schemas/Wire332"
         }
       ]
     },
-    "Wire312": {
+    "Wire332": {
       "type": "object",
       "properties": {
         "first_name": {
@@ -10292,7 +10673,7 @@
         "avatar_url"
       ]
     },
-    "Wire313": {
+    "Wire333": {
       "type": "object",
       "properties": {
         "status": {
@@ -10471,7 +10852,7 @@
         "archived_at"
       ]
     },
-    "Wire314": {
+    "Wire334": {
       "type": "object",
       "properties": {
         "id": {
@@ -10507,13 +10888,13 @@
         "tracking_started_at"
       ]
     },
-    "Wire315": {
+    "Wire335": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire316"
+        "$ref": "#/components/schemas/Wire336"
       }
     },
-    "Wire316": {
+    "Wire336": {
       "type": "object",
       "properties": {
         "item_count": {
@@ -10542,7 +10923,7 @@
         "updated_at"
       ]
     },
-    "Wire317": {
+    "Wire337": {
       "type": "object",
       "properties": {
         "item_count": {
@@ -10571,7 +10952,7 @@
         "updated_at"
       ]
     },
-    "Wire318": {
+    "Wire338": {
       "type": "object",
       "properties": {
         "item_count": {
@@ -10600,11 +10981,11 @@
         "updated_at"
       ]
     },
-    "Wire319": {
+    "Wire339": {
       "type": "object",
       "properties": {
         "data": {
-          "$ref": "#/components/schemas/Wire320"
+          "$ref": "#/components/schemas/Wire340"
         },
         "total": {
           "type": "number"
@@ -10627,13 +11008,13 @@
         "totalPages"
       ]
     },
-    "Wire320": {
+    "Wire340": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire321"
+        "$ref": "#/components/schemas/Wire341"
       }
     },
-    "Wire321": {
+    "Wire341": {
       "type": "object",
       "properties": {
         "name": {
@@ -10670,7 +11051,7 @@
           "$ref": "#/components/schemas/Wire43"
         },
         "group": {
-          "$ref": "#/components/schemas/Wire322"
+          "$ref": "#/components/schemas/Wire342"
         },
         "created_by": {
           "$ref": "#/components/schemas/Wire9"
@@ -10729,7 +11110,7 @@
         "exercises_count"
       ]
     },
-    "Wire322": {
+    "Wire342": {
       "anyOf": [
         {
           "enum": [
@@ -10738,11 +11119,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire323"
+          "$ref": "#/components/schemas/Wire343"
         }
       ]
     },
-    "Wire323": {
+    "Wire343": {
       "type": "object",
       "properties": {
         "name": {
@@ -10757,17 +11138,17 @@
         "id"
       ]
     },
-    "Wire324": {
+    "Wire344": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/Wire325"
+          "$ref": "#/components/schemas/Wire345"
         },
         {
-          "$ref": "#/components/schemas/Wire349"
+          "$ref": "#/components/schemas/Wire369"
         }
       ]
     },
-    "Wire325": {
+    "Wire345": {
       "type": "object",
       "properties": {
         "assignment_training_id": {
@@ -10789,10 +11170,10 @@
           ]
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire326"
+          "$ref": "#/components/schemas/Wire346"
         },
         "blocks": {
-          "$ref": "#/components/schemas/Wire337"
+          "$ref": "#/components/schemas/Wire357"
         },
         "name": {
           "type": "string"
@@ -10823,7 +11204,7 @@
           ]
         },
         "tags": {
-          "$ref": "#/components/schemas/Wire329"
+          "$ref": "#/components/schemas/Wire349"
         },
         "created_by": {
           "$ref": "#/components/schemas/Wire9"
@@ -10832,10 +11213,10 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "rir_proposal": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire352"
         },
         "types": {
-          "$ref": "#/components/schemas/Wire341"
+          "$ref": "#/components/schemas/Wire361"
         },
         "accentColor": {
           "$ref": "#/components/schemas/Wire9"
@@ -10859,7 +11240,7 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "items": {
-          "$ref": "#/components/schemas/Wire342"
+          "$ref": "#/components/schemas/Wire362"
         }
       },
       "required": [
@@ -10891,20 +11272,20 @@
         "items"
       ]
     },
-    "Wire326": {
+    "Wire346": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire327"
+        "$ref": "#/components/schemas/Wire347"
       }
     },
-    "Wire327": {
+    "Wire347": {
       "type": "object",
       "properties": {
         "exercise": {
-          "$ref": "#/components/schemas/Wire328"
+          "$ref": "#/components/schemas/Wire348"
         },
         "block": {
-          "$ref": "#/components/schemas/Wire330"
+          "$ref": "#/components/schemas/Wire350"
         },
         "id": {
           "type": "string"
@@ -10922,10 +11303,10 @@
           "$ref": "#/components/schemas/Wire60"
         },
         "timed_config": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire352"
         },
         "rir_override": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire352"
         },
         "block_id": {
           "$ref": "#/components/schemas/Wire9"
@@ -10940,7 +11321,7 @@
           "type": "string"
         },
         "measure_type": {
-          "$ref": "#/components/schemas/Wire336"
+          "$ref": "#/components/schemas/Wire356"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire60"
@@ -10983,7 +11364,7 @@
         "rest_seconds"
       ]
     },
-    "Wire328": {
+    "Wire348": {
       "type": "object",
       "properties": {
         "name": {
@@ -11015,10 +11396,10 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "muscle_groups": {
-          "$ref": "#/components/schemas/Wire329"
+          "$ref": "#/components/schemas/Wire349"
         },
         "equipment": {
-          "$ref": "#/components/schemas/Wire329"
+          "$ref": "#/components/schemas/Wire349"
         },
         "video_url": {
           "$ref": "#/components/schemas/Wire9"
@@ -11057,13 +11438,13 @@
         "explanation_text"
       ]
     },
-    "Wire329": {
+    "Wire349": {
       "type": "array",
       "items": {
         "type": "string"
       }
     },
-    "Wire330": {
+    "Wire350": {
       "anyOf": [
         {
           "enum": [
@@ -11072,11 +11453,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire331"
+          "$ref": "#/components/schemas/Wire351"
         }
       ]
     },
-    "Wire331": {
+    "Wire351": {
       "type": "object",
       "properties": {
         "name": {
@@ -11122,7 +11503,7 @@
         "rest_between_rounds_seconds"
       ]
     },
-    "Wire332": {
+    "Wire352": {
       "anyOf": [
         {
           "enum": [
@@ -11149,21 +11530,21 @@
           ]
         },
         {
-          "$ref": "#/components/schemas/Wire333"
+          "$ref": "#/components/schemas/Wire353"
         },
         {
-          "$ref": "#/components/schemas/Wire335"
+          "$ref": "#/components/schemas/Wire355"
         }
       ]
     },
-    "Wire333": {
+    "Wire353": {
       "type": "object",
       "properties": {},
       "additionalProperties": {
-        "$ref": "#/components/schemas/Wire334"
+        "$ref": "#/components/schemas/Wire354"
       }
     },
-    "Wire334": {
+    "Wire354": {
       "anyOf": [
         {
           "enum": [
@@ -11190,20 +11571,20 @@
           ]
         },
         {
-          "$ref": "#/components/schemas/Wire333"
+          "$ref": "#/components/schemas/Wire353"
         },
         {
-          "$ref": "#/components/schemas/Wire335"
+          "$ref": "#/components/schemas/Wire355"
         }
       ]
     },
-    "Wire335": {
+    "Wire355": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire332"
+        "$ref": "#/components/schemas/Wire352"
       }
     },
-    "Wire336": {
+    "Wire356": {
       "anyOf": [
         {
           "enum": [
@@ -11225,17 +11606,17 @@
         }
       ]
     },
-    "Wire337": {
+    "Wire357": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire338"
+        "$ref": "#/components/schemas/Wire358"
       }
     },
-    "Wire338": {
+    "Wire358": {
       "type": "object",
       "properties": {
         "exercises": {
-          "$ref": "#/components/schemas/Wire339"
+          "$ref": "#/components/schemas/Wire359"
         },
         "name": {
           "$ref": "#/components/schemas/Wire9"
@@ -11281,17 +11662,17 @@
         "rest_between_rounds_seconds"
       ]
     },
-    "Wire339": {
+    "Wire359": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire340"
+        "$ref": "#/components/schemas/Wire360"
       }
     },
-    "Wire340": {
+    "Wire360": {
       "type": "object",
       "properties": {
         "exercise": {
-          "$ref": "#/components/schemas/Wire328"
+          "$ref": "#/components/schemas/Wire348"
         },
         "id": {
           "type": "string"
@@ -11309,10 +11690,10 @@
           "$ref": "#/components/schemas/Wire60"
         },
         "timed_config": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire352"
         },
         "rir_override": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire352"
         },
         "block_id": {
           "$ref": "#/components/schemas/Wire9"
@@ -11327,7 +11708,7 @@
           "type": "string"
         },
         "measure_type": {
-          "$ref": "#/components/schemas/Wire336"
+          "$ref": "#/components/schemas/Wire356"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire60"
@@ -11370,33 +11751,33 @@
       ],
       "additionalProperties": {}
     },
-    "Wire341": {
+    "Wire361": {
       "type": "array",
       "items": {
         "type": "string"
       }
     },
-    "Wire342": {
+    "Wire362": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire343"
+        "$ref": "#/components/schemas/Wire363"
       }
     },
-    "Wire343": {
+    "Wire363": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/Wire344"
+          "$ref": "#/components/schemas/Wire364"
         },
         {
-          "$ref": "#/components/schemas/Wire347"
+          "$ref": "#/components/schemas/Wire367"
         }
       ]
     },
-    "Wire344": {
+    "Wire364": {
       "type": "object",
       "properties": {
         "block": {
-          "$ref": "#/components/schemas/Wire345"
+          "$ref": "#/components/schemas/Wire365"
         },
         "id": {
           "$ref": "#/components/schemas/Wire73"
@@ -11428,7 +11809,7 @@
         "kind"
       ]
     },
-    "Wire345": {
+    "Wire365": {
       "anyOf": [
         {
           "enum": [
@@ -11437,11 +11818,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire346"
+          "$ref": "#/components/schemas/Wire366"
         }
       ]
     },
-    "Wire346": {
+    "Wire366": {
       "type": "object",
       "properties": {
         "id": {
@@ -11475,7 +11856,7 @@
         "rest_between_rounds_seconds"
       ]
     },
-    "Wire347": {
+    "Wire367": {
       "type": "object",
       "properties": {
         "kind": {
@@ -11506,7 +11887,7 @@
           "type": "number"
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire348"
+          "$ref": "#/components/schemas/Wire368"
         }
       },
       "required": [
@@ -11520,13 +11901,13 @@
         "exercises"
       ]
     },
-    "Wire348": {
+    "Wire368": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire290"
+        "$ref": "#/components/schemas/Wire310"
       }
     },
-    "Wire349": {
+    "Wire369": {
       "type": "object",
       "properties": {
         "assignment_training_id": {
@@ -11548,13 +11929,13 @@
           ]
         },
         "group": {
-          "$ref": "#/components/schemas/Wire350"
+          "$ref": "#/components/schemas/Wire370"
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire352"
+          "$ref": "#/components/schemas/Wire372"
         },
         "blocks": {
-          "$ref": "#/components/schemas/Wire354"
+          "$ref": "#/components/schemas/Wire374"
         },
         "name": {
           "type": "string"
@@ -11621,7 +12002,7 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "items": {
-          "$ref": "#/components/schemas/Wire342"
+          "$ref": "#/components/schemas/Wire362"
         }
       },
       "required": [
@@ -11654,7 +12035,7 @@
         "items"
       ]
     },
-    "Wire350": {
+    "Wire370": {
       "anyOf": [
         {
           "enum": [
@@ -11663,11 +12044,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire351"
+          "$ref": "#/components/schemas/Wire371"
         }
       ]
     },
-    "Wire351": {
+    "Wire371": {
       "type": "object",
       "properties": {
         "name": {
@@ -11682,13 +12063,13 @@
         "id"
       ]
     },
-    "Wire352": {
+    "Wire372": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire353"
+        "$ref": "#/components/schemas/Wire373"
       }
     },
-    "Wire353": {
+    "Wire373": {
       "type": "object",
       "properties": {
         "exercise": {
@@ -11724,7 +12105,7 @@
           "type": "string"
         },
         "measure_type": {
-          "$ref": "#/components/schemas/Wire336"
+          "$ref": "#/components/schemas/Wire356"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire60"
@@ -11745,7 +12126,7 @@
           "type": "number"
         },
         "block": {
-          "$ref": "#/components/schemas/Wire345"
+          "$ref": "#/components/schemas/Wire365"
         }
       },
       "required": [
@@ -11770,17 +12151,17 @@
         "block"
       ]
     },
-    "Wire354": {
+    "Wire374": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire355"
+        "$ref": "#/components/schemas/Wire375"
       }
     },
-    "Wire355": {
+    "Wire375": {
       "type": "object",
       "properties": {
         "exercises": {
-          "$ref": "#/components/schemas/Wire356"
+          "$ref": "#/components/schemas/Wire376"
         },
         "name": {
           "$ref": "#/components/schemas/Wire9"
@@ -11828,13 +12209,13 @@
         "rest_between_rounds_seconds"
       ]
     },
-    "Wire356": {
+    "Wire376": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire357"
+        "$ref": "#/components/schemas/Wire377"
       }
     },
-    "Wire357": {
+    "Wire377": {
       "type": "object",
       "properties": {
         "exercise": {
@@ -11870,7 +12251,7 @@
           "type": "string"
         },
         "measure_type": {
-          "$ref": "#/components/schemas/Wire336"
+          "$ref": "#/components/schemas/Wire356"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire60"
@@ -11913,7 +12294,7 @@
       ],
       "additionalProperties": {}
     },
-    "Wire358": {
+    "Wire378": {
       "type": "object",
       "properties": {
         "date": {
@@ -11926,7 +12307,7 @@
           ]
         },
         "trainings": {
-          "$ref": "#/components/schemas/Wire359"
+          "$ref": "#/components/schemas/Wire379"
         }
       },
       "required": [
@@ -11935,13 +12316,13 @@
         "trainings"
       ]
     },
-    "Wire359": {
+    "Wire379": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire324"
+        "$ref": "#/components/schemas/Wire344"
       }
     },
-    "Wire360": {
+    "Wire380": {
       "type": "object",
       "properties": {
         "tags": {
@@ -11952,7 +12333,7 @@
         "tags"
       ]
     },
-    "Wire361": {
+    "Wire381": {
       "type": "object",
       "properties": {
         "affected_count": {
@@ -11963,24 +12344,24 @@
         "affected_count"
       ]
     },
-    "Wire362": {
+    "Wire382": {
       "type": "object",
       "properties": {
         "types": {
-          "$ref": "#/components/schemas/Wire363"
+          "$ref": "#/components/schemas/Wire383"
         }
       },
       "required": [
         "types"
       ]
     },
-    "Wire363": {
+    "Wire383": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire364"
+        "$ref": "#/components/schemas/Wire384"
       }
     },
-    "Wire364": {
+    "Wire384": {
       "type": "object",
       "properties": {
         "value": {
@@ -11995,7 +12376,7 @@
         "color"
       ]
     },
-    "Wire365": {
+    "Wire385": {
       "type": "object",
       "properties": {
         "value": {
@@ -12010,7 +12391,7 @@
         "affected_count"
       ]
     },
-    "Wire366": {
+    "Wire386": {
       "type": "object",
       "properties": {
         "values": {
@@ -12025,7 +12406,7 @@
         "affected_count"
       ]
     },
-    "Wire367": {
+    "Wire387": {
       "type": "object",
       "properties": {
         "value": {
@@ -12040,7 +12421,7 @@
         "affected_count"
       ]
     },
-    "Wire368": {
+    "Wire388": {
       "type": "object",
       "properties": {
         "value": {
@@ -12055,7 +12436,7 @@
         "color"
       ]
     },
-    "Wire369": {
+    "Wire389": {
       "type": "object",
       "properties": {
         "value": {
@@ -12070,7 +12451,7 @@
         "affected_count"
       ]
     },
-    "Wire370": {
+    "Wire390": {
       "type": "object",
       "properties": {
         "values": {
@@ -12085,30 +12466,30 @@
         "affected_count"
       ]
     },
-    "Wire371": {
+    "Wire391": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/Wire372"
+          "$ref": "#/components/schemas/Wire392"
         },
         {
-          "$ref": "#/components/schemas/Wire383"
+          "$ref": "#/components/schemas/Wire403"
         },
         {
-          "$ref": "#/components/schemas/Wire384"
+          "$ref": "#/components/schemas/Wire404"
         }
       ]
     },
-    "Wire372": {
+    "Wire392": {
       "type": "object",
       "properties": {
         "group": {
-          "$ref": "#/components/schemas/Wire350"
+          "$ref": "#/components/schemas/Wire370"
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire373"
+          "$ref": "#/components/schemas/Wire393"
         },
         "blocks": {
-          "$ref": "#/components/schemas/Wire377"
+          "$ref": "#/components/schemas/Wire397"
         },
         "name": {
           "type": "string"
@@ -12175,7 +12556,7 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "items": {
-          "$ref": "#/components/schemas/Wire379"
+          "$ref": "#/components/schemas/Wire399"
         }
       },
       "required": [
@@ -12204,13 +12585,13 @@
         "items"
       ]
     },
-    "Wire373": {
+    "Wire393": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire374"
+        "$ref": "#/components/schemas/Wire394"
       }
     },
-    "Wire374": {
+    "Wire394": {
       "type": "object",
       "properties": {
         "exercise": {
@@ -12246,7 +12627,7 @@
           "type": "string"
         },
         "measure_type": {
-          "$ref": "#/components/schemas/Wire336"
+          "$ref": "#/components/schemas/Wire356"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire60"
@@ -12267,7 +12648,7 @@
           "type": "number"
         },
         "block": {
-          "$ref": "#/components/schemas/Wire375"
+          "$ref": "#/components/schemas/Wire395"
         }
       },
       "required": [
@@ -12292,7 +12673,7 @@
         "block"
       ]
     },
-    "Wire375": {
+    "Wire395": {
       "anyOf": [
         {
           "enum": [
@@ -12301,11 +12682,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire376"
+          "$ref": "#/components/schemas/Wire396"
         }
       ]
     },
-    "Wire376": {
+    "Wire396": {
       "type": "object",
       "properties": {
         "id": {
@@ -12339,17 +12720,17 @@
         "rest_between_rounds_seconds"
       ]
     },
-    "Wire377": {
+    "Wire397": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire378"
+        "$ref": "#/components/schemas/Wire398"
       }
     },
-    "Wire378": {
+    "Wire398": {
       "type": "object",
       "properties": {
         "exercises": {
-          "$ref": "#/components/schemas/Wire356"
+          "$ref": "#/components/schemas/Wire376"
         },
         "name": {
           "$ref": "#/components/schemas/Wire9"
@@ -12397,27 +12778,27 @@
         "rest_between_rounds_seconds"
       ]
     },
-    "Wire379": {
+    "Wire399": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire380"
+        "$ref": "#/components/schemas/Wire400"
       }
     },
-    "Wire380": {
+    "Wire400": {
       "anyOf": [
         {
-          "$ref": "#/components/schemas/Wire381"
+          "$ref": "#/components/schemas/Wire401"
         },
         {
-          "$ref": "#/components/schemas/Wire382"
+          "$ref": "#/components/schemas/Wire402"
         }
       ]
     },
-    "Wire381": {
+    "Wire401": {
       "type": "object",
       "properties": {
         "block": {
-          "$ref": "#/components/schemas/Wire375"
+          "$ref": "#/components/schemas/Wire395"
         },
         "id": {
           "$ref": "#/components/schemas/Wire73"
@@ -12449,7 +12830,7 @@
         "kind"
       ]
     },
-    "Wire382": {
+    "Wire402": {
       "type": "object",
       "properties": {
         "kind": {
@@ -12480,7 +12861,7 @@
           "type": "number"
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire348"
+          "$ref": "#/components/schemas/Wire368"
         }
       },
       "required": [
@@ -12494,7 +12875,7 @@
         "exercises"
       ]
     },
-    "Wire383": {
+    "Wire403": {
       "type": "object",
       "properties": {
         "assignment_training_id": {
@@ -12510,10 +12891,10 @@
           ]
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire326"
+          "$ref": "#/components/schemas/Wire346"
         },
         "blocks": {
-          "$ref": "#/components/schemas/Wire337"
+          "$ref": "#/components/schemas/Wire357"
         },
         "name": {
           "type": "string"
@@ -12544,7 +12925,7 @@
           ]
         },
         "tags": {
-          "$ref": "#/components/schemas/Wire329"
+          "$ref": "#/components/schemas/Wire349"
         },
         "created_by": {
           "$ref": "#/components/schemas/Wire9"
@@ -12553,10 +12934,10 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "rir_proposal": {
-          "$ref": "#/components/schemas/Wire332"
+          "$ref": "#/components/schemas/Wire352"
         },
         "types": {
-          "$ref": "#/components/schemas/Wire341"
+          "$ref": "#/components/schemas/Wire361"
         },
         "accentColor": {
           "$ref": "#/components/schemas/Wire9"
@@ -12580,7 +12961,7 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "items": {
-          "$ref": "#/components/schemas/Wire342"
+          "$ref": "#/components/schemas/Wire362"
         }
       },
       "required": [
@@ -12611,7 +12992,7 @@
         "items"
       ]
     },
-    "Wire384": {
+    "Wire404": {
       "type": "object",
       "properties": {
         "assignment_training_id": {
@@ -12627,13 +13008,13 @@
           ]
         },
         "group": {
-          "$ref": "#/components/schemas/Wire350"
+          "$ref": "#/components/schemas/Wire370"
         },
         "exercises": {
-          "$ref": "#/components/schemas/Wire352"
+          "$ref": "#/components/schemas/Wire372"
         },
         "blocks": {
-          "$ref": "#/components/schemas/Wire354"
+          "$ref": "#/components/schemas/Wire374"
         },
         "name": {
           "type": "string"
@@ -12700,7 +13081,7 @@
           "$ref": "#/components/schemas/Wire9"
         },
         "items": {
-          "$ref": "#/components/schemas/Wire342"
+          "$ref": "#/components/schemas/Wire362"
         }
       },
       "required": [
@@ -12732,7 +13113,7 @@
         "items"
       ]
     },
-    "Wire385": {
+    "Wire405": {
       "type": "object",
       "properties": {
         "message": {
@@ -12743,11 +13124,11 @@
         "message"
       ]
     },
-    "Wire386": {
+    "Wire406": {
       "type": "object",
       "properties": {
         "data": {
-          "$ref": "#/components/schemas/Wire387"
+          "$ref": "#/components/schemas/Wire407"
         },
         "total": {
           "type": "number"
@@ -12770,17 +13151,17 @@
         "totalPages"
       ]
     },
-    "Wire387": {
+    "Wire407": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire388"
+        "$ref": "#/components/schemas/Wire408"
       }
     },
-    "Wire388": {
+    "Wire408": {
       "type": "object",
       "properties": {
         "profile": {
-          "$ref": "#/components/schemas/Wire389"
+          "$ref": "#/components/schemas/Wire409"
         },
         "created_at": {
           "type": "string",
@@ -12822,7 +13203,7 @@
         "is_locked"
       ]
     },
-    "Wire389": {
+    "Wire409": {
       "anyOf": [
         {
           "enum": [
@@ -12831,11 +13212,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire390"
+          "$ref": "#/components/schemas/Wire410"
         }
       ]
     },
-    "Wire390": {
+    "Wire410": {
       "type": "object",
       "properties": {
         "first_name": {
@@ -12854,7 +13235,7 @@
         "avatar_url"
       ]
     },
-    "Wire391": {
+    "Wire411": {
       "type": "object",
       "properties": {
         "id": {
@@ -12887,7 +13268,7 @@
           "format": "date-time"
         },
         "profile": {
-          "$ref": "#/components/schemas/Wire392"
+          "$ref": "#/components/schemas/Wire412"
         }
       },
       "required": [
@@ -12900,7 +13281,7 @@
         "profile"
       ]
     },
-    "Wire392": {
+    "Wire412": {
       "anyOf": [
         {
           "enum": [
@@ -12909,11 +13290,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire393"
+          "$ref": "#/components/schemas/Wire413"
         }
       ]
     },
-    "Wire393": {
+    "Wire413": {
       "type": "object",
       "properties": {
         "first_name": {
@@ -12932,7 +13313,7 @@
         "avatar_url"
       ]
     },
-    "Wire394": {
+    "Wire414": {
       "type": "object",
       "properties": {
         "message": {
@@ -12943,7 +13324,7 @@
         "message"
       ]
     },
-    "Wire395": {
+    "Wire415": {
       "type": "object",
       "properties": {
         "message": {
@@ -12954,7 +13335,7 @@
         "message"
       ]
     },
-    "Wire396": {
+    "Wire416": {
       "type": "object",
       "properties": {
         "message": {
@@ -12965,7 +13346,7 @@
         "message"
       ]
     },
-    "Wire397": {
+    "Wire417": {
       "type": "object",
       "properties": {
         "message": {
@@ -12976,11 +13357,11 @@
         "message"
       ]
     },
-    "Wire398": {
+    "Wire418": {
       "type": "object",
       "properties": {
         "data": {
-          "$ref": "#/components/schemas/Wire399"
+          "$ref": "#/components/schemas/Wire419"
         },
         "total": {
           "type": "number"
@@ -13003,13 +13384,13 @@
         "totalPages"
       ]
     },
-    "Wire399": {
+    "Wire419": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire400"
+        "$ref": "#/components/schemas/Wire420"
       }
     },
-    "Wire400": {
+    "Wire420": {
       "type": "object",
       "properties": {
         "profile": {
@@ -13066,7 +13447,7 @@
         "active_admins_count"
       ]
     },
-    "Wire401": {
+    "Wire421": {
       "type": "object",
       "properties": {
         "id": {
@@ -13088,14 +13469,14 @@
         "message"
       ]
     },
-    "Wire402": {
+    "Wire422": {
       "type": "object",
       "properties": {
         "client_id": {
           "type": "string"
         },
         "active_admins": {
-          "$ref": "#/components/schemas/Wire403"
+          "$ref": "#/components/schemas/Wire423"
         }
       },
       "required": [
@@ -13103,13 +13484,13 @@
         "active_admins"
       ]
     },
-    "Wire403": {
+    "Wire423": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire404"
+        "$ref": "#/components/schemas/Wire424"
       }
     },
-    "Wire404": {
+    "Wire424": {
       "type": "object",
       "properties": {
         "id": {
@@ -13119,7 +13500,7 @@
           "type": "string"
         },
         "profile": {
-          "$ref": "#/components/schemas/Wire405"
+          "$ref": "#/components/schemas/Wire425"
         },
         "assigned_at": {
           "type": "string",
@@ -13133,7 +13514,7 @@
         "assigned_at"
       ]
     },
-    "Wire405": {
+    "Wire425": {
       "anyOf": [
         {
           "enum": [
@@ -13142,11 +13523,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire406"
+          "$ref": "#/components/schemas/Wire426"
         }
       ]
     },
-    "Wire406": {
+    "Wire426": {
       "type": "object",
       "properties": {
         "first_name": {
@@ -13165,14 +13546,14 @@
         "avatar_url"
       ]
     },
-    "Wire407": {
+    "Wire427": {
       "type": "object",
       "properties": {
         "profile": {
           "$ref": "#/components/schemas/Wire103"
         },
         "streak": {
-          "$ref": "#/components/schemas/Wire408"
+          "$ref": "#/components/schemas/Wire428"
         },
         "bodyMetrics": {
           "$ref": "#/components/schemas/Wire246"
@@ -13266,7 +13647,7 @@
         "fcm_token"
       ]
     },
-    "Wire408": {
+    "Wire428": {
       "anyOf": [
         {
           "enum": [
@@ -13275,11 +13656,11 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire314"
+          "$ref": "#/components/schemas/Wire334"
         }
       ]
     },
-    "Wire409": {
+    "Wire429": {
       "anyOf": [
         {
           "enum": [
@@ -13288,14 +13669,14 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire410"
+          "$ref": "#/components/schemas/Wire430"
         },
         {
-          "$ref": "#/components/schemas/Wire414"
+          "$ref": "#/components/schemas/Wire434"
         }
       ]
     },
-    "Wire410": {
+    "Wire430": {
       "type": "object",
       "properties": {
         "id": {
@@ -13348,7 +13729,7 @@
           "nullable": true
         },
         "diet_history": {
-          "$ref": "#/components/schemas/Wire411"
+          "$ref": "#/components/schemas/Wire431"
         }
       },
       "required": [
@@ -13366,13 +13747,13 @@
         "diet_history"
       ]
     },
-    "Wire411": {
+    "Wire431": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire412"
+        "$ref": "#/components/schemas/Wire432"
       }
     },
-    "Wire412": {
+    "Wire432": {
       "type": "object",
       "properties": {
         "client_id": {
@@ -13399,7 +13780,7 @@
           "format": "date-time"
         },
         "diet": {
-          "$ref": "#/components/schemas/Wire413"
+          "$ref": "#/components/schemas/Wire433"
         }
       },
       "required": [
@@ -13412,7 +13793,7 @@
         "diet"
       ]
     },
-    "Wire413": {
+    "Wire433": {
       "type": "object",
       "properties": {
         "group": {
@@ -13478,17 +13859,17 @@
         "group_id"
       ]
     },
-    "Wire414": {
+    "Wire434": {
       "type": "object",
       "properties": {
         "diet_history": {
-          "$ref": "#/components/schemas/Wire411"
+          "$ref": "#/components/schemas/Wire431"
         },
         "exercises_completed": {
-          "$ref": "#/components/schemas/Wire415"
+          "$ref": "#/components/schemas/Wire435"
         },
         "meals_completed_details": {
-          "$ref": "#/components/schemas/Wire417"
+          "$ref": "#/components/schemas/Wire437"
         },
         "created_at": {
           "type": "string",
@@ -13551,13 +13932,13 @@
         "admin_reply_sent_at"
       ]
     },
-    "Wire415": {
+    "Wire435": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire416"
+        "$ref": "#/components/schemas/Wire436"
       }
     },
-    "Wire416": {
+    "Wire436": {
       "type": "object",
       "properties": {
         "exercise_name": {
@@ -13572,13 +13953,13 @@
         "exercise_id"
       ]
     },
-    "Wire417": {
+    "Wire437": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire418"
+        "$ref": "#/components/schemas/Wire438"
       }
     },
-    "Wire418": {
+    "Wire438": {
       "type": "object",
       "properties": {
         "meal_id": {
@@ -13593,13 +13974,13 @@
         "meal_name"
       ]
     },
-    "Wire419": {
+    "Wire439": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire420"
+        "$ref": "#/components/schemas/Wire440"
       }
     },
-    "Wire420": {
+    "Wire440": {
       "type": "object",
       "properties": {
         "date": {
@@ -13614,13 +13995,13 @@
         "value"
       ]
     },
-    "Wire421": {
+    "Wire441": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire422"
+        "$ref": "#/components/schemas/Wire442"
       }
     },
-    "Wire422": {
+    "Wire442": {
       "type": "object",
       "properties": {
         "date": {
@@ -13653,6 +14034,8 @@
     "ProgressController_getDayProgress.exercises_completed",
     "ProgressController_getPreviousExercisePerformances.*",
     "ProgressController_markExerciseCompleted.exercises_completed",
+    "ProgressPhotosController_readPhotoFile.logger.registerLocalInstanceRef",
+    "ProgressPhotosController_readPhotoFile.stream",
     "RecapsController_create.muscle_pain_zones",
     "RecapsController_findMyRecaps.data[].muscle_pain_zones",
     "RecapsController_findOne.muscle_pain_zones",

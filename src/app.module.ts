@@ -32,6 +32,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ApprovalRequestsModule } from './modules/approval-requests/approval-requests.module';
 import { PublicConfigModule } from './modules/public-config/public-config.module';
+import { ProgressPhotosModule } from './modules/progress-photos/progress-photos.module';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
     DashboardModule,
     ApprovalRequestsModule,
     PublicConfigModule,
+    ProgressPhotosModule,
   ],
   controllers: [HealthController],
   providers: [

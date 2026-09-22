@@ -104,7 +104,14 @@ export class ClientDeletionService {
         if (previous) return previous;
         const user = await tx.user.findUnique({
           where: { id: clientId },
-          include: { profile: true, feedbackMedia: true, managedUploads: true },
+          include: {
+            profile: true,
+            feedbackMedia: true,
+            managedUploads: true,
+            progressPhotoSessions: {
+              include: { photos: { include: { managed_upload: true } } },
+            },
+          },
         });
         if (!user) throw new NotFoundException('Cliente no encontrado');
         if (!self && user.role !== Role.CLIENT)
@@ -154,6 +161,8 @@ export class ClientDeletionService {
           UNION SELECT id FROM day_progress WHERE client_id = ${clientId}
           UNION SELECT id FROM body_metrics WHERE client_id = ${clientId}
           UNION SELECT id FROM auto_assignment_rules WHERE client_id = ${clientId}
+          UNION SELECT id FROM progress_photo_sessions WHERE client_id = ${clientId}
+          UNION SELECT id FROM progress_photos WHERE client_id = ${clientId}
           UNION SELECT operation_id FROM rir_cycle_versions WHERE client_id = ${clientId}
           UNION SELECT id FROM identity_operations WHERE user_id = ${clientId}`;
 
@@ -168,15 +177,30 @@ export class ClientDeletionService {
           UNION ALL SELECT 1 FROM challenges WHERE created_by = ${clientId}
           UNION ALL SELECT 1 FROM achievements WHERE created_by = ${clientId}
           UNION ALL SELECT 1 FROM feedback_media WHERE reviewed_by = ${clientId} AND client_id <> ${clientId}
+          UNION ALL SELECT 1 FROM progress_photo_sessions WHERE uploader_id = ${clientId} AND client_id <> ${clientId}
+          UNION ALL SELECT 1 FROM progress_photos WHERE uploader_id = ${clientId} AND client_id <> ${clientId}
           UNION ALL SELECT 1 FROM managed_uploads u JOIN approval_requests a ON a.id = u.approval_request_id WHERE a.requester_id = ${clientId} AND u.owner_id <> ${clientId}
           UNION ALL SELECT 1 FROM approval_requests WHERE requester_id <> ${clientId}
             AND EXISTS (SELECT 1 FROM (${ownedIds}) owned WHERE resource_id = owned.id OR position(owned.id in payload::text) > 0)
         ) AS found`);
         if (shared[0]?.found) throw this.ambiguous();
 
-        const keys = new Set(
-          user.managedUploads.map((upload) => upload.object_key),
+        const progressPhotoUploads = new Map(
+          user.progressPhotoSessions.flatMap((session) =>
+            session.photos.map((photo) => [
+              photo.managed_upload.object_key,
+              {
+                managedUploadId: photo.managed_upload_id,
+                uploaderId: photo.uploader_id,
+                ownerId: photo.managed_upload.owner_id,
+              },
+            ]),
+          ),
         );
+        const keys = new Set([
+          ...user.managedUploads.map((upload) => upload.object_key),
+          ...progressPhotoUploads.keys(),
+        ]);
         for (const url of [
           user.profile?.avatar_url,
           ...user.feedbackMedia.map((item) => item.media_url),
@@ -189,15 +213,26 @@ export class ClientDeletionService {
         for (const transfer of transfers)
           if (transfer.object_key) keys.add(transfer.object_key);
         for (const key of keys) {
-          // Stable namespaced ownership is required even for legacy URLs.
+          const progressPhotoUpload = progressPhotoUploads.get(key);
+          const segments = key.split('/');
+          const isCapturedProgressPhoto = Boolean(progressPhotoUpload);
           if (
-            !/^(avatar|feedback-image|feedback-video)\//.test(key) ||
-            key.split('/')[1] !== clientId ||
-            key.split('/').length !== 3
+            (isCapturedProgressPhoto &&
+              (!key.startsWith('progress-photo/') ||
+                segments.length !== 3 ||
+                segments[1] !== progressPhotoUpload?.uploaderId ||
+                progressPhotoUpload.ownerId !==
+                  progressPhotoUpload.uploaderId)) ||
+            (!isCapturedProgressPhoto &&
+              (!/^(avatar|feedback-image|feedback-video|progress-photo)\//.test(
+                key,
+              ) ||
+                segments[1] !== clientId ||
+                segments.length !== 3))
           ) {
             throw this.ambiguous();
           }
-          const filename = key.split('/')[2];
+          const filename = segments[2];
           const references = await tx.$queryRaw<{ found: boolean }[]>`
           SELECT EXISTS (
             SELECT 1 FROM profiles WHERE user_id <> ${clientId} AND position(${filename} in avatar_url) > 0
@@ -207,7 +242,12 @@ export class ClientDeletionService {
             UNION ALL SELECT 1 FROM achievements WHERE position(${filename} in icon_url) > 0
             UNION ALL SELECT 1 FROM diet_day_snapshots WHERE client_id <> ${clientId} AND position(${filename} in diet::text) > 0
             UNION ALL SELECT 1 FROM training_day_snapshots WHERE client_id <> ${clientId} AND position(${filename} in payload::text) > 0
-            UNION ALL SELECT 1 FROM managed_uploads WHERE owner_id <> ${clientId} AND object_key = ${key}
+            UNION ALL SELECT 1 FROM progress_photos WHERE client_id <> ${clientId} AND managed_upload_id = ${progressPhotoUpload?.managedUploadId ?? ''}
+            ${
+              isCapturedProgressPhoto
+                ? Prisma.empty
+                : Prisma.sql`UNION ALL SELECT 1 FROM managed_uploads WHERE owner_id <> ${clientId} AND object_key = ${key}`
+            }
           ) AS found`;
           if (references[0]?.found) throw this.ambiguous();
         }
@@ -218,6 +258,7 @@ export class ClientDeletionService {
             requested_by: requesterId,
             firebase_uid: user.firebase_uid,
             object_keys: [...keys],
+            progress_photo_object_keys: [...progressPhotoUploads.keys()],
             // Expiry ends admission of old credentials, not an already accepted
             // request. Durable automatic reconciliation also covers late writes.
             settle_after: new Date(
@@ -355,12 +396,19 @@ export class ClientDeletionService {
       // Record a late object's exact key before issuing any deletion for it.
       const inventory = [...new Set([...operation.object_keys, ...discovered])];
       if (
-        inventory.some(
-          (key) =>
-            !/^(avatar|feedback-image|feedback-video)\//.test(key) ||
-            key.split('/').length !== 3 ||
-            key.split('/')[1] !== operation.client_id,
-        )
+        inventory.some((key) => {
+          const segments = key.split('/');
+          const isCapturedProgressPhoto =
+            operation.progress_photo_object_keys.includes(key);
+          return (
+            segments.length !== 3 ||
+            (isCapturedProgressPhoto
+              ? !key.startsWith('progress-photo/')
+              : !/^(avatar|feedback-image|feedback-video|progress-photo)\//.test(
+                  key,
+                ) || segments[1] !== operation.client_id)
+          );
+        })
       ) {
         await this.finishAttempt(
           operation,

@@ -95,7 +95,7 @@ describe('F004 external verification adapters (no real services)', () => {
 
   it('discovers late objects only in the selected client namespaces using bounded pages', async () => {
     const owner = randomUUID();
-    const key = `feedback-video/${owner}/fixture.mp4`;
+    const key = `progress-photo/${owner}/fixture.jpg`;
     const service = new UploadsService(
       new ConfigService({
         NODE_ENV: 'production',
@@ -111,7 +111,7 @@ describe('F004 external verification adapters (no real services)', () => {
       expect(command.input.Prefix).toContain(`/${owner}/`);
       return Promise.resolve({
         Contents:
-          command.input.Prefix === `feedback-video/${owner}/`
+          command.input.Prefix === `progress-photo/${owner}/`
             ? [{ Key: key }]
             : [],
         IsTruncated: false,
@@ -120,7 +120,7 @@ describe('F004 external verification adapters (no real services)', () => {
     await expect(service.discoverForClientDeletion(owner)).resolves.toEqual([
       key,
     ]);
-    expect(sendObject).toHaveBeenCalledTimes(3);
+    expect(sendObject).toHaveBeenCalledTimes(4);
   });
 
   it.each(['403', 'truncated', 'foreign'])(

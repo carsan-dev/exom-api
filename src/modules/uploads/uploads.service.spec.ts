@@ -114,6 +114,41 @@ describe('UploadsService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it.each([Role.CLIENT, Role.ADMIN, Role.SUPER_ADMIN])(
+    'allows %s to create a progress-photo image session',
+    async (role) => {
+      managedUpload.count.mockResolvedValue(0);
+      prisma.uploadTransfer.findUnique.mockResolvedValueOnce({
+        protocol: 'MULTIPART',
+        state: 'NEW',
+      });
+      managedUpload.create.mockImplementation(({ data }) =>
+        Promise.resolve({
+          ...session(ManagedUploadStatus.PENDING),
+          ...data,
+        }),
+      );
+
+      await expect(
+        service.createSession('client-1', role, {
+          purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+          mimeType: 'image/jpeg',
+          bytes: 100,
+        }),
+      ).resolves.toMatchObject({
+        content_type: 'image/jpeg',
+        max_bytes: 10 * 1024 * 1024,
+      });
+      expect(managedUpload.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+          }),
+        }),
+      );
+    },
+  );
+
   it('rejects arbitrary URLs and uploads owned by another user', async () => {
     managedUpload.findFirst.mockResolvedValue(null);
 
@@ -161,6 +196,63 @@ describe('UploadsService', () => {
 
     expect(inspect).toHaveBeenCalledTimes(1);
     expect(managedUpload.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires an actor-owned verified progress-photo upload and consumes it only once', async () => {
+    managedUpload.findFirst.mockResolvedValue({
+      ...session(ManagedUploadStatus.VERIFIED),
+      purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+      mime_type: 'image/jpeg',
+      object_key: 'progress-photo/client-1/file.jpg',
+    });
+    managedUpload.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await expect(
+      service.prepareForConsumption({
+        ownerId: 'client-1',
+        uploadId: 'upload-1',
+        purposes: [ManagedUploadPurpose.PROGRESS_PHOTO],
+      }),
+    ).resolves.toMatchObject({ id: 'upload-1' });
+    await service.consumePrepared(
+      prisma as unknown as import('@prisma/client').Prisma.TransactionClient,
+      'client-1',
+      'upload-1',
+      [ManagedUploadPurpose.PROGRESS_PHOTO],
+    );
+    expect(managedUpload.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          owner_id: 'client-1',
+          purpose: { in: [ManagedUploadPurpose.PROGRESS_PHOTO] },
+          OR: [
+            expect.objectContaining({
+              status: ManagedUploadStatus.VERIFIED,
+            }),
+          ],
+        }),
+      }),
+    );
+
+    managedUpload.findFirst.mockResolvedValue(null);
+    await expect(
+      service.prepareForConsumption({
+        ownerId: 'another-client',
+        uploadId: 'upload-1',
+        purposes: [ManagedUploadPurpose.PROGRESS_PHOTO],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'MANAGED_UPLOAD_REQUIRED' } });
+    managedUpload.findFirst.mockResolvedValue({
+      ...session(ManagedUploadStatus.CONSUMED),
+      purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+    });
+    await expect(
+      service.prepareForConsumption({
+        ownerId: 'client-1',
+        uploadId: 'upload-1',
+        purposes: [ManagedUploadPurpose.PROGRESS_PHOTO],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'UPLOAD_NOT_VERIFIED' } });
   });
 
   it('allows only one concurrent consumer of a verified session', async () => {
