@@ -475,7 +475,7 @@ export class ProgressPhotosService {
 
   private async lock(tx: Prisma.TransactionClient, key: string) {
     await tx.$queryRaw(
-      Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
+      Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text AS "locked"`,
     );
   }
 

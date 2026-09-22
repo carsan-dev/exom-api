@@ -19,6 +19,9 @@ CREATE TABLE "progress_photo_sessions" (
     FOREIGN KEY ("uploader_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
+CREATE UNIQUE INDEX "progress_photo_sessions_id_client_id_key"
+  ON "progress_photo_sessions"("id", "client_id");
+
 CREATE TABLE "progress_photos" (
   "id" TEXT NOT NULL,
   "session_id" TEXT NOT NULL,
@@ -41,8 +44,6 @@ CREATE TABLE "progress_photos" (
     FOREIGN KEY ("replaces_photo_id") REFERENCES "progress_photos"("id") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
-CREATE UNIQUE INDEX "progress_photo_sessions_id_client_id_key"
-  ON "progress_photo_sessions"("id", "client_id");
 CREATE UNIQUE INDEX "progress_photo_sessions_uploader_id_session_operation_id_key"
   ON "progress_photo_sessions"("uploader_id", "session_operation_id");
 CREATE INDEX "progress_photo_sessions_client_id_session_date_id_idx"

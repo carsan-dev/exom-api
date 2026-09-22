@@ -168,31 +168,31 @@ model User {
   created_at             DateTime              @default(now())
   updated_at             DateTime              @updatedAt
 
-  profile                     Profile?
-  adminOf                     AdminClientAssignment[] @relation("AdminAssignments")
-  clientOf                    AdminClientAssignment[] @relation("ClientAssignments")
-  dayProgress                 DayProgress[]
-  dietDaySnapshots            DietDaySnapshot[]
-  bodyMetrics                 BodyMetric[]
-  streak                      Streak?
-  weeklyRecaps                WeeklyRecap[]
-  clientChallenges            ChallengeClient[]
-  userAchievements            UserAchievement[]
-  feedbackMedia               FeedbackMedia[]
-  managedUploads              ManagedUpload[]
-  progressOperations          ProgressOperation[]
-  sentNotifications           Notification[]          @relation("SentNotifications")
-  receivedNotifications       Notification[]          @relation("ReceivedNotifications")
-  durableWork                 DurableWork[]
-  approvalRequestsMade        ApprovalRequest[]       @relation("ApprovalRequester")
-  approvalRequestsReviewed    ApprovalRequest[]       @relation("ApprovalReviewer")
-  planAssignmentsAsClient     PlanAssignment[]        @relation("PlanAssignmentClient")
-  planAssignmentsAsAdmin      PlanAssignment[]        @relation("PlanAssignmentAdmin")
-  autoAssignmentRulesAsClient AutoAssignmentRule[]    @relation("AutoAssignmentRuleClient")
-  autoAssignmentRulesAsAdmin  AutoAssignmentRule[]    @relation("AutoAssignmentRuleAdmin")
-  progressPhotoSessions       ProgressPhotoSession[]  @relation("ProgressPhotoSessionClient")
-  progressPhotoSessionsUploaded ProgressPhotoSession[] @relation("ProgressPhotoSessionUploader")
-  progressPhotosUploaded      ProgressPhoto[]         @relation("ProgressPhotoUploader")
+  profile                       Profile?
+  adminOf                       AdminClientAssignment[] @relation("AdminAssignments")
+  clientOf                      AdminClientAssignment[] @relation("ClientAssignments")
+  dayProgress                   DayProgress[]
+  dietDaySnapshots              DietDaySnapshot[]
+  bodyMetrics                   BodyMetric[]
+  streak                        Streak?
+  weeklyRecaps                  WeeklyRecap[]
+  clientChallenges              ChallengeClient[]
+  userAchievements              UserAchievement[]
+  feedbackMedia                 FeedbackMedia[]
+  managedUploads                ManagedUpload[]
+  progressOperations            ProgressOperation[]
+  sentNotifications             Notification[]          @relation("SentNotifications")
+  receivedNotifications         Notification[]          @relation("ReceivedNotifications")
+  durableWork                   DurableWork[]
+  approvalRequestsMade          ApprovalRequest[]       @relation("ApprovalRequester")
+  approvalRequestsReviewed      ApprovalRequest[]       @relation("ApprovalReviewer")
+  planAssignmentsAsClient       PlanAssignment[]        @relation("PlanAssignmentClient")
+  planAssignmentsAsAdmin        PlanAssignment[]        @relation("PlanAssignmentAdmin")
+  autoAssignmentRulesAsClient   AutoAssignmentRule[]    @relation("AutoAssignmentRuleClient")
+  autoAssignmentRulesAsAdmin    AutoAssignmentRule[]    @relation("AutoAssignmentRuleAdmin")
+  progressPhotoSessions         ProgressPhotoSession[]  @relation("ProgressPhotoSessionClient")
+  progressPhotoSessionsUploaded ProgressPhotoSession[]  @relation("ProgressPhotoSessionUploader")
+  progressPhotosUploaded        ProgressPhoto[]         @relation("ProgressPhotoUploader")
 
   @@index([role, created_at, id])
   @@map("users")
@@ -1108,23 +1108,23 @@ model ManagedUpload {
 
 // Independent of User cascades: recover external cleanup after database deletion.
 model ClientDeletion {
-  id               String    @id @default(uuid())
-  client_id        String    @unique
-  requested_by     String
-  status           String    @default("PENDING")
-  firebase_uid     String?
-  object_keys      String[]
-  storage_review   Boolean   @default(false)
-  claimed_at       DateTime?
-  claim_token      String?
-  attempts         Int       @default(0)
-  next_attempt_at  DateTime  @default(now())
-  last_error       String?
-  created_at       DateTime  @default(now())
-  completed_at     DateTime?
-  settle_after     DateTime?
-  last_verified_at DateTime?
-  cleanup_cursor            Int       @default(0)
+  id                         String    @id @default(uuid())
+  client_id                  String    @unique
+  requested_by               String
+  status                     String    @default("PENDING")
+  firebase_uid               String?
+  object_keys                String[]
+  storage_review             Boolean   @default(false)
+  claimed_at                 DateTime?
+  claim_token                String?
+  attempts                   Int       @default(0)
+  next_attempt_at            DateTime  @default(now())
+  last_error                 String?
+  created_at                 DateTime  @default(now())
+  completed_at               DateTime?
+  settle_after               DateTime?
+  last_verified_at           DateTime?
+  cleanup_cursor             Int       @default(0)
   progress_photo_object_keys String[]  @default([])
 
   @@index([status, next_attempt_at])

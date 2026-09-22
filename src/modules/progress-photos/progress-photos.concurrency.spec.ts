@@ -33,6 +33,8 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
   let serviceOne: ProgressPhotosService;
   let serviceTwo: ProgressPhotosService;
 
+  const uploadId = (name: string) => `${name}-${suffix}`;
+
   function createService(prisma: PrismaClient): ProgressPhotosService {
     const uploads = {
       consumePrepared: async (
@@ -68,7 +70,8 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
     );
   }
 
-  async function createVerifiedUpload(id: string) {
+  async function createVerifiedUpload(name: string) {
+    const id = uploadId(name);
     await prismaOne.managedUpload.create({
       data: {
         id,
@@ -107,6 +110,18 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
   });
 
   afterAll(async () => {
+    await prismaOne?.progressPhoto.deleteMany({
+      where: { client_id: clientId },
+    });
+    await prismaOne?.progressPhotoSession.deleteMany({
+      where: { client_id: clientId },
+    });
+    await prismaOne?.managedUpload.deleteMany({
+      where: { owner_id: clientId },
+    });
+    await prismaOne?.uploadTransfer.deleteMany({
+      where: { owner_id: clientId },
+    });
     await prismaOne?.user.deleteMany({ where: { id: clientId } });
     await prismaOne?.$disconnect();
     await prismaTwo?.$disconnect();
@@ -126,12 +141,12 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
 
     const results = await Promise.allSettled([
       serviceOne.associatePhoto(actor, clientId, created.id, {
-        upload_id: 'upload-one',
+        upload_id: uploadId('upload-one'),
         view: ProgressPhotoView.FRONT,
         operation_id: `associate-one-${suffix}`,
       }),
       serviceTwo.associatePhoto(actor, clientId, created.id, {
-        upload_id: 'upload-two',
+        upload_id: uploadId('upload-two'),
         view: ProgressPhotoView.FRONT,
         operation_id: `associate-two-${suffix}`,
       }),
@@ -160,9 +175,11 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
     expect(accepted).toMatchObject({
       value: { id: active?.id, view: ProgressPhotoView.FRONT },
     });
-    expect(['upload-one', 'upload-two']).toContain(active?.managed_upload_id);
+    expect([uploadId('upload-one'), uploadId('upload-two')]).toContain(
+      active?.managed_upload_id,
+    );
     const uploadStates = await prismaOne.managedUpload.findMany({
-      where: { id: { in: ['upload-one', 'upload-two'] } },
+      where: { id: { in: [uploadId('upload-one'), uploadId('upload-two')] } },
       select: { id: true, status: true },
     });
     expect(uploadStates).toHaveLength(2);
@@ -187,7 +204,7 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
     });
     await createVerifiedUpload('upload-replay');
     const dto = {
-      upload_id: 'upload-replay',
+      upload_id: uploadId('upload-replay'),
       view: ProgressPhotoView.LEFT,
       operation_id: `association-replay-${suffix}`,
     };
@@ -204,7 +221,10 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
     ).toBe(1);
     expect(
       await prismaOne.managedUpload.count({
-        where: { id: 'upload-replay', status: ManagedUploadStatus.CONSUMED },
+        where: {
+          id: uploadId('upload-replay'),
+          status: ManagedUploadStatus.CONSUMED,
+        },
       }),
     ).toBe(1);
   });
@@ -224,7 +244,7 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
       clientId,
       created.id,
       {
-        upload_id: 'original',
+        upload_id: uploadId('original'),
         view: ProgressPhotoView.BACK,
         operation_id: `original-${suffix}`,
       },
@@ -232,13 +252,13 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
 
     const results = await Promise.allSettled([
       serviceOne.associatePhoto(actor, clientId, created.id, {
-        upload_id: 'replacement-one',
+        upload_id: uploadId('replacement-one'),
         view: ProgressPhotoView.BACK,
         operation_id: `replacement-one-${suffix}`,
         replaces_photo_id: original.id,
       }),
       serviceTwo.associatePhoto(actor, clientId, created.id, {
-        upload_id: 'replacement-two',
+        upload_id: uploadId('replacement-two'),
         view: ProgressPhotoView.BACK,
         operation_id: `replacement-two-${suffix}`,
         replaces_photo_id: original.id,
@@ -280,7 +300,9 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
       await prismaOne.progressPhoto.findUnique({ where: { id: original.id } }),
     ).toMatchObject({ state: ProgressPhotoState.REPLACED });
     const replacementUploadStates = await prismaOne.managedUpload.findMany({
-      where: { id: { in: ['replacement-one', 'replacement-two'] } },
+      where: {
+        id: { in: [uploadId('replacement-one'), uploadId('replacement-two')] },
+      },
       select: { id: true, status: true },
     });
     expect(replacementUploadStates).toHaveLength(2);
