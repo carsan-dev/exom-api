@@ -114,6 +114,41 @@ describe('UploadsService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it.each([Role.CLIENT, Role.ADMIN, Role.SUPER_ADMIN])(
+    'allows %s to create a progress-photo image session',
+    async (role) => {
+      managedUpload.count.mockResolvedValue(0);
+      prisma.uploadTransfer.findUnique.mockResolvedValueOnce({
+        protocol: 'MULTIPART',
+        state: 'NEW',
+      });
+      managedUpload.create.mockImplementation(({ data }) =>
+        Promise.resolve({
+          ...session(ManagedUploadStatus.PENDING),
+          ...data,
+        }),
+      );
+
+      await expect(
+        service.createSession('client-1', role, {
+          purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+          mimeType: 'image/jpeg',
+          bytes: 100,
+        }),
+      ).resolves.toMatchObject({
+        content_type: 'image/jpeg',
+        max_bytes: 10 * 1024 * 1024,
+      });
+      expect(managedUpload.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+          }),
+        }),
+      );
+    },
+  );
+
   it('rejects arbitrary URLs and uploads owned by another user', async () => {
     managedUpload.findFirst.mockResolvedValue(null);
 

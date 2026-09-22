@@ -690,7 +690,12 @@ export class UploadsService {
     const keys: string[] = [];
     // A bounded page per namespace is enough: cleanup removes it and the next
     // pass discovers the remainder. Only an empty page can certify absence.
-    for (const purpose of ['avatar', 'feedback-image', 'feedback-video']) {
+    for (const purpose of [
+      'avatar',
+      'feedback-image',
+      'feedback-video',
+      'progress-photo',
+    ]) {
       const prefix = `${purpose}/${clientId}/`;
       const page = await this.s3Client.send(
         new ListObjectsV2Command({
@@ -938,9 +943,11 @@ export class UploadsService {
       ManagedUploadPurpose.AVATAR,
       ManagedUploadPurpose.FEEDBACK_IMAGE,
       ManagedUploadPurpose.FEEDBACK_VIDEO,
+      ManagedUploadPurpose.PROGRESS_PHOTO,
     ];
     const adminPurposes = [
       ManagedUploadPurpose.AVATAR,
+      ManagedUploadPurpose.PROGRESS_PHOTO,
       ManagedUploadPurpose.EXERCISE_VIDEO,
       ManagedUploadPurpose.EXERCISE_THUMBNAIL,
       ManagedUploadPurpose.MEAL_IMAGE,

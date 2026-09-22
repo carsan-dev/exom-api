@@ -101,6 +101,7 @@ enum ManagedUploadPurpose {
   EXERCISE_VIDEO
   EXERCISE_THUMBNAIL
   MEAL_IMAGE
+  PROGRESS_PHOTO
 }
 
 enum ManagedUploadStatus {
@@ -189,6 +190,9 @@ model User {
   planAssignmentsAsAdmin      PlanAssignment[]        @relation("PlanAssignmentAdmin")
   autoAssignmentRulesAsClient AutoAssignmentRule[]    @relation("AutoAssignmentRuleClient")
   autoAssignmentRulesAsAdmin  AutoAssignmentRule[]    @relation("AutoAssignmentRuleAdmin")
+  progressPhotoSessions       ProgressPhotoSession[]  @relation("ProgressPhotoSessionClient")
+  progressPhotoSessionsUploaded ProgressPhotoSession[] @relation("ProgressPhotoSessionUploader")
+  progressPhotosUploaded      ProgressPhoto[]         @relation("ProgressPhotoUploader")
 
   @@index([role, created_at, id])
   @@map("users")
@@ -778,6 +782,60 @@ model DayProgress {
 
 // ─── Body Metrics ─────────────────────────────────────────────────────────────
 
+enum ProgressPhotoView {
+  FRONT
+  LEFT
+  RIGHT
+  BACK
+}
+
+enum ProgressPhotoState {
+  ACTIVE
+  REPLACED
+}
+
+model ProgressPhotoSession {
+  id                   String   @id @default(uuid())
+  client_id            String
+  uploader_id          String
+  session_date         DateTime @db.Date
+  session_operation_id String
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  client   User            @relation("ProgressPhotoSessionClient", fields: [client_id], references: [id], onDelete: Cascade)
+  uploader User            @relation("ProgressPhotoSessionUploader", fields: [uploader_id], references: [id], onDelete: Restrict)
+  photos   ProgressPhoto[]
+
+  @@unique([id, client_id])
+  @@unique([uploader_id, session_operation_id])
+  @@index([client_id, session_date, id])
+  @@map("progress_photo_sessions")
+}
+
+model ProgressPhoto {
+  id                       String             @id @default(uuid())
+  session_id               String
+  client_id                String
+  uploader_id              String
+  managed_upload_id        String             @unique
+  view                     ProgressPhotoView
+  state                    ProgressPhotoState @default(ACTIVE)
+  association_operation_id String
+  replaces_photo_id        String?            @unique
+  created_at               DateTime           @default(now())
+
+  session        ProgressPhotoSession @relation(fields: [session_id, client_id], references: [id, client_id], onDelete: Cascade)
+  uploader       User                 @relation("ProgressPhotoUploader", fields: [uploader_id], references: [id], onDelete: Restrict)
+  managed_upload ManagedUpload        @relation(fields: [managed_upload_id], references: [id], onDelete: Cascade)
+  replaces       ProgressPhoto?       @relation("ProgressPhotoReplacement", fields: [replaces_photo_id], references: [id], onDelete: Restrict)
+  replaced_by    ProgressPhoto?       @relation("ProgressPhotoReplacement")
+
+  @@unique([uploader_id, association_operation_id])
+  @@index([session_id, view, state, created_at])
+  @@map("progress_photos")
+}
+
 model BodyMetric {
   id               String   @id @default(uuid())
   client_id        String
@@ -1039,6 +1097,7 @@ model ManagedUpload {
 
   owner           User             @relation(fields: [owner_id], references: [id], onDelete: Cascade)
   approvalRequest ApprovalRequest? @relation(fields: [approval_request_id], references: [id], onDelete: SetNull)
+  progressPhoto   ProgressPhoto?
 
   @@unique([owner_id, client_operation_id])
   @@index([owner_id, status, expires_at])
@@ -1065,7 +1124,8 @@ model ClientDeletion {
   completed_at     DateTime?
   settle_after     DateTime?
   last_verified_at DateTime?
-  cleanup_cursor   Int       @default(0)
+  cleanup_cursor            Int       @default(0)
+  progress_photo_object_keys String[]  @default([])
 
   @@index([status, next_attempt_at])
   @@index([next_attempt_at])
