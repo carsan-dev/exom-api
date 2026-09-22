@@ -198,6 +198,63 @@ describe('UploadsService', () => {
     expect(managedUpload.updateMany).toHaveBeenCalledTimes(1);
   });
 
+  it('requires an actor-owned verified progress-photo upload and consumes it only once', async () => {
+    managedUpload.findFirst.mockResolvedValue({
+      ...session(ManagedUploadStatus.VERIFIED),
+      purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+      mime_type: 'image/jpeg',
+      object_key: 'progress-photo/client-1/file.jpg',
+    });
+    managedUpload.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await expect(
+      service.prepareForConsumption({
+        ownerId: 'client-1',
+        uploadId: 'upload-1',
+        purposes: [ManagedUploadPurpose.PROGRESS_PHOTO],
+      }),
+    ).resolves.toMatchObject({ id: 'upload-1' });
+    await service.consumePrepared(
+      prisma as unknown as import('@prisma/client').Prisma.TransactionClient,
+      'client-1',
+      'upload-1',
+      [ManagedUploadPurpose.PROGRESS_PHOTO],
+    );
+    expect(managedUpload.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          owner_id: 'client-1',
+          purpose: { in: [ManagedUploadPurpose.PROGRESS_PHOTO] },
+          OR: [
+            expect.objectContaining({
+              status: ManagedUploadStatus.VERIFIED,
+            }),
+          ],
+        }),
+      }),
+    );
+
+    managedUpload.findFirst.mockResolvedValue(null);
+    await expect(
+      service.prepareForConsumption({
+        ownerId: 'another-client',
+        uploadId: 'upload-1',
+        purposes: [ManagedUploadPurpose.PROGRESS_PHOTO],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'MANAGED_UPLOAD_REQUIRED' } });
+    managedUpload.findFirst.mockResolvedValue({
+      ...session(ManagedUploadStatus.CONSUMED),
+      purpose: ManagedUploadPurpose.PROGRESS_PHOTO,
+    });
+    await expect(
+      service.prepareForConsumption({
+        ownerId: 'client-1',
+        uploadId: 'upload-1',
+        purposes: [ManagedUploadPurpose.PROGRESS_PHOTO],
+      }),
+    ).rejects.toMatchObject({ response: { code: 'UPLOAD_NOT_VERIFIED' } });
+  });
+
   it('allows only one concurrent consumer of a verified session', async () => {
     managedUpload.updateMany
       .mockResolvedValueOnce({ count: 1 })

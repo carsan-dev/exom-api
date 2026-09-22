@@ -221,7 +221,8 @@ export class ClientDeletionService {
               (!key.startsWith('progress-photo/') ||
                 segments.length !== 3 ||
                 segments[1] !== progressPhotoUpload?.uploaderId ||
-                progressPhotoUpload.ownerId !== progressPhotoUpload.uploaderId)) ||
+                progressPhotoUpload.ownerId !==
+                  progressPhotoUpload.uploaderId)) ||
             (!isCapturedProgressPhoto &&
               (!/^(avatar|feedback-image|feedback-video|progress-photo)\//.test(
                 key,

@@ -64,6 +64,7 @@ export class UploadsService {
   private readonly endpoint: string;
   private readonly isDev: boolean;
   private readonly localUploadsDir: string;
+  private readonly localProgressPhotosDir: string;
   private readonly signedReadExpiresIn: number;
   private readonly transfers: MultipartTransfer;
 
@@ -76,6 +77,12 @@ export class UploadsService {
     this.endpoint = this.config.get<string>('R2_ENDPOINT', '');
     this.isDev = this.config.get<string>('NODE_ENV') !== 'production';
     this.localUploadsDir = path.join(process.cwd(), 'uploads');
+    // Progress photos are private evidence. They must not be exposed by the
+    // generic development static-files mount used by legacy media.
+    this.localProgressPhotosDir = path.join(
+      process.cwd(),
+      'private-progress-photos',
+    );
     this.signedReadExpiresIn = parseInt(
       this.config.get<string>('R2_SIGNED_READ_EXPIRES_SECONDS', '21600'),
       10,
@@ -652,6 +659,41 @@ export class UploadsService {
     );
   }
 
+  async getProgressPhotoReadUrl(
+    photoId: string,
+    fileUrl: string,
+  ): Promise<string> {
+    if (!this.isDev) {
+      return (await this.getSignedReadUrl(fileUrl)) ?? fileUrl;
+    }
+    const port = this.config.get<number>('PORT', 3000);
+    return `http://localhost:${port}/api/v1/progress-photos/photos/${photoId}/file`;
+  }
+
+  async readLocalProgressPhoto(
+    uploadId: string,
+  ): Promise<{ data: Buffer; mimeType: string }> {
+    if (!this.isDev) {
+      throw new NotFoundException('El objeto se lee mediante una URL firmada');
+    }
+    const upload = await this.prisma.managedUpload.findFirst({
+      where: { id: uploadId, purpose: ManagedUploadPurpose.PROGRESS_PHOTO },
+      select: { object_key: true, mime_type: true },
+    });
+    if (!upload) throw new NotFoundException('Foto de progreso no encontrada');
+    try {
+      return {
+        data: await fs.promises.readFile(this.localFilePath(upload.object_key)),
+        mimeType: upload.mime_type,
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new NotFoundException('El objeto de foto no está disponible');
+      }
+      throw error;
+    }
+  }
+
   async uploadFile(
     buffer: Buffer,
     fileKey: string,
@@ -1168,7 +1210,11 @@ export class UploadsService {
     const normalized = this.normalizeObjectKey(fileKey);
     if (!normalized)
       throw new BadRequestException('Clave de archivo no válida');
-    const base = path.resolve(this.localUploadsDir);
+    const base = path.resolve(
+      normalized.startsWith('progress-photo/')
+        ? this.localProgressPhotosDir
+        : this.localUploadsDir,
+    );
     const target = path.resolve(base, normalized);
     if (target !== base && !target.startsWith(`${base}${path.sep}`)) {
       throw new BadRequestException('Clave de archivo no válida');
