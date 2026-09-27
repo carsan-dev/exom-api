@@ -24411,6 +24411,29 @@
             }
           },
           {
+            "description": "Literal case-insensitive substring of the historical exercise name. Does not filter indicators.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "maxLength": 120,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "identification",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "identified"
+              ],
+              "type": "string"
+            }
+          },
+          {
             "description": "Opt in to pagination with a limit from 1 to 100; cursor requires an explicit limit. Without limit, returns the full legacy response within the response-size guard or HTTP 413.",
             "in": "query",
             "name": "limit",
@@ -36459,6 +36482,29 @@
             "required": true,
             "schema": {
               "example": "2026-09-30",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Literal case-insensitive substring of the historical exercise name. Does not filter indicators.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "maxLength": 120,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "identification",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "identified"
+              ],
               "type": "string"
             }
           },

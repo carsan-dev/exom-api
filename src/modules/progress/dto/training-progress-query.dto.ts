@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsInt,
+  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -10,6 +11,10 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import {
+  EXERCISE_IDENTIFICATION,
+  type ExerciseIdentification,
+} from '../training-overview-pagination';
 import { IsDateOnly } from '../../../common/date-only';
 
 export class TrainingProgressRangeQueryDto {
@@ -27,6 +32,27 @@ export class TrainingProgressRangeQueryDto {
 }
 
 export class TrainingOverviewQueryDto extends TrainingProgressRangeQueryDto {
+  @ApiPropertyOptional({
+    maxLength: 120,
+    description:
+      'Literal case-insensitive substring of the historical exercise name. Does not filter indicators.',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @ApiPropertyOptional({
+    enum: Object.values(EXERCISE_IDENTIFICATION),
+    default: EXERCISE_IDENTIFICATION.all,
+  })
+  @IsOptional()
+  @IsIn(Object.values(EXERCISE_IDENTIFICATION))
+  identification?: ExerciseIdentification;
+
   @ApiPropertyOptional({
     minimum: 1,
     maximum: 100,

@@ -1,4 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { TrainingOverviewQueryDto } from './dto/training-progress-query.dto';
 import {
   decodeTrainingOverviewCursor,
   encodeTrainingOverviewCursor,
@@ -10,6 +13,74 @@ const invalid = (action: () => unknown) =>
   expect(action).toThrow(BadRequestException);
 
 describe('training overview keyset pagination', () => {
+  it('binds filtered cursors to exact normalized search and identification and retains unfiltered v1', () => {
+    const filters = {
+      search: '  Remo  ',
+      identification: 'identified' as const,
+    };
+    const cursor = encodeTrainingOverviewCursor(
+      'client-a',
+      range,
+      'exercise-1',
+      filters,
+    );
+    expect(
+      decodeTrainingOverviewCursor(cursor, 'client-a', range, {
+        ...filters,
+        search: 'Remo',
+      }),
+    ).toBe('exercise-1');
+    for (const changed of [
+      { ...filters, search: 'other' },
+      { ...filters, identification: 'all' as const },
+      {},
+    ]) {
+      invalid(() =>
+        decodeTrainingOverviewCursor(cursor, 'client-a', range, changed),
+      );
+    }
+    const old = encodeTrainingOverviewCursor('client-a', range, 'exercise-1');
+    expect(
+      decodeTrainingOverviewCursor(old, 'client-a', range, {
+        search: ' ',
+        identification: 'all',
+      }),
+    ).toBe('exercise-1');
+    invalid(() =>
+      decodeTrainingOverviewCursor(old, 'client-a', range, filters),
+    );
+  });
+  it('validates optional search and identification without changing old requests', () => {
+    const query = plainToInstance(TrainingOverviewQueryDto, {
+      ...range,
+      search: '  ReMo  ',
+      identification: 'identified',
+      limit: '20',
+    });
+    expect(validateSync(query)).toEqual([]);
+    expect(query).toMatchObject({
+      search: 'ReMo',
+      identification: 'identified',
+      limit: 20,
+    });
+    for (const invalidFilter of [
+      { search: 'a'.repeat(121) },
+      { search: 123 },
+      { identification: 'confirmed' },
+    ]) {
+      expect(
+        validateSync(
+          plainToInstance(TrainingOverviewQueryDto, {
+            ...range,
+            ...invalidFilter,
+          }),
+        ).length,
+      ).toBeGreaterThan(0);
+    }
+    expect(
+      validateSync(plainToInstance(TrainingOverviewQueryDto, range)),
+    ).toEqual([]);
+  });
   it('roundtrips the last exercise ID with exact client and window binding', () => {
     const token = encodeTrainingOverviewCursor('client-a', range, 'exercise-α');
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);

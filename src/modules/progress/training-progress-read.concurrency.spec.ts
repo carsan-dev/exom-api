@@ -101,6 +101,161 @@ suite('training progress bounded PostgreSQL read model', () => {
     }
   });
 
+  it('bounds a filtered page with 1000 named historical exercises', async () => {
+    const owner = await client();
+    const entries = Array.from({ length: 1000 }, (_, i) => ({
+      exercise_id: `lift-${String(i).padStart(4, '0')}`,
+      training_session_id: 's',
+      training_exercise_id: `occurrence-${i}`,
+      sets: [{ set_number: 1, weight_kg: 10, reps: 2 }],
+    }));
+    await db.dayProgress.create({
+      data: {
+        client_id: owner,
+        date: date(range.to),
+        exercises_completed: entries,
+        training_sessions: [
+          { training_id: 'training', training_session_id: 's' },
+        ],
+      },
+    });
+    await db.trainingDaySnapshot.create({
+      data: {
+        client_id: owner,
+        date: date(range.to),
+        training_id: 'training',
+        version: 1,
+        payload: {
+          exercises: entries.map((entry, i) => ({
+            id: entry.training_exercise_id,
+            exercise_id: entry.exercise_id,
+            exercise: { name: `Historical lift ${i}` },
+          })),
+        },
+      },
+    });
+    const started = Date.now();
+    const options = {
+      limit: 20,
+      identification: 'identified' as const,
+      search: 'lift 99',
+    };
+    const result = await reader.getAuthorizedOverview(
+      owner,
+      owner,
+      range,
+      options,
+    );
+    expect(result.exercises).toHaveLength(11);
+    expect(result.next_cursor).toBeNull();
+    expect(result.indicators.volume).toBe(20000);
+    expect(Date.now() - started).toBeLessThan(30000);
+    console.log(
+      `Filtered 1000-name overview: ${Date.now() - started}ms, ${Buffer.byteLength(JSON.stringify(result))} bytes`,
+    );
+  }, 35000);
+
+  it('searches identified historical names before pagination without filtering global indicators', async () => {
+    const owner = await client();
+    const entries = Array.from({ length: 105 }, (_, index) => ({
+      exercise_id: `lift-${String(index).padStart(3, '0')}`,
+      training_session_id: 's',
+      training_exercise_id: `occurrence-${index}`,
+      sets: [{ set_number: 1, weight_kg: 10, reps: 2, rir: 2 }],
+    }));
+    await db.dayProgress.create({
+      data: {
+        client_id: owner,
+        date: date(range.to),
+        exercises_completed: entries,
+        training_sessions: [
+          { training_id: 'training', training_session_id: 's', rpe: 7 },
+        ],
+      },
+    });
+    await db.trainingDaySnapshot.create({
+      data: {
+        client_id: owner,
+        date: date(range.to),
+        training_id: 'training',
+        version: 1,
+        payload: {
+          exercises: entries.slice(100).map((entry, index) => ({
+            id: entry.training_exercise_id,
+            exercise_id: entry.exercise_id,
+            exercise: {
+              name:
+                index === 4
+                  ? '   '
+                  : index === 3
+                    ? 'Remo 100%_literal'
+                    : 'Remo histórico',
+            },
+          })),
+        },
+      },
+    });
+    const before = await db.dayProgress.findMany({
+      where: { client_id: owner },
+    });
+    const baseline = await reader.getAuthorizedOverview(owner, owner, range, {
+      limit: 100,
+    });
+    const options = {
+      limit: 2,
+      identification: 'identified' as const,
+      search: '  REMO  ',
+    };
+    const first = await reader.getAuthorizedOverview(
+      owner,
+      owner,
+      range,
+      options,
+    );
+    expect(first.exercises.map((item) => item.exercise_id)).toEqual([
+      'lift-100',
+      'lift-101',
+    ]);
+    expect(first.indicators).toEqual(baseline.indicators);
+    expect(first.next_cursor).toEqual(expect.any(String));
+    const second = await reader.getAuthorizedOverview(owner, owner, range, {
+      ...options,
+      cursor: first.next_cursor!,
+    });
+    expect(second.exercises.map((item) => item.exercise_id)).toEqual([
+      'lift-102',
+      'lift-103',
+    ]);
+    expect(second.next_cursor).toBeNull();
+    expect(second.indicators).toEqual(baseline.indicators);
+    const empty = await reader.getAuthorizedOverview(owner, owner, range, {
+      ...options,
+      search: 'missing',
+    });
+    expect(empty.exercises).toEqual([]);
+    expect(empty.indicators).toEqual(baseline.indicators);
+    const literal = await reader.getAuthorizedOverview(owner, owner, range, {
+      ...options,
+      search: '%_',
+    });
+    expect(literal.exercises.map((item) => item.exercise_id)).toEqual([
+      'lift-103',
+    ]);
+    await expect(
+      reader.getAuthorizedOverview(owner, owner, range, {
+        ...options,
+        search: 'other',
+        cursor: first.next_cursor!,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      reader.getAuthorizedOverview(await client(), owner, range, options),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(
+      await db.dayProgress.findMany({ where: { client_id: owner } }),
+    ).toEqual(before);
+  });
+
   it('authorizes both read models from canonical actor state and active assignments before reading progress', async () => {
     const owner = await client();
     const stranger = await client();

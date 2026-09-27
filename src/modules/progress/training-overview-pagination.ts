@@ -1,5 +1,39 @@
 import { BadRequestException } from '@nestjs/common';
 
+export const EXERCISE_IDENTIFICATION = {
+  all: 'all',
+  identified: 'identified',
+} as const;
+export type ExerciseIdentification =
+  (typeof EXERCISE_IDENTIFICATION)[keyof typeof EXERCISE_IDENTIFICATION];
+export interface TrainingOverviewFilters {
+  search?: string;
+  identification?: ExerciseIdentification;
+}
+export interface TrainingOverviewOptions extends TrainingOverviewFilters {
+  limit?: number;
+  cursor?: string;
+}
+
+export function normalizeTrainingOverviewFilters(
+  filters: TrainingOverviewFilters,
+) {
+  if (
+    filters.search !== undefined &&
+    (typeof filters.search !== 'string' || filters.search.trim().length > 120)
+  )
+    throw new BadRequestException('Invalid exercise search');
+  if (
+    filters.identification !== undefined &&
+    !Object.values(EXERCISE_IDENTIFICATION).includes(filters.identification)
+  )
+    throw new BadRequestException('Invalid exercise identification');
+  return {
+    search: filters.search?.trim() ?? '',
+    identification: filters.identification ?? EXERCISE_IDENTIFICATION.all,
+  };
+}
+
 interface DateWindow {
   from: string;
   to: string;
@@ -14,12 +48,21 @@ export function encodeTrainingOverviewCursor(
   clientId: string,
   range: DateWindow,
   lastExerciseId: string,
+  filters: TrainingOverviewFilters = {},
 ): string {
+  const normalized = normalizeTrainingOverviewFilters(filters);
+  const filtered = Boolean(
+    normalized.search ||
+    normalized.identification !== EXERCISE_IDENTIFICATION.all,
+  );
   if (typeof lastExerciseId !== 'string' || !lastExerciseId.length)
     throw invalidCursor();
   const token = Buffer.from(
     JSON.stringify({
-      v: 1,
+      v: filtered ? 2 : 1,
+      ...(filtered
+        ? { q: normalized.search, k: normalized.identification }
+        : {}),
       c: clientId,
       f: range.from,
       t: range.to,
@@ -34,7 +77,13 @@ export function decodeTrainingOverviewCursor(
   cursor: string,
   clientId: string,
   range: DateWindow,
+  filters: TrainingOverviewFilters = {},
 ): string {
+  const normalized = normalizeTrainingOverviewFilters(filters);
+  const filtered = Boolean(
+    normalized.search ||
+    normalized.identification !== EXERCISE_IDENTIFICATION.all,
+  );
   try {
     if (
       typeof cursor !== 'string' ||
@@ -52,7 +101,12 @@ export function decodeTrainingOverviewCursor(
       typeof value !== 'object' ||
       Array.isArray(value) ||
       !('v' in value) ||
-      value.v !== 1 ||
+      (filtered ? value.v !== 2 : value.v !== 1) ||
+      (filtered &&
+        (!('q' in value) ||
+          value.q !== normalized.search ||
+          !('k' in value) ||
+          value.k !== normalized.identification)) ||
       !('c' in value) ||
       value.c !== clientId ||
       !('f' in value) ||
@@ -62,7 +116,7 @@ export function decodeTrainingOverviewCursor(
       !('i' in value) ||
       typeof value.i !== 'string' ||
       !value.i.length ||
-      Object.keys(value).length !== 5
+      Object.keys(value).length !== (filtered ? 7 : 5)
     )
       throw invalidCursor();
     return value.i;
@@ -73,7 +127,7 @@ export function decodeTrainingOverviewCursor(
 
 // Only invoke for opted-in pagination; the legacy unpaged route is separate.
 export function validateTrainingOverviewPage(
-  options: { limit?: number; cursor?: string },
+  options: TrainingOverviewOptions,
   clientId: string,
   range: DateWindow,
 ): { limit: number; lastExerciseId: string | null } {
@@ -87,6 +141,11 @@ export function validateTrainingOverviewPage(
     lastExerciseId:
       options.cursor === undefined
         ? null
-        : decodeTrainingOverviewCursor(options.cursor, clientId, range),
+        : decodeTrainingOverviewCursor(
+            options.cursor,
+            clientId,
+            range,
+            options,
+          ),
   };
 }

@@ -342,7 +342,12 @@ export class UsersController {
       admin.id,
       clientId,
       { from: query.from, to: query.to },
-      { limit: query.limit, cursor: query.cursor },
+      {
+        limit: query.limit,
+        cursor: query.cursor,
+        search: query.search,
+        identification: query.identification,
+      },
     );
   }
 
