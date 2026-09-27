@@ -19287,6 +19287,49 @@
         ]
       },
       "Wire445": {
+        "properties": {
+          "nextCursor": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "page": {
+            "$ref": "#/components/schemas/Wire446"
+          }
+        },
+        "required": [
+          "page",
+          "nextCursor"
+        ],
+        "type": "object"
+      },
+      "Wire446": {
+        "items": {
+          "$ref": "#/components/schemas/Wire447"
+        },
+        "type": "array"
+      },
+      "Wire447": {
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "uncertain_legacy"
+            ],
+            "type": "string"
+          },
+          "record_index": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "record_index",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "Wire448": {
         "anyOf": [
           {
             "enum": [
@@ -19295,14 +19338,14 @@
             "nullable": true
           },
           {
-            "$ref": "#/components/schemas/Wire446"
+            "$ref": "#/components/schemas/Wire449"
           },
           {
-            "$ref": "#/components/schemas/Wire450"
+            "$ref": "#/components/schemas/Wire453"
           }
         ]
       },
-      "Wire446": {
+      "Wire449": {
         "properties": {
           "admin_reply_sent_at": {
             "enum": [
@@ -19324,7 +19367,7 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire447"
+            "$ref": "#/components/schemas/Wire450"
           },
           "exercises_completed": {
             "$ref": "#/components/schemas/Wire95"
@@ -19370,118 +19413,6 @@
           "admin_reply_text",
           "admin_reply_sent_at",
           "diet_history"
-        ],
-        "type": "object"
-      },
-      "Wire447": {
-        "items": {
-          "$ref": "#/components/schemas/Wire448"
-        },
-        "type": "array"
-      },
-      "Wire448": {
-        "properties": {
-          "captured_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "client_id": {
-            "type": "string"
-          },
-          "date": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "diet": {
-            "$ref": "#/components/schemas/Wire449"
-          },
-          "diet_id": {
-            "type": "string"
-          },
-          "provenance": {
-            "enum": [
-              "observed",
-              "legacy_available"
-            ]
-          },
-          "version": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "client_id",
-          "date",
-          "diet_id",
-          "version",
-          "provenance",
-          "captured_at",
-          "diet"
-        ],
-        "type": "object"
-      },
-      "Wire449": {
-        "properties": {
-          "created_at": {
-            "type": "string"
-          },
-          "created_by": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "group": {
-            "$ref": "#/components/schemas/Wire152"
-          },
-          "group_id": {
-            "$ref": "#/components/schemas/Wire9"
-          },
-          "id": {
-            "type": "string"
-          },
-          "is_active": {
-            "enum": [
-              false,
-              true
-            ]
-          },
-          "meals": {
-            "$ref": "#/components/schemas/Wire154"
-          },
-          "name": {
-            "type": "string"
-          },
-          "tags": {
-            "$ref": "#/components/schemas/Wire161"
-          },
-          "total_calories": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "total_carbs_g": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "total_fat_g": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "total_protein_g": {
-            "$ref": "#/components/schemas/Wire60"
-          },
-          "updated_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "group",
-          "meals",
-          "name",
-          "created_at",
-          "id",
-          "updated_at",
-          "is_active",
-          "tags",
-          "total_calories",
-          "total_protein_g",
-          "total_carbs_g",
-          "total_fat_g",
-          "created_by",
-          "group_id"
         ],
         "type": "object"
       },
@@ -19566,6 +19497,118 @@
         "type": "object"
       },
       "Wire450": {
+        "items": {
+          "$ref": "#/components/schemas/Wire451"
+        },
+        "type": "array"
+      },
+      "Wire451": {
+        "properties": {
+          "captured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "date": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "diet": {
+            "$ref": "#/components/schemas/Wire452"
+          },
+          "diet_id": {
+            "type": "string"
+          },
+          "provenance": {
+            "enum": [
+              "observed",
+              "legacy_available"
+            ]
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "client_id",
+          "date",
+          "diet_id",
+          "version",
+          "provenance",
+          "captured_at",
+          "diet"
+        ],
+        "type": "object"
+      },
+      "Wire452": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "group": {
+            "$ref": "#/components/schemas/Wire152"
+          },
+          "group_id": {
+            "$ref": "#/components/schemas/Wire9"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_active": {
+            "enum": [
+              false,
+              true
+            ]
+          },
+          "meals": {
+            "$ref": "#/components/schemas/Wire154"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Wire161"
+          },
+          "total_calories": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "total_carbs_g": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "total_fat_g": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "total_protein_g": {
+            "$ref": "#/components/schemas/Wire60"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "meals",
+          "name",
+          "created_at",
+          "id",
+          "updated_at",
+          "is_active",
+          "tags",
+          "total_calories",
+          "total_protein_g",
+          "total_carbs_g",
+          "total_fat_g",
+          "created_by",
+          "group_id"
+        ],
+        "type": "object"
+      },
+      "Wire453": {
         "properties": {
           "admin_reply_sent_at": {
             "$ref": "#/components/schemas/Wire39"
@@ -19585,10 +19628,10 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire447"
+            "$ref": "#/components/schemas/Wire450"
           },
           "exercises_completed": {
-            "$ref": "#/components/schemas/Wire451"
+            "$ref": "#/components/schemas/Wire454"
           },
           "id": {
             "type": "string"
@@ -19597,7 +19640,7 @@
             "$ref": "#/components/schemas/Wire43"
           },
           "meals_completed_details": {
-            "$ref": "#/components/schemas/Wire453"
+            "$ref": "#/components/schemas/Wire456"
           },
           "notes": {
             "$ref": "#/components/schemas/Wire9"
@@ -19640,13 +19683,13 @@
         ],
         "type": "object"
       },
-      "Wire451": {
+      "Wire454": {
         "items": {
-          "$ref": "#/components/schemas/Wire452"
+          "$ref": "#/components/schemas/Wire455"
         },
         "type": "array"
       },
-      "Wire452": {
+      "Wire455": {
         "properties": {
           "exercise_id": {
             "type": "string"
@@ -19661,13 +19704,13 @@
         ],
         "type": "object"
       },
-      "Wire453": {
+      "Wire456": {
         "items": {
-          "$ref": "#/components/schemas/Wire454"
+          "$ref": "#/components/schemas/Wire457"
         },
         "type": "array"
       },
-      "Wire454": {
+      "Wire457": {
         "properties": {
           "meal_id": {
             "type": "string"
@@ -19682,40 +19725,19 @@
         ],
         "type": "object"
       },
-      "Wire455": {
+      "Wire458": {
         "items": {
-          "$ref": "#/components/schemas/Wire456"
+          "$ref": "#/components/schemas/Wire459"
         },
         "type": "array"
       },
-      "Wire456": {
+      "Wire459": {
         "properties": {
           "date": {
             "type": "string"
           },
           "value": {
             "$ref": "#/components/schemas/Wire60"
-          }
-        },
-        "required": [
-          "date",
-          "value"
-        ],
-        "type": "object"
-      },
-      "Wire457": {
-        "items": {
-          "$ref": "#/components/schemas/Wire458"
-        },
-        "type": "array"
-      },
-      "Wire458": {
-        "properties": {
-          "date": {
-            "type": "string"
-          },
-          "value": {
-            "type": "number"
           }
         },
         "required": [
@@ -19740,6 +19762,27 @@
           "profile",
           "id",
           "email"
+        ],
+        "type": "object"
+      },
+      "Wire460": {
+        "items": {
+          "$ref": "#/components/schemas/Wire461"
+        },
+        "type": "array"
+      },
+      "Wire461": {
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "value"
         ],
         "type": "object"
       },
@@ -23516,7 +23559,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire457"
+                      "$ref": "#/components/schemas/Wire460"
                     },
                     "success": {
                       "enum": [
@@ -23676,7 +23719,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire455"
+                      "$ref": "#/components/schemas/Wire458"
                     },
                     "success": {
                       "enum": [
@@ -23952,7 +23995,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire445"
+                      "$ref": "#/components/schemas/Wire448"
                     },
                     "success": {
                       "enum": [
@@ -24117,6 +24160,113 @@
           }
         ],
         "summary": "Get paginated client exercise loads",
+        "tags": [
+          "Admin - Users"
+        ]
+      }
+    },
+    "/api/v1/admin/clients/{id}/progress/legacy-training-records": {
+      "get": {
+        "description": "Returns dates and per-day ordinals only; historical completion is not confirmed.",
+        "operationId": "UsersController_getClientLegacyTrainingRecords",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive start civil date. from/to include both dates; maximum 366 dates per query (larger windows return 400). Access older history with consecutive windows.",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "example": "2026-09-01",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive civil date",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "example": "2026-09-30",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Opaque pagination cursor",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Wire445"
+                    },
+                    "success": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean"
+                    },
+                    "timestamp": {
+                      "format": "date-time",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "data",
+                    "timestamp"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Respuesta HTTP serializada"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Rechazo de validación/autorización, conflicto o fallo temporal; se conserva el código HTTP real y el recibo público cuando aplica."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List paginated legacy training records with uncertain completion",
         "tags": [
           "Admin - Users"
         ]

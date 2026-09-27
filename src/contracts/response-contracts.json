@@ -2178,6 +2178,19 @@
         }
       ]
     },
+    "UsersController_getClientLegacyTrainingRecords": {
+      "schema": {
+        "$ref": "#/components/schemas/Wire445"
+      },
+      "dataOptional": false,
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true
+        }
+      ]
+    },
     "UsersController_getClientTrainingSessions": {
       "schema": {
         "$ref": "#/components/schemas/Wire313"
@@ -2216,7 +2229,7 @@
     },
     "UsersController_getClientDayProgress": {
       "schema": {
-        "$ref": "#/components/schemas/Wire445"
+        "$ref": "#/components/schemas/Wire448"
       },
       "dataOptional": false,
       "parameters": [
@@ -2325,7 +2338,7 @@
     },
     "UsersController_getClientWeightHistory": {
       "schema": {
-        "$ref": "#/components/schemas/Wire455"
+        "$ref": "#/components/schemas/Wire458"
       },
       "dataOptional": false,
       "parameters": [
@@ -2338,7 +2351,7 @@
     },
     "UsersController_getClientBodyHistory": {
       "schema": {
-        "$ref": "#/components/schemas/Wire457"
+        "$ref": "#/components/schemas/Wire460"
       },
       "dataOptional": false,
       "parameters": [
@@ -14122,6 +14135,49 @@
       ]
     },
     "Wire445": {
+      "type": "object",
+      "properties": {
+        "page": {
+          "$ref": "#/components/schemas/Wire446"
+        },
+        "nextCursor": {
+          "$ref": "#/components/schemas/Wire9"
+        }
+      },
+      "required": [
+        "page",
+        "nextCursor"
+      ]
+    },
+    "Wire446": {
+      "type": "array",
+      "items": {
+        "$ref": "#/components/schemas/Wire447"
+      }
+    },
+    "Wire447": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "record_index": {
+          "type": "number"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "uncertain_legacy"
+          ]
+        }
+      },
+      "required": [
+        "date",
+        "record_index",
+        "kind"
+      ]
+    },
+    "Wire448": {
       "anyOf": [
         {
           "enum": [
@@ -14130,14 +14186,14 @@
           "nullable": true
         },
         {
-          "$ref": "#/components/schemas/Wire446"
+          "$ref": "#/components/schemas/Wire449"
         },
         {
-          "$ref": "#/components/schemas/Wire450"
+          "$ref": "#/components/schemas/Wire453"
         }
       ]
     },
-    "Wire446": {
+    "Wire449": {
       "type": "object",
       "properties": {
         "id": {
@@ -14190,7 +14246,7 @@
           "nullable": true
         },
         "diet_history": {
-          "$ref": "#/components/schemas/Wire447"
+          "$ref": "#/components/schemas/Wire450"
         }
       },
       "required": [
@@ -14208,13 +14264,13 @@
         "diet_history"
       ]
     },
-    "Wire447": {
+    "Wire450": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire448"
+        "$ref": "#/components/schemas/Wire451"
       }
     },
-    "Wire448": {
+    "Wire451": {
       "type": "object",
       "properties": {
         "client_id": {
@@ -14241,7 +14297,7 @@
           "format": "date-time"
         },
         "diet": {
-          "$ref": "#/components/schemas/Wire449"
+          "$ref": "#/components/schemas/Wire452"
         }
       },
       "required": [
@@ -14254,7 +14310,7 @@
         "diet"
       ]
     },
-    "Wire449": {
+    "Wire452": {
       "type": "object",
       "properties": {
         "group": {
@@ -14320,17 +14376,17 @@
         "group_id"
       ]
     },
-    "Wire450": {
+    "Wire453": {
       "type": "object",
       "properties": {
         "diet_history": {
-          "$ref": "#/components/schemas/Wire447"
+          "$ref": "#/components/schemas/Wire450"
         },
         "exercises_completed": {
-          "$ref": "#/components/schemas/Wire451"
+          "$ref": "#/components/schemas/Wire454"
         },
         "meals_completed_details": {
-          "$ref": "#/components/schemas/Wire453"
+          "$ref": "#/components/schemas/Wire456"
         },
         "created_at": {
           "type": "string",
@@ -14395,13 +14451,13 @@
         "admin_reply_sent_at"
       ]
     },
-    "Wire451": {
+    "Wire454": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire452"
+        "$ref": "#/components/schemas/Wire455"
       }
     },
-    "Wire452": {
+    "Wire455": {
       "type": "object",
       "properties": {
         "exercise_name": {
@@ -14416,13 +14472,13 @@
         "exercise_id"
       ]
     },
-    "Wire453": {
+    "Wire456": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire454"
+        "$ref": "#/components/schemas/Wire457"
       }
     },
-    "Wire454": {
+    "Wire457": {
       "type": "object",
       "properties": {
         "meal_id": {
@@ -14437,13 +14493,13 @@
         "meal_name"
       ]
     },
-    "Wire455": {
+    "Wire458": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire456"
+        "$ref": "#/components/schemas/Wire459"
       }
     },
-    "Wire456": {
+    "Wire459": {
       "type": "object",
       "properties": {
         "date": {
@@ -14458,13 +14514,13 @@
         "value"
       ]
     },
-    "Wire457": {
+    "Wire460": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire458"
+        "$ref": "#/components/schemas/Wire461"
       }
     },
-    "Wire458": {
+    "Wire461": {
       "type": "object",
       "properties": {
         "date": {

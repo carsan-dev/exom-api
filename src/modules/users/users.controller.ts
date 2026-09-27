@@ -364,6 +364,26 @@ export class UsersController {
     );
   }
 
+  @Get('clients/:id/progress/legacy-training-records')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({
+    summary: 'List paginated legacy training records with uncertain completion',
+    description:
+      'Returns dates and per-day ordinals only; historical completion is not confirmed.',
+  })
+  getClientLegacyTrainingRecords(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: TrainingProgressLoadQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedLegacyTrainingRecords(
+      admin.id,
+      clientId,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
   @Get('clients/:id/progress/training-sessions')
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @ApiOperation({ summary: 'List paginated client training sessions' })
