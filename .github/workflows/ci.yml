@@ -54,7 +54,11 @@ jobs:
       - run: node --test scripts/test-database.test.cjs
       - run: npm test -- --runInBand
       - run: npm run test:concurrency
-      - run: npm run test:e2e
+      - name: Run isolated HTTP integration suite
+        run: npm run test:e2e
+        env:
+          HOST: 127.0.0.1
+          EXOM_SMOKE_DISABLE_SCHEDULERS: '1'
       - name: Build the reviewed Docker source
         run: docker build --tag exom-api:${{ github.sha }} .
       - name: Smoke test the runner
