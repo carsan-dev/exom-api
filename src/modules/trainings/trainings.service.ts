@@ -794,14 +794,6 @@ export class TrainingsService {
     for (const progress of progresses) {
       const key = `${progress.client_id}:${progress.date.toISOString()}`;
       if (!assignedKeys.has(key) || historicalKeys.has(key)) continue;
-      const reconciled = reconcileTrainingProgress(
-        progress.exercises_completed,
-        currentExercises,
-        explicitlyDeletedIds,
-      );
-      const completedIds = new Set(progress.trainings_completed);
-      if (reconciled.trainingCompleted) completedIds.add(trainingId);
-      else completedIds.delete(trainingId);
       const assignment = assignments.find(
         (item) => `${item.client_id}:${item.date.toISOString()}` === key,
       )!;
@@ -810,15 +802,53 @@ export class TrainingsService {
         : assignment.training_id
           ? [assignment.training_id]
           : [];
+      // Without an occurrence ID a catalog entry cannot be owned by one of
+      // several assigned trainings. Keep it as history, never infer its owner.
+      const entries = progress.exercises_completed;
+      const relevantEntries =
+        assignedIds.length > 1 && Array.isArray(entries)
+          ? entries.filter(
+              (entry) =>
+                typeof entry === 'object' &&
+                entry !== null &&
+                !Array.isArray(entry) &&
+                typeof entry.training_exercise_id === 'string',
+            )
+          : entries;
+      const reconciled = reconcileTrainingProgress(
+        relevantEntries,
+        currentExercises,
+        explicitlyDeletedIds,
+      );
+      const completedIds = new Set(progress.trainings_completed);
+      // Old IDs may record explicit completion or a derived/backfilled result;
+      // catalog edits cannot establish their provenance or erase that history.
+      if (reconciled.trainingCompleted) completedIds.add(trainingId);
+      const historicalLegacyEntries =
+        assignedIds.length > 1 && Array.isArray(entries)
+          ? entries.filter(
+              (entry) =>
+                typeof entry !== 'object' ||
+                entry === null ||
+                Array.isArray(entry) ||
+                typeof entry.training_exercise_id !== 'string',
+            )
+          : [];
       await tx.dayProgress.update({
         where: { id: progress.id },
         data: {
-          exercises_completed:
-            reconciled.entries as unknown as Prisma.InputJsonValue,
+          exercises_completed: [
+            ...reconciled.entries,
+            ...historicalLegacyEntries,
+          ] as unknown as Prisma.InputJsonValue,
           trainings_completed: [...completedIds],
+          // This edit only evaluates trainingId. With several assigned trainings
+          // we cannot prove the others from their ambiguous historical IDs, so
+          // leave an incomplete day incomplete until explicit completion or a
+          // reconciliation that verifies every assigned training's execution.
           training_completed:
-            assignedIds.length > 0 &&
-            assignedIds.every((id) => completedIds.has(id)),
+            progress.training_completed ||
+            (assignedIds.length === 1 && reconciled.trainingCompleted),
         },
       });
     }

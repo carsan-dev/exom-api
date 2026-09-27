@@ -89,39 +89,44 @@ import { CompletedSetDto as D86 } from '../modules/progress/dto/mark-completed.d
 import { MarkExerciseDto as D87 } from '../modules/progress/dto/mark-completed.dto';
 import { MarkMealDto as D88 } from '../modules/progress/dto/mark-completed.dto';
 import { CompleteTrainingDto as D89 } from '../modules/progress/dto/mark-completed.dto';
-import { MobileAppConfigResponseDto as D90 } from '../modules/public-config/dto/mobile-app-config-response.dto';
-import { UpdateMobileReleaseDto as D91 } from '../modules/public-config/dto/update-mobile-release.dto';
-import { AdminRecapQueryDto as D92 } from '../modules/recaps/dto/admin-recap-query.dto';
-import { CreateRecapDto as D93 } from '../modules/recaps/dto/create-recap.dto';
-import { UpdateRecapDto as D94 } from '../modules/recaps/dto/create-recap.dto';
-import { ReviewRecapDto as D95 } from '../modules/recaps/dto/create-recap.dto';
-import { TrainingExerciseDto as D96 } from '../modules/trainings/dto/create-training.dto';
-import { TrainingItemExerciseDto as D97 } from '../modules/trainings/dto/create-training.dto';
-import { TrainingCircuitExerciseDto as D98 } from '../modules/trainings/dto/create-training.dto';
-import { TrainingCircuitItemDto as D99 } from '../modules/trainings/dto/create-training.dto';
-import { CreateTrainingDto as D100 } from '../modules/trainings/dto/create-training.dto';
-import { UpdateTrainingDto as D101 } from '../modules/trainings/dto/create-training.dto';
-import { TrainingTagsResponseDto as D102 } from '../modules/trainings/dto/training-tags-response.dto';
-import { TrainingTypesResponseDto as D103 } from '../modules/trainings/dto/training-types-response.dto';
-import { TrainingsQueryDto as D104 } from '../modules/trainings/dto/trainings-query.dto';
-import { AdminClientCalendarMonthQueryDto as D105 } from '../modules/users/dto/admin-client-calendar-query.dto';
-import { AdminClientCalendarWeekQueryDto as D106 } from '../modules/users/dto/admin-client-calendar-query.dto';
-import { CreateAdminClientMetricDto as D107 } from '../modules/users/dto/admin-client-metric.dto';
-import { UpdateAdminClientMetricDto as D108 } from '../modules/users/dto/admin-client-metric.dto';
-import { AdminClientBodyHistoryQueryDto as D109 } from '../modules/users/dto/admin-client-metrics-query.dto';
-import { AdminClientProgressQueryDto as D110 } from '../modules/users/dto/admin-client-progress-query.dto';
-import { ReplyToTrainingNoteDto as D111 } from '../modules/users/dto/admin-client-progress-query.dto';
-import { AdminClientsQueryDto as D112 } from '../modules/users/dto/admin-clients-query.dto';
-import { AdminUsersQueryDto as D113 } from '../modules/users/dto/admin-users-query.dto';
-import { ArchiveClientDto as D114 } from '../modules/users/dto/archive-client.dto';
-import { ClientAssignmentResponseDto as D115 } from '../modules/users/dto/client-assignment-response.dto';
-import { CreateClientDto as D116 } from '../modules/users/dto/create-client.dto';
-import { UpdateRoleDto as D117 } from '../modules/users/dto/create-client.dto';
-import { CreateAdminDto as D118 } from '../modules/users/dto/manage-user.dto';
-import { UpdateUserDto as D119 } from '../modules/users/dto/manage-user.dto';
-import { UpdateUserStatusDto as D120 } from '../modules/users/dto/manage-user.dto';
-import { UpdateClientAssignmentsDto as D121 } from '../modules/users/dto/update-client-assignments.dto';
-import { UpdateClientProfileDto as D122 } from '../modules/users/dto/update-client-profile.dto';
+import { TrainingProgressRangeQueryDto as D90 } from '../modules/progress/dto/training-progress-query.dto';
+import { TrainingOverviewQueryDto as D91 } from '../modules/progress/dto/training-progress-query.dto';
+import { TrainingProgressPageQueryDto as D92 } from '../modules/progress/dto/training-progress-query.dto';
+import { TrainingProgressLoadQueryDto as D93 } from '../modules/progress/dto/training-progress-query.dto';
+import { TrainingProgressSessionParamsDto as D94 } from '../modules/progress/dto/training-progress-query.dto';
+import { MobileAppConfigResponseDto as D95 } from '../modules/public-config/dto/mobile-app-config-response.dto';
+import { UpdateMobileReleaseDto as D96 } from '../modules/public-config/dto/update-mobile-release.dto';
+import { AdminRecapQueryDto as D97 } from '../modules/recaps/dto/admin-recap-query.dto';
+import { CreateRecapDto as D98 } from '../modules/recaps/dto/create-recap.dto';
+import { UpdateRecapDto as D99 } from '../modules/recaps/dto/create-recap.dto';
+import { ReviewRecapDto as D100 } from '../modules/recaps/dto/create-recap.dto';
+import { TrainingExerciseDto as D101 } from '../modules/trainings/dto/create-training.dto';
+import { TrainingItemExerciseDto as D102 } from '../modules/trainings/dto/create-training.dto';
+import { TrainingCircuitExerciseDto as D103 } from '../modules/trainings/dto/create-training.dto';
+import { TrainingCircuitItemDto as D104 } from '../modules/trainings/dto/create-training.dto';
+import { CreateTrainingDto as D105 } from '../modules/trainings/dto/create-training.dto';
+import { UpdateTrainingDto as D106 } from '../modules/trainings/dto/create-training.dto';
+import { TrainingTagsResponseDto as D107 } from '../modules/trainings/dto/training-tags-response.dto';
+import { TrainingTypesResponseDto as D108 } from '../modules/trainings/dto/training-types-response.dto';
+import { TrainingsQueryDto as D109 } from '../modules/trainings/dto/trainings-query.dto';
+import { AdminClientCalendarMonthQueryDto as D110 } from '../modules/users/dto/admin-client-calendar-query.dto';
+import { AdminClientCalendarWeekQueryDto as D111 } from '../modules/users/dto/admin-client-calendar-query.dto';
+import { CreateAdminClientMetricDto as D112 } from '../modules/users/dto/admin-client-metric.dto';
+import { UpdateAdminClientMetricDto as D113 } from '../modules/users/dto/admin-client-metric.dto';
+import { AdminClientBodyHistoryQueryDto as D114 } from '../modules/users/dto/admin-client-metrics-query.dto';
+import { AdminClientProgressQueryDto as D115 } from '../modules/users/dto/admin-client-progress-query.dto';
+import { ReplyToTrainingNoteDto as D116 } from '../modules/users/dto/admin-client-progress-query.dto';
+import { AdminClientsQueryDto as D117 } from '../modules/users/dto/admin-clients-query.dto';
+import { AdminUsersQueryDto as D118 } from '../modules/users/dto/admin-users-query.dto';
+import { ArchiveClientDto as D119 } from '../modules/users/dto/archive-client.dto';
+import { ClientAssignmentResponseDto as D120 } from '../modules/users/dto/client-assignment-response.dto';
+import { CreateClientDto as D121 } from '../modules/users/dto/create-client.dto';
+import { UpdateRoleDto as D122 } from '../modules/users/dto/create-client.dto';
+import { CreateAdminDto as D123 } from '../modules/users/dto/manage-user.dto';
+import { UpdateUserDto as D124 } from '../modules/users/dto/manage-user.dto';
+import { UpdateUserStatusDto as D125 } from '../modules/users/dto/manage-user.dto';
+import { UpdateClientAssignmentsDto as D126 } from '../modules/users/dto/update-client-assignments.dto';
+import { UpdateClientProfileDto as D127 } from '../modules/users/dto/update-client-profile.dto';
 export const requestDtos = [
   D0,
   D1,
@@ -246,4 +251,9 @@ export const requestDtos = [
   D120,
   D121,
   D122,
+  D123,
+  D124,
+  D125,
+  D126,
+  D127,
 ];

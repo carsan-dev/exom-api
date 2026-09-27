@@ -37,7 +37,15 @@ describe('Application HTTP contracts and lifecycle (isolated PostgreSQL)', () =>
     if (app) {
       const jobs = scheduler?.getCronJobs();
       try {
-        expect(jobs?.size).toBeGreaterThan(0);
+        if (
+          process.env.NODE_ENV === 'test' &&
+          process.env.HOST === '127.0.0.1' &&
+          process.env.EXOM_SMOKE_DISABLE_SCHEDULERS === '1'
+        ) {
+          expect(jobs?.size).toBe(0);
+        } else {
+          expect(jobs?.size).toBeGreaterThan(0);
+        }
       } finally {
         await app.close();
       }
