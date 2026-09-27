@@ -1201,6 +1201,40 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
       });
 
       describe('admin training read routes', () => {
+        it('filters historical names on owner and Admin HTTP routes without changing indicators', async () => {
+          for (const [path, actor] of [
+            [`/api/v1/progress/training-overview?${range}`, client],
+            [
+              `/api/v1/admin/clients/${client}/progress/training-overview?${range}`,
+              owner,
+            ],
+          ]) {
+            const baseline = responseData(
+              await request(server())
+                .get(path)
+                .set('x-contract-owner', actor)
+                .expect(200),
+            );
+            const missing = responseData(
+              await request(server())
+                .get(
+                  `${path}&limit=20&identification=identified&search=no-such-historical-name`,
+                )
+                .set('x-contract-owner', actor)
+                .expect(200),
+            );
+            expect(missing.exercises).toEqual([]);
+            expect(missing.indicators).toEqual(baseline.indicators);
+            await request(server())
+              .get(`${path}&identification=confirmed`)
+              .set('x-contract-owner', actor)
+              .expect(400);
+            await request(server())
+              .get(`${path}&search=${'x'.repeat(121)}`)
+              .set('x-contract-owner', actor)
+              .expect(400);
+          }
+        });
         const routes = () => [
           {
             owner: `/api/v1/progress/training-overview?${range}`,

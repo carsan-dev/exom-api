@@ -7,6 +7,9 @@ import {
 } from './training-overview-bounds';
 import {
   encodeTrainingOverviewCursor,
+  normalizeTrainingOverviewFilters,
+  type TrainingOverviewOptions,
+  type TrainingOverviewFilters,
   validateTrainingOverviewPage,
 } from './training-overview-pagination';
 
@@ -277,7 +280,11 @@ export function buildTrainingOverviewExerciseQuery(
   clientId: string,
   range: TrainingProgressRange,
   page?: { limit: number; lastExerciseId: string | null },
+  filters: TrainingOverviewFilters = {},
 ): Prisma.Sql {
+  const { search, identification } = normalizeTrainingOverviewFilters(filters);
+  const filtered = Boolean(search || identification === 'identified');
+  const selectIds = Boolean(page || filtered);
   return Prisma.sql`
       WITH days AS (
         SELECT date, exercises_completed, training_sessions, trainings_completed
@@ -335,7 +342,7 @@ export function buildTrainingOverviewExerciseQuery(
           sum(rir) AS total_rir, count(rir) AS rir_count
         FROM terms GROUP BY exercise_id
       ), ${
-        page
+        page && !filtered
           ? Prisma.sql`page_ids AS (
         SELECT exercise_id FROM grouped
         WHERE (${page.lastExerciseId}::text IS NULL
@@ -347,16 +354,9 @@ export function buildTrainingOverviewExerciseQuery(
         SELECT bool_or(overflow) AS overflow, sum(total_volume) AS total_volume,
           sum(total_rir) AS total_rir, sum(rir_count) AS rir_count
         FROM grouped
-      ), prs AS MATERIALIZED (
-        SELECT DISTINCT ON (t.exercise_id) t.exercise_id, weight, reps, date, session_id, set_number
-        FROM terms t ${page ? Prisma.sql`JOIN page_ids ids ON ids.exercise_id = t.exercise_id` : Prisma.empty}
-        WHERE weight IS NOT NULL AND reps IS NOT NULL
-        ORDER BY t.exercise_id, weight DESC, reps DESC, date DESC,
-          session_id ASC NULLS FIRST, assignment_id ASC NULLS FIRST,
-          completed_at ASC NULLS FIRST, set_number ASC
       ), performed_entries AS (
         SELECT DISTINCT date, t.exercise_id, entry, training_sessions
-        FROM terms t ${page ? Prisma.sql`JOIN page_ids ids ON ids.exercise_id = t.exercise_id` : Prisma.empty}
+        FROM terms t ${page && !filtered ? Prisma.sql`JOIN page_ids ids ON ids.exercise_id = t.exercise_id` : Prisma.empty}
       ), entry_names AS (
         SELECT e.date, e.exercise_id, n.exercise_name
         FROM performed_entries e
@@ -396,6 +396,25 @@ export function buildTrainingOverviewExerciseQuery(
       ), latest_names AS MATERIALIZED (
         SELECT DISTINCT ON (exercise_id) exercise_id, exercise_name
         FROM day_names ORDER BY exercise_id, date DESC
+      ), ${
+        filtered
+          ? Prisma.sql`page_ids AS (
+        SELECT g.exercise_id FROM grouped g
+        LEFT JOIN latest_names n ON n.exercise_id = g.exercise_id
+        WHERE (${identification} <> 'identified' OR n.exercise_name ~ '[^[:space:]]')
+          AND (${search} = '' OR strpos(lower(n.exercise_name), lower(${search})) > 0)
+          AND (${page?.lastExerciseId ?? null}::text IS NULL OR g.exercise_id > ${page?.lastExerciseId ?? null}::text)
+        ORDER BY g.exercise_id ${page ? Prisma.sql`LIMIT ${page.limit + 1}` : Prisma.empty}
+      ),`
+          : Prisma.empty
+      }
+      prs AS MATERIALIZED (
+        SELECT DISTINCT ON (t.exercise_id) t.exercise_id, weight, reps, date, session_id, set_number
+        FROM terms t ${selectIds ? Prisma.sql`JOIN page_ids ids ON ids.exercise_id = t.exercise_id` : Prisma.empty}
+        WHERE weight IS NOT NULL AND reps IS NOT NULL
+        ORDER BY t.exercise_id, weight DESC, reps DESC, date DESC,
+          session_id ASC NULLS FIRST, assignment_id ASC NULLS FIRST,
+          completed_at ASC NULLS FIRST, set_number ASC
       )
       SELECT g.exercise_id, n.exercise_name, g.sets,
         CASE WHEN g.max_reps <= 9007199254740991
@@ -415,7 +434,7 @@ export function buildTrainingOverviewExerciseQuery(
         p.set_number::float8 AS pr_set, g.total_rir::text AS total_rir,
         g.rir_count
       ${
-        page
+        selectIds
           ? Prisma.sql`FROM globals LEFT JOIN page_ids ids ON true
         LEFT JOIN grouped g ON g.exercise_id = ids.exercise_id`
           : Prisma.sql`FROM globals LEFT JOIN grouped g ON true`
@@ -495,7 +514,7 @@ export class TrainingProgressReadService {
     actorId: string,
     targetId: string,
     range: TrainingProgressRange,
-    options: { limit?: number; cursor?: string } = {},
+    options: TrainingOverviewOptions = {},
   ): Promise<TrainingReadOverview> {
     return this.db.$transaction(
       async (tx) => {
@@ -1243,7 +1262,7 @@ export class TrainingProgressReadService {
     actorId: string,
     targetId: string,
     range: TrainingProgressRange,
-    options: { limit?: number; cursor?: string } = {},
+    options: TrainingOverviewOptions = {},
   ): Promise<TrainingReadOverview> {
     await this.#assertReadAccess(tx, actorId, targetId);
     return this.#read(tx, targetId, range, options);
@@ -1253,7 +1272,7 @@ export class TrainingProgressReadService {
     tx: Prisma.TransactionClient,
     clientId: string,
     range: TrainingProgressRange,
-    options: { limit?: number; cursor?: string },
+    options: TrainingOverviewOptions,
   ): Promise<TrainingReadOverview> {
     if (!validCivilDateRange(range))
       throw new BadRequestException('Invalid civil date range');
@@ -1308,7 +1327,7 @@ export class TrainingProgressReadService {
       distinctExerciseCount: distinct.exercise_count,
     });
     const exercisesRaw = await tx.$queryRaw<RawExercise[]>(
-      buildTrainingOverviewExerciseQuery(clientId, range, page),
+      buildTrainingOverviewExerciseQuery(clientId, range, page, options),
     );
     const sessionsRaw = await tx.$queryRaw<RawSessions[]>(Prisma.sql`
       WITH days AS (
@@ -1412,6 +1431,7 @@ export class TrainingProgressReadService {
                     clientId,
                     range,
                     exercises[exercises.length - 1].exercise_id,
+                    options,
                   )
                 : null,
           }
