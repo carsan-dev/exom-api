@@ -45,6 +45,91 @@ describe('plan progress reconciliation', () => {
     expect(ambiguous.trainingCompleted).toBe(false);
   });
 
+  it('keeps two partial executions distinct instead of completing a training across sessions', () => {
+    const entries = [
+      {
+        training_exercise_id: 'te-1',
+        exercise_id: 'ex-1',
+        training_session_id: 'session-a',
+        sets: [{ reps: 8 }],
+      },
+      {
+        training_exercise_id: 'te-2',
+        exercise_id: 'ex-2',
+        training_session_id: 'session-b',
+        sets: [{ reps: 6 }],
+      },
+    ];
+    const result = reconcileTrainingProgress(entries, [
+      { id: 'te-1', exercise_id: 'ex-1' },
+      { id: 'te-2', exercise_id: 'ex-2' },
+    ]);
+    expect(result.entries).toEqual(entries);
+    expect(result.trainingCompleted).toBe(false);
+  });
+
+  it('does not borrow ambiguous legacy completion for a partial named session', () => {
+    const result = reconcileTrainingProgress(
+      [
+        {
+          training_exercise_id: 'te-1',
+          exercise_id: 'ex-1',
+          training_session_id: 'session-a',
+        },
+        { training_exercise_id: 'te-2', exercise_id: 'ex-2' },
+      ],
+      [
+        { id: 'te-1', exercise_id: 'ex-1' },
+        { id: 'te-2', exercise_id: 'ex-2' },
+      ],
+    );
+    expect(result.trainingCompleted).toBe(false);
+  });
+
+  it('preserves independent occurrences and recognizes one complete execution', () => {
+    const entries = [
+      {
+        training_exercise_id: 'te-1',
+        exercise_id: 'ex-1',
+        training_session_id: 'session-a',
+        sets: [{ reps: 8 }],
+      },
+      {
+        training_exercise_id: 'te-1',
+        exercise_id: 'ex-1',
+        training_session_id: 'session-b',
+        sets: [{ reps: 5 }],
+      },
+      {
+        training_exercise_id: 'te-2',
+        exercise_id: 'ex-2',
+        training_session_id: 'session-b',
+      },
+    ];
+    const result = reconcileTrainingProgress(entries, [
+      { id: 'te-1', exercise_id: 'ex-1' },
+      { id: 'te-2', exercise_id: 'ex-2' },
+    ]);
+    expect(result.entries).toEqual(entries);
+    expect(result.trainingCompleted).toBe(true);
+  });
+
+  it('does not merge same occurrence across distinct sessions or duplicate legacy entries', () => {
+    const entries = [
+      { training_exercise_id: 'te-1', exercise_id: 'ex-1' },
+      { training_exercise_id: 'te-1', exercise_id: 'ex-1' },
+      {
+        training_exercise_id: 'te-1',
+        exercise_id: 'ex-1',
+        training_session_id: 'session-a',
+      },
+    ];
+    expect(
+      reconcileTrainingProgress(entries, [{ id: 'te-1', exercise_id: 'ex-1' }])
+        .entries,
+    ).toEqual(entries);
+  });
+
   it('retains a removed variant as historical consumption', () => {
     expect(reconcileMealProgress(['variant-1'])).toEqual(['variant-1']);
   });

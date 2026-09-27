@@ -11,6 +11,7 @@ import request from 'supertest';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UsersController } from '../users/users.controller';
 import { UsersService } from '../users/users.service';
+import { TrainingProgressReadService } from '../progress/training-progress-read.service';
 import { AllExceptionsFilter } from '../../common/filters/http-exception.filter';
 
 describe('P5 identity HTTP authorization and request identity', () => {
@@ -24,7 +25,10 @@ describe('P5 identity HTTP authorization and request identity', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [UsersController],
-      providers: [{ provide: UsersService, useValue: users }],
+      providers: [
+        { provide: UsersService, useValue: users },
+        { provide: TrainingProgressReadService, useValue: {} },
+      ],
     }).compile();
     app = module.createNestApplication();
     app.use(

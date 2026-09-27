@@ -17,12 +17,18 @@ import { bootstrap } from './bootstrap';
 import { StartupError } from './startup-error';
 
 describe('startup lifecycle diagnostics', () => {
+  const originalHost = process.env.HOST;
   beforeEach(() => {
+    delete process.env.HOST;
     jest.clearAllMocks();
     mockApp.listen.mockResolvedValue(undefined);
     mockApp.close.mockResolvedValue(undefined);
   });
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    if (originalHost === undefined) delete process.env.HOST;
+    else process.env.HOST = originalHost;
+    jest.restoreAllMocks();
+  });
   it('starts normally without closing the application', async () => {
     await bootstrap();
     expect(initFirebase).toHaveBeenCalledTimes(1);
@@ -30,6 +36,14 @@ describe('startup lifecycle diagnostics', () => {
     expect(mockApp.enableShutdownHooks).toHaveBeenCalledTimes(1);
     expect(mockApp.listen).toHaveBeenCalledWith(process.env.PORT ?? 3000);
     expect(mockApp.close).not.toHaveBeenCalled();
+  });
+  it('binds to the requested host when HOST is set', async () => {
+    process.env.HOST = '127.0.0.1';
+    await bootstrap();
+    expect(mockApp.listen).toHaveBeenCalledWith(
+      process.env.PORT ?? 3000,
+      '127.0.0.1',
+    );
   });
   it('preserves the original database failure when app cleanup also fails', async () => {
     const failure = new StartupError('database', {

@@ -153,7 +153,7 @@ const date = new Date('2026-01-10T10:00:00Z');
             id,
             name: names[i],
             muscle_groups: ['Pierna'],
-            equipment: ['Barra'],
+            equipment: ['P8_TEST_ONLY'],
             video_url: i % 2 ? '' : 'fixture',
             updated_at: date,
           },
@@ -475,6 +475,7 @@ const date = new Date('2026-01-10T10:00:00Z');
       const used = await exercises.findAll(
         Object.assign(new ExercisesQueryDto(), {
           training_usage: 'used',
+          equipment: ['P8_TEST_ONLY'],
           limit: 3,
           page: 2,
           sort_by: 'training_usage_count',
@@ -489,12 +490,16 @@ const date = new Date('2026-01-10T10:00:00Z');
       ]);
       expect(used.data.every((e) => e.training_usage_count === 1)).toBe(true);
       const unused = await exercises.findAll(
-        Object.assign(new ExercisesQueryDto(), { training_usage: 'unused' }),
+        Object.assign(new ExercisesQueryDto(), {
+          training_usage: 'unused',
+          equipment: ['P8_TEST_ONLY'],
+        }),
       );
       expect(unused.data.map((e) => e.id)).toEqual(['p8-test-7']);
       const videos = await exercises.findAll(
         Object.assign(new ExercisesQueryDto(), {
           sort_by: 'video',
+          equipment: ['P8_TEST_ONLY'],
           sort_dir: 'desc',
           limit: 2,
           page: 2,

@@ -1,6 +1,7 @@
 import type { FeedbackMedia } from '@prisma/client';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -25,6 +26,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { parseDateOnly } from '../../common/date-only';
 import { loadTrainingHistory } from '../../common/progress/training-history';
+import {
+  DAY_PROGRESS_TRANSACTION_OPTIONS,
+  lockClientDayProgress,
+} from '../../common/progress/day-progress-lock';
 
 @Injectable()
 export class FeedbackService {
@@ -53,6 +58,93 @@ export class FeedbackService {
     return { id: { in: [] } };
   }
 
+  private existingUpload(
+    existing: FeedbackMedia,
+    dto: CreateFeedbackDto,
+  ): FeedbackMedia {
+    if (
+      (existing.feedback_kind === FeedbackKind.LAST_SET ||
+        dto.feedback_kind === FeedbackKind.LAST_SET) &&
+      (existing.feedback_kind !== dto.feedback_kind ||
+        existing.training_session_id !== (dto.training_session_id ?? null) ||
+        existing.training_id !== dto.training_id ||
+        existing.training_exercise_id !== dto.training_exercise_id ||
+        existing.assignment_date?.getTime() !==
+          (dto.assignment_date
+            ? parseDateOnly(dto.assignment_date, 'assignment_date').getTime()
+            : undefined))
+    ) {
+      throw new ConflictException({
+        code: 'FEEDBACK_UPLOAD_CONFLICT',
+        message: 'La subida ya pertenece a otra sesión',
+      });
+    }
+    return existing;
+  }
+
+  private async assertSessionClaim(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    date: Date,
+    trainingId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const day = await tx.dayProgress.findUnique({
+      where: { client_id_date: { client_id: clientId, date } },
+      select: { exercises_completed: true, training_sessions: true },
+    });
+    const sessions = Array.isArray(day?.training_sessions)
+      ? day.training_sessions
+      : [];
+    const confirmedConflict = sessions.some(
+      (session) =>
+        typeof session === 'object' &&
+        session !== null &&
+        !Array.isArray(session) &&
+        session.training_session_id === sessionId &&
+        typeof session.training_id === 'string' &&
+        session.training_id !== trainingId,
+    );
+    const entries = Array.isArray(day?.exercises_completed)
+      ? day.exercises_completed
+      : [];
+    let exerciseConflict = false;
+    for (const entry of entries) {
+      if (
+        typeof entry !== 'object' ||
+        entry === null ||
+        Array.isArray(entry) ||
+        entry.training_session_id !== sessionId ||
+        typeof entry.training_exercise_id !== 'string'
+      )
+        continue;
+      const owner = await tx.trainingExercise.findFirst({
+        where: { id: entry.training_exercise_id },
+        select: { training_id: true },
+      });
+      if (!owner || owner.training_id !== trainingId) {
+        exerciseConflict = true;
+        break;
+      }
+    }
+    const prior = await tx.feedbackMedia.findFirst({
+      where: {
+        client_id: clientId,
+        assignment_date: date,
+        training_session_id: sessionId,
+        feedback_kind: FeedbackKind.LAST_SET,
+        training_id: { not: trainingId },
+      },
+      select: { id: true },
+    });
+    if (confirmedConflict || exerciseConflict || prior) {
+      throw new ConflictException({
+        code: 'TRAINING_SESSION_CONFLICT',
+        message: 'La sesión pertenece a otro entrenamiento',
+      });
+    }
+  }
+
   async create(clientId: string, dto: CreateFeedbackDto) {
     if (dto.client_upload_id) {
       const existing = await this.prisma.feedbackMedia.findUnique({
@@ -63,7 +155,7 @@ export class FeedbackService {
           },
         },
       });
-      if (existing) return existing;
+      if (existing) return this.existingUpload(existing, dto);
     }
     const feedbackKind = dto.feedback_kind ?? FeedbackKind.GENERAL;
     let assignmentDate: Date | undefined;
@@ -128,6 +220,21 @@ export class FeedbackService {
         purposes: [expectedPurpose],
       });
       feedback = await this.prisma.$transaction(async (tx) => {
+        if (
+          feedbackKind === FeedbackKind.LAST_SET &&
+          dto.training_session_id &&
+          assignmentDate &&
+          dto.training_id
+        ) {
+          await lockClientDayProgress(tx, clientId);
+          await this.assertSessionClaim(
+            tx,
+            clientId,
+            assignmentDate,
+            dto.training_id,
+            dto.training_session_id,
+          );
+        }
         await this.uploadsService.consumePrepared(tx, clientId, upload.id, [
           expectedPurpose,
         ]);
@@ -142,6 +249,10 @@ export class FeedbackService {
             ...(dto.training_exercise_id && {
               training_exercise_id: dto.training_exercise_id,
             }),
+            ...(feedbackKind === FeedbackKind.LAST_SET &&
+              dto.training_session_id && {
+                training_session_id: dto.training_session_id,
+              }),
             ...(assignmentDate && { assignment_date: assignmentDate }),
             ...(feedbackKind !== FeedbackKind.GENERAL && {
               feedback_kind: feedbackKind,
@@ -154,7 +265,7 @@ export class FeedbackService {
         });
         await this.notifyFeedbackSubmitted(tx, clientId, created.id);
         return created;
-      });
+      }, DAY_PROGRESS_TRANSACTION_OPTIONS);
     } catch (error) {
       if (dto.client_upload_id) {
         const existing = await this.prisma.feedbackMedia.findUnique({
@@ -165,7 +276,7 @@ export class FeedbackService {
             },
           },
         });
-        if (existing) return existing;
+        if (existing) return this.existingUpload(existing, dto);
       }
       throw error;
     }

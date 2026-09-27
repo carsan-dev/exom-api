@@ -1138,6 +1138,112 @@ describe('AssignmentsService', () => {
     expect(prisma.dayProgress.update).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { evidenceForA: false, expectedComplete: false },
+    { evidenceForA: true, expectedComplete: true },
+  ])(
+    'preserves ambiguous historical A after assigning completed B (A evidence: $evidenceForA)',
+    async ({ evidenceForA, expectedComplete }) => {
+      const date = new Date('2026-09-03T00:00:00.000Z');
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        trainings: [
+          {
+            training: {
+              id: 'training-a',
+              exercises: [{ id: 'te-a', exercise_id: 'ex-a' }],
+            },
+          },
+          {
+            training: {
+              id: 'training-b',
+              exercises: [{ id: 'te-b', exercise_id: 'ex-b' }],
+            },
+          },
+        ],
+      });
+      prisma.dayProgress.findUnique.mockResolvedValue({
+        id: 'progress-1',
+        training_completed: false,
+        trainings_completed: ['training-a'],
+        exercises_completed: [
+          ...(evidenceForA
+            ? [
+                {
+                  training_exercise_id: 'te-a',
+                  exercise_id: 'ex-a',
+                  training_session_id: 'session-a',
+                },
+              ]
+            : []),
+          {
+            training_exercise_id: 'te-b',
+            exercise_id: 'ex-b',
+            training_session_id: 'session-b',
+          },
+        ],
+      });
+
+      await (
+        service as unknown as {
+          reconcileProgressForDate(clientId: string, date: Date): Promise<void>;
+        }
+      ).reconcileProgressForDate('client-1', date);
+
+      expect(prisma.dayProgress.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            trainings_completed: ['training-a', 'training-b'],
+            training_completed: expectedComplete,
+          },
+        }),
+      );
+    },
+  );
+
+  it('does not complete a reassigned training from two partial sessions', async () => {
+    const date = new Date('2026-03-30T00:00:00.000Z');
+    prisma.planAssignment.findUnique.mockResolvedValue({
+      trainings: [
+        {
+          training: {
+            id: 'training-1',
+            exercises: [
+              { id: 'te-1', exercise_id: 'ex-1' },
+              { id: 'te-2', exercise_id: 'ex-2' },
+            ],
+          },
+        },
+      ],
+    });
+    prisma.dayProgress.findUnique.mockResolvedValue({
+      id: 'progress-1',
+      training_completed: false,
+      trainings_completed: [],
+      exercises_completed: [
+        {
+          training_exercise_id: 'te-1',
+          exercise_id: 'ex-1',
+          training_session_id: 'session-a',
+        },
+        {
+          training_exercise_id: 'te-2',
+          exercise_id: 'ex-2',
+          training_session_id: 'session-b',
+        },
+      ],
+    });
+    await (
+      service as unknown as {
+        reconcileProgressForDate(clientId: string, date: Date): Promise<void>;
+      }
+    ).reconcileProgressForDate('client-1', date);
+    expect(prisma.dayProgress.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { trainings_completed: [], training_completed: false },
+      }),
+    );
+  });
+
   it('copyWeek notifies with the first active copied target date', async () => {
     prisma.training.findFirst.mockResolvedValue({ id: 'training-1' });
     prisma.user.findUnique.mockResolvedValue({

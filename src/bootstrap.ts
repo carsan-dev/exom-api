@@ -18,7 +18,12 @@ export async function bootstrap() {
     configureApp(app);
     app.enableShutdownHooks();
     stage = 'listen';
-    await app.listen(process.env.PORT ?? 3000);
+    const port = process.env.PORT ?? 3000;
+    if (process.env.HOST) {
+      await app.listen(port, process.env.HOST);
+    } else {
+      await app.listen(port);
+    }
   } catch (error) {
     const failure = startupError(stage, error);
     if (app) {
