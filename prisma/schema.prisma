@@ -766,6 +766,7 @@ model DayProgress {
   date                DateTime  @db.Date
   training_completed  Boolean   @default(false)
   trainings_completed String[]  @default([])
+  training_sessions   Json      @default("[]")
   exercises_completed Json      @default("[]")
   meals_completed     String[]
   notes               String?
@@ -1032,6 +1033,7 @@ model FeedbackMedia {
   exercise_id          String?
   training_id          String?
   training_exercise_id String?
+  training_session_id  String?
   assignment_date      DateTime?      @db.Date
   feedback_kind        FeedbackKind   @default(GENERAL)
   media_type           MediaType

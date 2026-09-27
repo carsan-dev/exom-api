@@ -210,6 +210,799 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     await poolTwo?.end();
   });
 
+  it.each(['mark', 'complete'] as const)(
+    'P3-T2: %s rejects a persisted provisional LAST_SET session claim for another training before writing day or receipt',
+    async (action) => {
+      const sessionId = `provisional-feedback-${action}-${suffix}`;
+      await prismaOne.feedbackMedia.create({
+        data: {
+          client_id: clientId,
+          exercise_id: exerciseOneId,
+          training_id: trainingOneId,
+          training_exercise_id: trainingExerciseOneId,
+          assignment_date: dateValue,
+          training_session_id: sessionId,
+          feedback_kind: 'LAST_SET',
+          media_type: 'VIDEO',
+          media_url: `https://example.test/${sessionId}`,
+        },
+      });
+      const command =
+        action === 'mark'
+          ? serviceTwo.markExerciseCompleted(clientId, {
+              date,
+              exercise_id: exerciseThreeId,
+              training_exercise_id: trainingExerciseThreeId,
+              training_session_id: sessionId,
+              sets: [{ set_number: 1, reps: 8 }],
+            })
+          : serviceTwo.completeTraining(clientId, {
+              date,
+              training_id: trainingTwoId,
+              training_session_id: sessionId,
+            });
+      await expect(command).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'TRAINING_SESSION_CONFLICT' },
+      });
+      expect(
+        await prismaOne.dayProgress.findUnique({
+          where: { client_id_date: { client_id: clientId, date: dateValue } },
+        }),
+      ).toBeNull();
+      expect(
+        await prismaOne.progressOperation.count({
+          where: { owner_id: clientId },
+        }),
+      ).toBe(0);
+    },
+  );
+
+  it('P3-T6-A: marking the final session exercise does not claim completion until explicit completion without a rating', async () => {
+    const sessionId = `explicit-completion-${suffix}`;
+    await serviceOne.completeTraining(clientId, {
+      date,
+      training_id: trainingTwoId,
+    });
+    for (const [exercise_id, training_exercise_id] of [
+      [exerciseOneId, trainingExerciseOneId],
+      [exerciseTwoId, trainingExerciseTwoId],
+    ] as const) {
+      await serviceOne.markExerciseCompleted(clientId, {
+        date,
+        exercise_id,
+        training_exercise_id,
+        training_session_id: sessionId,
+        sets: [{ set_number: 1, reps: 10 }],
+      });
+    }
+
+    const marked = await readProgress();
+    expect(completedExercises(marked.exercises_completed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          training_exercise_id: trainingExerciseTwoId,
+          training_session_id: sessionId,
+        }),
+      ]),
+    );
+    expect(marked.trainings_completed).toEqual([trainingTwoId]);
+    expect(marked.training_completed).toBe(false);
+    expect(marked.training_sessions).toEqual([]);
+
+    await serviceTwo.completeTraining(clientId, {
+      date,
+      training_id: trainingOneId,
+      training_session_id: sessionId,
+    });
+    const completed = await readProgress();
+    expect(completed.trainings_completed).toEqual([
+      trainingOneId,
+      trainingTwoId,
+    ]);
+    expect(completed.training_completed).toBe(true);
+    expect(completed.training_sessions).toEqual([
+      {
+        training_session_id: sessionId,
+        training_id: trainingOneId,
+        rpe: null,
+        note: null,
+      },
+    ]);
+  });
+
+  it('P3: concurrent executions of the same training retain independent seconds, RPE and replay identity', async () => {
+    const sessionOne = `session-one-${suffix}`;
+    const sessionTwo = `session-two-${suffix}`;
+    const firstSets = [{ set_number: 1, seconds: 40, rir: 2 }];
+    const secondSets = [{ set_number: 1, seconds: 70, rir: 4 }];
+    await serviceOne.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+      training_session_id: sessionOne,
+      sets: firstSets,
+    });
+    await serviceTwo.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+      training_session_id: sessionTwo,
+      sets: secondSets,
+    });
+    const before = await readProgress();
+    const firstDto = {
+      date,
+      training_id: trainingOneId,
+      training_session_id: sessionOne,
+      rpe: 8,
+      session_note: 'Morning',
+    };
+    const secondDto = {
+      date,
+      training_id: trainingOneId,
+      training_session_id: sessionTwo,
+      rpe: 3,
+      session_note: 'Evening',
+    };
+    const blocker = await poolOne.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      [`exom:day-progress:${clientId}`],
+    );
+    const writes = Promise.allSettled([
+      runProgressCommand(
+        `same-first-${suffix}`,
+        String(before.sync_revision),
+        ['completeTraining', firstDto],
+        () => serviceOne.completeTraining(clientId, firstDto),
+      ),
+      runProgressCommand(
+        `same-second-${suffix}`,
+        String(before.sync_revision),
+        ['completeTraining', secondDto],
+        () => serviceTwo.completeTraining(clientId, secondDto),
+      ),
+    ]);
+    let waiters = 0;
+    try {
+      for (let attempt = 0; attempt < 200 && waiters < 2; attempt++) {
+        const result = await blocker.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        );
+        waiters = result.rows[0].n;
+        if (waiters < 2)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally {
+      await blocker.query('COMMIT');
+      blocker.release();
+    }
+    const results = await writes;
+    expect(waiters).toBe(2);
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        expect(result.reason as unknown).toMatchObject({
+          response: { code: 'PROGRESS_VERSION_CONFLICT' },
+        });
+      }
+    }
+    const winner = results[0].status === 'fulfilled' ? firstDto : secondDto;
+    const loser = results[0].status === 'fulfilled' ? secondDto : firstDto;
+    const winnerOperation =
+      results[0].status === 'fulfilled'
+        ? `same-first-${suffix}`
+        : `same-second-${suffix}`;
+    const loserOperation =
+      results[0].status === 'fulfilled'
+        ? `same-second-${suffix}`
+        : `same-first-${suffix}`;
+    const winnerResult =
+      results[0].status === 'fulfilled'
+        ? results[0].value
+        : results[1].status === 'fulfilled'
+          ? results[1].value
+          : undefined;
+    expect(winnerResult).toBeDefined();
+    const afterWinner = await readProgress();
+    await runProgressCommand(
+      loserOperation,
+      String(afterWinner.sync_revision),
+      ['completeTraining', loser],
+      () => serviceTwo.completeTraining(clientId, loser),
+    );
+    const completed = await readProgress();
+    expect(completed.training_sessions).toEqual(
+      expect.arrayContaining([
+        {
+          training_session_id: sessionOne,
+          training_id: trainingOneId,
+          rpe: 8,
+          note: 'Morning',
+        },
+        {
+          training_session_id: sessionTwo,
+          training_id: trainingOneId,
+          rpe: 3,
+          note: 'Evening',
+        },
+      ]),
+    );
+    expect(completed.trainings_completed).toEqual([trainingOneId]);
+    expect(completedExercises(completed.exercises_completed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          training_session_id: sessionOne,
+          sets: firstSets,
+        }),
+        expect.objectContaining({
+          training_session_id: sessionTwo,
+          sets: secondSets,
+        }),
+      ]),
+    );
+    const replay = await runProgressCommand(
+      winnerOperation,
+      String(before.sync_revision),
+      ['completeTraining', winner],
+      () => serviceOne.completeTraining(clientId, winner),
+    );
+    expect(replay.operation_revision).toBe(winnerResult?.operation_revision);
+    expect(replay.training_sessions).toEqual(completed.training_sessions);
+    expect(await readProgress()).toEqual(completed);
+    expect(
+      await prismaOne.progressOperation.count({
+        where: { owner_id: clientId },
+      }),
+    ).toBe(2);
+    const unmarked = await runProgressCommand(
+      `same-unmark-${suffix}`,
+      String(completed.sync_revision),
+      ['unmark', date, trainingExerciseOneId, sessionOne],
+      () =>
+        serviceOne.unmarkExercise(
+          clientId,
+          date,
+          trainingExerciseOneId,
+          sessionOne,
+        ),
+    );
+    expect(completedExercises(unmarked.exercises_completed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          training_session_id: sessionTwo,
+          sets: secondSets,
+        }),
+      ]),
+    );
+    expect(completedExercises(unmarked.exercises_completed)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          training_session_id: sessionOne,
+          training_exercise_id: trainingExerciseOneId,
+        }),
+      ]),
+    );
+    expect(unmarked.training_sessions).toEqual([
+      {
+        training_session_id: sessionTwo,
+        training_id: trainingOneId,
+        rpe: 3,
+        note: 'Evening',
+      },
+    ]);
+    const afterUnmark = await readProgress();
+    const staleReplay = await runProgressCommand(
+      winnerOperation,
+      String(before.sync_revision),
+      ['completeTraining', winner],
+      () => serviceOne.completeTraining(clientId, winner),
+    );
+    expect(staleReplay.operation_revision).toBe(
+      winnerResult?.operation_revision,
+    );
+    expect(await readProgress()).toEqual(afterUnmark);
+    await expect(
+      runProgressCommand(
+        `same-stale-complete-${suffix}`,
+        String(completed.sync_revision),
+        ['completeTraining', firstDto],
+        () => serviceTwo.completeTraining(clientId, firstDto),
+      ),
+    ).rejects.toMatchObject({
+      response: { code: 'PROGRESS_VERSION_CONFLICT' },
+    });
+    expect(await readProgress()).toEqual(afterUnmark);
+  });
+
+  it('P3: simultaneous completion and unmark of one partial session serialize with one semantic winner', async () => {
+    const sessionId = `opposite-session-${suffix}`;
+    const otherSessionId = `opposite-other-${suffix}`;
+    const firstSets = [{ set_number: 1, reps: 8, rir: 0 }];
+    const otherSets = [{ set_number: 1, seconds: 45, rir: 2 }];
+    await serviceOne.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+      training_session_id: sessionId,
+      sets: firstSets,
+    });
+    await serviceOne.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseThreeId,
+      training_exercise_id: trainingExerciseThreeId,
+      training_session_id: otherSessionId,
+      sets: otherSets,
+    });
+    const before = await readProgress();
+    expect(before.training_sessions).toEqual([]);
+    expect(before.training_completed).toBe(false);
+    expect(before.trainings_completed).toEqual([]);
+    expect(completedExercises(before.exercises_completed)).toHaveLength(2);
+    const otherEntry = completedExercises(before.exercises_completed).find(
+      (entry) => entry.training_session_id === otherSessionId,
+    );
+    expect(otherEntry).toMatchObject({
+      training_exercise_id: trainingExerciseThreeId,
+      sets: otherSets,
+    });
+    expect(
+      await prismaOne.progressOperation.count({
+        where: { owner_id: clientId },
+      }),
+    ).toBe(0);
+
+    const completion = {
+      date,
+      training_id: trainingOneId,
+      training_session_id: sessionId,
+      rpe: 7,
+      session_note: 'Confirmed',
+    };
+    const completeId = `opposite-complete-${suffix}`;
+    const unmarkId = `opposite-unmark-${suffix}`;
+    // Dedicated connections give every waiter a server-side deadline, even if
+    // polling or the assertion fails while the advisory lock is held.
+    const writerPoolOne = new Pool({
+      connectionString: testDatabaseUrl,
+      connectionTimeoutMillis: 2000,
+      statement_timeout: 6000,
+      query_timeout: 7000,
+    });
+    const writerPoolTwo = new Pool({
+      connectionString: testDatabaseUrl,
+      connectionTimeoutMillis: 2000,
+      statement_timeout: 6000,
+      query_timeout: 7000,
+    });
+    const writerPrismaOne = new PrismaClient({
+      adapter: new PrismaPg(writerPoolOne),
+    });
+    const writerPrismaTwo = new PrismaClient({
+      adapter: new PrismaPg(writerPoolTwo),
+    });
+    let writes: Promise<PromiseSettledResult<unknown>[]> | undefined;
+    let waiters = 0;
+    let results: PromiseSettledResult<unknown>[];
+    try {
+      const blocker = await poolOne.connect();
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query("SET LOCAL statement_timeout = '1500ms'");
+        await blocker.query(
+          'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          [`exom:day-progress:${clientId}`],
+        );
+        writes = Promise.allSettled([
+          runProgressCommand(
+            completeId,
+            String(before.sync_revision),
+            ['completeTraining', completion],
+            () =>
+              createService(writerPrismaOne).completeTraining(
+                clientId,
+                completion,
+              ),
+          ),
+          runProgressCommand(
+            unmarkId,
+            String(before.sync_revision),
+            ['unmarkExercise', date, trainingExerciseOneId, sessionId],
+            () =>
+              createService(writerPrismaTwo).unmarkExercise(
+                clientId,
+                date,
+                trainingExerciseOneId,
+                sessionId,
+              ),
+          ),
+        ]);
+        // Observe only waiters on this transaction's exact advisory lock.
+        for (let attempt = 0; attempt < 200 && waiters < 2; attempt++) {
+          const { rows } = await blocker.query<{ n: number }>(
+            `SELECT count(DISTINCT waiting.pid)::int AS n
+              FROM pg_locks held JOIN pg_locks waiting
+                ON waiting.locktype = held.locktype AND waiting.database = held.database
+                AND waiting.classid = held.classid AND waiting.objid = held.objid
+                AND waiting.objsubid = held.objsubid
+              WHERE held.pid = pg_backend_pid() AND held.locktype = 'advisory'
+                AND held.granted AND NOT waiting.granted`,
+          );
+          waiters = rows[0].n;
+          if (waiters < 2)
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      } finally {
+        try {
+          await blocker.query('ROLLBACK');
+          blocker.release();
+        } catch {
+          // Closing the socket also releases its transaction-scoped lock.
+          blocker.release(true);
+        }
+      }
+      if (writes === undefined)
+        throw new Error('Concurrent commands did not start');
+      // Server-side statement and client query deadlines bound both waiters;
+      // fail the assertion if their settled outcomes are not available in time.
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        results = await Promise.race([
+          writes,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('Concurrent commands did not settle')),
+              10000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    } finally {
+      // On a barrier failure, still consume both outcomes after releasing it;
+      // server-side statement/query timeouts prevent orphaned lock waiters.
+      if (writes !== undefined) await writes;
+      await writerPrismaOne.$disconnect();
+      await writerPrismaTwo.$disconnect();
+      await writerPoolOne.end();
+      await writerPoolTwo.end();
+    }
+    expect(waiters).toBe(2);
+    const [completeResult, unmarkResult] = results;
+    expect(
+      [completeResult, unmarkResult].filter(
+        (result) => result.status === 'fulfilled',
+      ),
+    ).toHaveLength(1);
+    const rejected = [completeResult, unmarkResult].find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    expect(rejected?.reason).toMatchObject({
+      status: 409,
+      response: { code: 'PROGRESS_VERSION_CONFLICT' },
+    });
+    const after = await readProgress();
+    expect(after.sync_revision).toBe(before.sync_revision + 1);
+    expect(after.meals_completed).toEqual(before.meals_completed);
+    const entries = completedExercises(after.exercises_completed);
+    expect(
+      entries.find((entry) => entry.training_session_id === otherSessionId),
+    ).toEqual(otherEntry);
+    expect(
+      entries.filter((entry) => entry.training_session_id === sessionId),
+    ).toEqual(
+      completeResult.status === 'fulfilled'
+        ? [
+            expect.objectContaining({
+              training_exercise_id: trainingExerciseOneId,
+              sets: firstSets,
+            }),
+            expect.objectContaining({
+              training_exercise_id: trainingExerciseTwoId,
+            }),
+          ]
+        : [],
+    );
+    expect(after.training_sessions).toEqual(
+      completeResult.status === 'fulfilled'
+        ? [
+            {
+              training_session_id: sessionId,
+              training_id: trainingOneId,
+              rpe: 7,
+              note: 'Confirmed',
+            },
+          ]
+        : [],
+    );
+    expect(after.trainings_completed).toEqual(
+      completeResult.status === 'fulfilled' ? [trainingOneId] : [],
+    );
+    // The other session has only exercise evidence, not an explicit claim.
+    expect(after.training_completed).toBe(false);
+    const receipts = await prismaOne.progressOperation.findMany({
+      where: { owner_id: clientId },
+    });
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].id).toBe(
+      completeResult.status === 'fulfilled' ? completeId : unmarkId,
+    );
+  }, 15000);
+
+  it('P3: an operation ID cannot be reused across completion and unmark', async () => {
+    const sessionId = `opposite-reuse-${suffix}`;
+    const dto = {
+      date,
+      training_id: trainingOneId,
+      training_session_id: sessionId,
+    };
+    const operationId = `opposite-reuse-operation-${suffix}`;
+    const completed = await runProgressCommand(
+      operationId,
+      '0',
+      ['completeTraining', dto],
+      () => serviceOne.completeTraining(clientId, dto),
+    );
+    const before = await readProgress();
+    await expect(
+      runProgressCommand(
+        operationId,
+        String(before.sync_revision),
+        ['unmarkExercise', date, trainingExerciseOneId, sessionId],
+        () =>
+          serviceTwo.unmarkExercise(
+            clientId,
+            date,
+            trainingExerciseOneId,
+            sessionId,
+          ),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'PROGRESS_OPERATION_CONFLICT' },
+    });
+    expect(await readProgress()).toEqual(before);
+    expect(completed.operation_revision).toBe(before.sync_revision);
+    expect(
+      await prismaOne.progressOperation.count({
+        where: { owner_id: clientId },
+      }),
+    ).toBe(1);
+  });
+
+  it('P3: stale NEW completion after unmark cannot create a receipt', async () => {
+    const sessionId = `opposite-stale-${suffix}`;
+    await serviceOne.markExerciseCompleted(clientId, {
+      date,
+      exercise_id: exerciseOneId,
+      training_exercise_id: trainingExerciseOneId,
+      training_session_id: sessionId,
+    });
+    const before = await readProgress();
+    const unmarked = await runProgressCommand(
+      `opposite-stale-unmark-${suffix}`,
+      String(before.sync_revision),
+      ['unmarkExercise', date, trainingExerciseOneId, sessionId],
+      () =>
+        serviceOne.unmarkExercise(
+          clientId,
+          date,
+          trainingExerciseOneId,
+          sessionId,
+        ),
+    );
+    const after = await readProgress();
+    expect(after.sync_revision).toBe(unmarked.operation_revision);
+    expect(completedExercises(after.exercises_completed)).toEqual([]);
+    await expect(
+      runProgressCommand(
+        `opposite-stale-new-${suffix}`,
+        String(before.sync_revision),
+        ['completeTraining', date, trainingOneId, sessionId],
+        () =>
+          serviceTwo.completeTraining(clientId, {
+            date,
+            training_id: trainingOneId,
+            training_session_id: sessionId,
+          }),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'PROGRESS_VERSION_CONFLICT' },
+    });
+    expect(await readProgress()).toEqual(after);
+    expect(
+      await prismaOne.progressOperation.count({
+        where: { owner_id: clientId },
+      }),
+    ).toBe(1);
+  });
+
+  it.each(['markExerciseCompleted', 'completeTraining'] as const)(
+    'P3: PostgreSQL rejects %s reusing an exercise-only session for another training without changing progress or receipts',
+    async (command) => {
+      const sessionId = `exercise-only-${suffix}`;
+      const seedDto = {
+        date,
+        exercise_id: exerciseOneId,
+        training_exercise_id: trainingExerciseOneId,
+        training_session_id: sessionId,
+        sets: [{ set_number: 1, reps: 8, rir: 0 }],
+      };
+      const seedOperation = `session-owner-seed-${suffix}`;
+      const seed = await runProgressCommand(
+        seedOperation,
+        '0',
+        ['markExerciseCompleted', seedDto],
+        () => serviceOne.markExerciseCompleted(clientId, seedDto),
+      );
+      const before = await readProgress();
+      const receiptsBefore = await prismaOne.progressOperation.findMany({
+        where: { owner_id: clientId },
+      });
+      expect(before.exercises_completed).toEqual([
+        expect.objectContaining({
+          training_exercise_id: trainingExerciseOneId,
+          training_session_id: sessionId,
+          sets: seedDto.sets,
+        }),
+      ]);
+      expect(before.training_sessions).toEqual([]);
+      expect(receiptsBefore).toHaveLength(1);
+      expect(before.sync_revision).toBe(seed.operation_revision);
+
+      const rejectedOperation = `session-owner-${command}-${suffix}`;
+      const apply = () =>
+        runProgressCommand(
+          rejectedOperation,
+          String(before.sync_revision),
+          [command, trainingTwoId, sessionId],
+          () =>
+            command === 'markExerciseCompleted'
+              ? serviceTwo.markExerciseCompleted(clientId, {
+                  date,
+                  exercise_id: exerciseThreeId,
+                  training_exercise_id: trainingExerciseThreeId,
+                  training_session_id: sessionId,
+                })
+              : serviceTwo.completeTraining(clientId, {
+                  date,
+                  training_id: trainingTwoId,
+                  training_session_id: sessionId,
+                }),
+        );
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(apply()).rejects.toMatchObject({
+          status: 409,
+          response: { code: 'TRAINING_SESSION_CONFLICT' },
+        });
+        expect(await readProgress()).toEqual(before);
+        expect(
+          await prismaOne.progressOperation.findMany({
+            where: { owner_id: clientId },
+          }),
+        ).toEqual(receiptsBefore);
+      }
+      const replay = await runProgressCommand(
+        seedOperation,
+        '0',
+        ['markExerciseCompleted', seedDto],
+        () => serviceOne.markExerciseCompleted(clientId, seedDto),
+      );
+      expect(replay.operation_revision).toBe(seed.operation_revision);
+      expect(await readProgress()).toEqual(before);
+    },
+  );
+
+  it('P3: old client without session ID or RPE retains one legacy occurrence and historical note', async () => {
+    const historical = [
+      {
+        exercise_id: exerciseOneId,
+        completed_at: '2020-01-01T12:00:00.000Z',
+        sets: [{ set_number: 1, seconds: 45 }],
+      },
+    ];
+    await prismaOne.dayProgress.create({
+      data: {
+        client_id: clientId,
+        date: dateValue,
+        exercises_completed: historical,
+        notes: 'Historical daily note',
+      },
+    });
+    const result = await serviceOne.completeTraining(clientId, {
+      date,
+      training_id: trainingOneId,
+    });
+    expect(result.notes).toBe('Historical daily note');
+    expect(result.training_sessions).toEqual([]);
+    expect(completedExercises(result.exercises_completed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          exercise_id: exerciseOneId,
+          sets: historical[0].sets,
+        }),
+      ]),
+    );
+    const replay = await serviceTwo.completeTraining(clientId, {
+      date,
+      training_id: trainingOneId,
+    });
+    expect(replay.exercises_completed).toEqual(result.exercises_completed);
+    expect(replay.training_sessions).toEqual([]);
+  });
+
+  it('P3: persists distinct session ratings, stable operation revision and safe unmark', async () => {
+    const firstDto = {
+      date,
+      training_id: trainingOneId,
+      rpe: 8,
+      session_note: 'First',
+    };
+    const first = await runProgressCommand(
+      'rpe-first-' + suffix,
+      '0',
+      ['completeTraining', firstDto],
+      () => serviceOne.completeTraining(clientId, firstDto),
+    );
+    expect(first.training_sessions).toEqual([
+      { training_id: trainingOneId, rpe: 8, note: 'First' },
+    ]);
+    const secondDto = {
+      date,
+      training_id: trainingTwoId,
+      rpe: 3,
+      session_note: 'Second',
+    };
+    const second = await runProgressCommand(
+      'rpe-second-' + suffix,
+      String(first.operation_revision),
+      ['completeTraining', secondDto],
+      () => serviceTwo.completeTraining(clientId, secondDto),
+    );
+    expect(second.training_sessions).toEqual([
+      { training_id: trainingOneId, rpe: 8, note: 'First' },
+      { training_id: trainingTwoId, rpe: 3, note: 'Second' },
+    ]);
+    const replay = await runProgressCommand(
+      'rpe-first-' + suffix,
+      '0',
+      ['completeTraining', firstDto],
+      () => serviceOne.completeTraining(clientId, firstDto),
+    );
+    expect(replay.operation_revision).toBe(first.operation_revision);
+    expect(replay.training_sessions).toEqual(second.training_sessions);
+    expect(
+      await prismaOne.progressOperation.count({
+        where: { owner_id: clientId },
+      }),
+    ).toBe(2);
+
+    await runProgressCommand(
+      'rpe-unmark-' + suffix,
+      String(second.operation_revision),
+      ['unmark', date, trainingExerciseOneId],
+      () => serviceOne.unmarkExercise(clientId, date, trainingExerciseOneId),
+    );
+    expect((await readProgress()).training_sessions).toEqual([
+      { training_id: trainingTwoId, rpe: 3, note: 'Second' },
+    ]);
+    await runProgressCommand(
+      'rpe-first-' + suffix,
+      '0',
+      ['completeTraining', firstDto],
+      () => serviceOne.completeTraining(clientId, firstDto),
+    );
+    expect((await readProgress()).training_sessions).toEqual([
+      { training_id: trainingTwoId, rpe: 3, note: 'Second' },
+    ]);
+  });
+
   it('I007-P01: mixed formats preserve other training completion through edit, unmark and acknowledged replay', async () => {
     const legacy = [exerciseOneId, exerciseTwoId].map((exercise_id) => ({
       exercise_id,

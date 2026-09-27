@@ -40,7 +40,13 @@ import { ProgressPhotosModule } from './modules/progress-photos/progress-photos.
       isGlobal: true,
       ignoreEnvFile: process.env.NODE_ENV === 'test',
     }),
-    ScheduleModule.forRoot(),
+    ScheduleModule.forRoot(
+      process.env.NODE_ENV === 'test' &&
+        process.env.HOST === '127.0.0.1' &&
+        process.env.EXOM_SMOKE_DISABLE_SCHEDULERS === '1'
+        ? { cronJobs: false, intervals: false, timeouts: false }
+        : undefined,
+    ),
     PrismaModule,
     JobsModule,
     DomainWorkModule,

@@ -16,6 +16,7 @@ import { MetricsController } from './metrics.controller';
 import { metricsOverview } from './metrics-overview';
 import { UsersService } from '../users/users.service';
 import { UsersController } from '../users/users.controller';
+import { TrainingProgressReadService } from '../progress/training-progress-read.service';
 import { RecapsService } from '../recaps/recaps.service';
 import { RecapsController } from '../recaps/recaps.controller';
 import { AchievementsService } from '../achievements/achievements.service';
@@ -121,6 +122,7 @@ suite(
           MetricsService,
           UsersService,
           RecapsService,
+          { provide: TrainingProgressReadService, useValue: {} },
           { provide: PrismaService, useValue: db },
           ...[
             AchievementsService,

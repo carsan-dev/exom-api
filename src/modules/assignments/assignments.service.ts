@@ -40,6 +40,7 @@ import {
   lockAssignmentPlanning,
 } from './assignment-planning-lock';
 import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
+import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
 
 type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
@@ -612,50 +613,37 @@ export class AssignmentsService {
         : assignment?.training
           ? [assignment.training]
           : [];
-      const validTrainingExerciseIds = new Set(
-        trainings.flatMap((training) =>
-          training.exercises.map((exercise) => exercise.id),
-        ),
-      );
-      const validExerciseIds = new Set(
-        trainings.flatMap((training) =>
-          training.exercises.map((exercise) => exercise.exercise_id),
-        ),
-      );
       const entries = Array.isArray(progress.exercises_completed)
         ? (progress.exercises_completed as Array<{
             training_exercise_id?: string;
-            exercise_id?: string;
+            training_session_id?: string | null;
+            exercise_id: string;
           }>)
         : [];
-      const matchingEntries = entries.filter((entry) =>
-        entry.training_exercise_id
-          ? validTrainingExerciseIds.has(entry.training_exercise_id)
-          : Boolean(
-              entry.exercise_id && validExerciseIds.has(entry.exercise_id),
-            ),
-      );
-      const completedTrainingExerciseIds = new Set(
-        matchingEntries
-          .map((entry) => entry.training_exercise_id)
-          .filter((id): id is string => Boolean(id)),
-      );
-      const completedExerciseIds = new Set(
-        matchingEntries
-          .filter((entry) => !entry.training_exercise_id)
-          .map((entry) => entry.exercise_id)
-          .filter((id): id is string => Boolean(id)),
-      );
+      const exerciseOwners = new Map<string, number>();
+      for (const training of trainings) {
+        for (const exercise of training.exercises) {
+          exerciseOwners.set(
+            exercise.exercise_id,
+            (exerciseOwners.get(exercise.exercise_id) ?? 0) + 1,
+          );
+        }
+      }
       const newlyCompletedTrainingIds = trainings
-        .filter(
-          (training) =>
-            training.exercises.length > 0 &&
-            training.exercises.every(
-              (exercise) =>
-                completedTrainingExerciseIds.has(exercise.id) ||
-                completedExerciseIds.has(exercise.exercise_id),
-            ),
-        )
+        .filter((training) => {
+          const ids = new Set(
+            training.exercises.map((exercise) => exercise.id),
+          );
+          // A legacy catalog ID shared by multiple prescribed occurrences is
+          // ambiguous; do not assign it to any of them.
+          const relevant = entries.filter((entry) =>
+            entry.training_exercise_id
+              ? ids.has(entry.training_exercise_id)
+              : exerciseOwners.get(entry.exercise_id) === 1,
+          );
+          return reconcileTrainingProgress(relevant, training.exercises)
+            .trainingCompleted;
+        })
         .map((training) => training.id);
       const trainingsCompleted = [
         ...new Set([
@@ -668,10 +656,12 @@ export class AssignmentsService {
         where: { id: progress.id },
         data: {
           trainings_completed: trainingsCompleted,
+          // Historical IDs can be derived or backfilled. Only current complete
+          // execution evidence for every assigned training can promote a false day.
           training_completed:
             trainings.length > 0 &&
             trainings.every((training) =>
-              trainingsCompleted.includes(training.id),
+              newlyCompletedTrainingIds.includes(training.id),
             ),
         },
       });

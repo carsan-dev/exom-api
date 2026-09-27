@@ -13,9 +13,17 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
+  ApiParam,
   ApiQuery,
 } from '@nestjs/swagger';
 import { ProgressService } from './progress.service';
+import { TrainingProgressReadService } from './training-progress-read.service';
+import {
+  TrainingOverviewQueryDto,
+  TrainingProgressLoadQueryDto,
+  TrainingProgressPageQueryDto,
+  TrainingProgressSessionParamsDto,
+} from './dto/training-progress-query.dto';
 import {
   CompleteTrainingDto,
   MarkExerciseDto,
@@ -31,7 +39,84 @@ import { Role } from '@prisma/client';
 @Controller('progress')
 @Roles(Role.CLIENT)
 export class ProgressController {
-  constructor(private readonly progressService: ProgressService) {}
+  constructor(
+    private readonly progressService: ProgressService,
+    private readonly trainingProgressRead: TrainingProgressReadService,
+  ) {}
+
+  @Get('training-overview')
+  @ApiOperation({ summary: 'Get training indicators and exercise summaries' })
+  getTrainingOverview(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: TrainingOverviewQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedOverview(
+      user.id,
+      user.id,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
+  @Get('exercises/:exerciseId/load-history')
+  @ApiOperation({ summary: 'Get paginated performed exercise loads' })
+  getExerciseLoadHistory(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('exerciseId') exerciseId: string,
+    @Query() query: TrainingProgressLoadQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedExerciseLoadHistory(
+      user.id,
+      user.id,
+      exerciseId,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
+  @Get('training-sessions')
+  @ApiOperation({ summary: 'List paginated confirmed training sessions' })
+  getTrainingSessions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: TrainingProgressLoadQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedSessionList(
+      user.id,
+      user.id,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
+  @Get('training-sessions/:date/:sessionId')
+  @ApiOperation({
+    summary: 'Get a confirmed training session and paginated sets',
+  })
+  @ApiParam({
+    name: 'date',
+    required: true,
+    type: String,
+    description: 'Training session civil date (YYYY-MM-DD)',
+  })
+  @ApiParam({
+    name: 'sessionId',
+    required: true,
+    type: String,
+    description: 'Stable training occurrence ID',
+  })
+  getTrainingSessionDetail(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param() params: TrainingProgressSessionParamsDto,
+    @Query() query: TrainingProgressPageQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedSessionDetail(
+      user.id,
+      user.id,
+      params.date,
+      params.sessionId,
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
 
   @Get()
   @ApiOperation({ summary: "Get client's day progress for a given date" })
@@ -120,12 +205,19 @@ export class ProgressController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('exerciseId') exerciseId: string,
     @Query('date') date: string,
+    @Query('training_session_id') trainingSessionId?: string,
   ) {
     return runProgressCommand(
       operationId,
       revision,
-      ['unmarkExercise', date, exerciseId],
-      () => this.progressService.unmarkExercise(user.id, date, exerciseId),
+      ['unmarkExercise', date, exerciseId, trainingSessionId],
+      () =>
+        this.progressService.unmarkExercise(
+          user.id,
+          date,
+          exerciseId,
+          trainingSessionId,
+        ),
     );
   }
 

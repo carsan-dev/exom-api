@@ -7,6 +7,7 @@ import { MetricsModule } from '../metrics/metrics.module';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import { CalendarModule } from '../calendar/calendar.module';
+import { ProgressModule } from '../progress/progress.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CalendarModule } from '../calendar/calendar.module';
     NotificationsModule,
     MetricsModule,
     CalendarModule,
+    ProgressModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

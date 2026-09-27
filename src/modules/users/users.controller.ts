@@ -20,6 +20,13 @@ import {
 import { IsString } from 'class-validator';
 import { UsersService } from './users.service';
 import { MetricsOverviewQueryDto } from '../metrics/dto/metrics-overview-query.dto';
+import { parseDateOnly } from '../../common/date-only';
+import { TrainingProgressReadService } from '../progress/training-progress-read.service';
+import {
+  TrainingOverviewQueryDto,
+  TrainingProgressLoadQueryDto,
+  TrainingProgressPageQueryDto,
+} from '../progress/dto/training-progress-query.dto';
 import { ArchiveClientDto } from './dto/archive-client.dto';
 import { AdminClientsQueryDto } from './dto/admin-clients-query.dto';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
@@ -61,7 +68,10 @@ class UpdateFcmTokenDto {
 @ApiBearerAuth()
 @Controller('admin')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly trainingProgressRead: TrainingProgressReadService,
+  ) {}
 
   @Patch('fcm-token')
   @ApiOperation({ summary: 'Registrar o actualizar FCM token del dispositivo' })
@@ -315,6 +325,78 @@ export class UsersController {
       admin.role,
       clientId,
       dto,
+    );
+  }
+
+  @Get('clients/:id/progress/training-overview')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({
+    summary: 'Get client training indicators and exercise summaries',
+  })
+  getClientTrainingOverview(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: TrainingOverviewQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedOverview(
+      admin.id,
+      clientId,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
+  @Get('clients/:id/progress/exercises/:exerciseId/load-history')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Get paginated client exercise loads' })
+  getClientExerciseLoadHistory(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Param('exerciseId') exerciseId: string,
+    @Query() query: TrainingProgressLoadQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedExerciseLoadHistory(
+      admin.id,
+      clientId,
+      exerciseId,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
+  @Get('clients/:id/progress/training-sessions')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'List paginated client training sessions' })
+  getClientTrainingSessions(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Query() query: TrainingProgressLoadQueryDto,
+  ) {
+    return this.trainingProgressRead.getAuthorizedSessionList(
+      admin.id,
+      clientId,
+      { from: query.from, to: query.to },
+      { limit: query.limit, cursor: query.cursor },
+    );
+  }
+
+  @Get('clients/:id/progress/training-sessions/:date/:sessionId')
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @ApiOperation({ summary: 'Get a confirmed client training session and sets' })
+  getClientTrainingSessionDetail(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') clientId: string,
+    @Param('date') date: string,
+    @Param('sessionId') sessionId: string,
+    @Query() query: TrainingProgressPageQueryDto,
+  ) {
+    parseDateOnly(date);
+    return this.trainingProgressRead.getAuthorizedSessionDetail(
+      admin.id,
+      clientId,
+      date,
+      sessionId,
+      { limit: query.limit, cursor: query.cursor },
     );
   }
 

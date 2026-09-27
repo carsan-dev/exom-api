@@ -4,9 +4,12 @@ import {
   IsArray,
   ArrayUnique,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsNumber,
   IsString,
+  MaxLength,
+  ValidateIf,
   Max,
   Min,
   ValidateNested,
@@ -51,6 +54,15 @@ export class CompletedSetDto {
 }
 
 export class MarkExerciseDto {
+  @ApiPropertyOptional({
+    description: 'Stable training occurrence ID, not an operation ID',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  @IsNotEmpty()
+  training_session_id?: string;
+
   @ApiProperty()
   @IsDateOnly()
   date: string;
@@ -96,6 +108,15 @@ export class MarkMealDto {
 }
 
 export class CompleteTrainingDto {
+  @ApiPropertyOptional({
+    description: 'Stable training occurrence ID, not an operation ID',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  @IsNotEmpty()
+  training_session_id?: string;
+
   @ApiProperty()
   @IsDateOnly()
   date: string;
@@ -111,4 +132,24 @@ export class CompleteTrainingDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: 10,
+    description: 'Confirmed effort for this training occurrence',
+  })
+  @ValidateIf((_, value: unknown) => value !== undefined)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  rpe?: number;
+
+  @ApiPropertyOptional({
+    maxLength: 1000,
+    description: 'Note for this training occurrence; legacy notes remain daily',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  session_note?: string;
 }
