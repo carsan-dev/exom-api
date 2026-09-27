@@ -64,6 +64,10 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Prisma
 prisma/migrations/migration_lock.toml
 
+# Local Pi skills
+/.pi/skills/
+/skills-lock.json
+
 # IDE
 .idea/
 .vscode/
