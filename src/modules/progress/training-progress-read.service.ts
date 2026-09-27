@@ -74,6 +74,25 @@ export interface TrainingSessionListPage {
   nextCursor: string | null;
 }
 
+export interface LegacyTrainingRecordPage {
+  page: Array<{ date: string; record_index: number; kind: 'uncertain_legacy' }>;
+  nextCursor: string | null;
+}
+
+interface LegacyRecordCursor {
+  v: 1;
+  c: string;
+  f: string;
+  t: string;
+  d: string;
+  i: number;
+}
+
+interface LegacyRecordRow {
+  date: string;
+  record_index: bigint;
+}
+
 interface SessionListCursor {
   v: 1;
   c: string;
@@ -407,6 +426,17 @@ export function buildTrainingOverviewExerciseQuery(
     `;
 }
 
+// Both the overview aggregate and the Admin-only page count the same distinct
+// date/key pairs, including exclusion by any checked matching claim.
+const legacyRecordsSql = Prisma.sql`
+  SELECT DISTINCT d.date, t.training_id
+  FROM days d
+  CROSS JOIN LATERAL unnest(d.trainings_completed) t(training_id)
+  WHERE d.training_completed = true AND length(t.training_id) > 0 AND NOT EXISTS (
+    SELECT 1 FROM checked e WHERE e.date = d.date AND e.training_id = t.training_id
+  )
+`;
+
 export class TrainingProgressReadService {
   constructor(private readonly db: Pick<PrismaClient, '$transaction'>) {}
 
@@ -509,6 +539,124 @@ export class TrainingProgressReadService {
         timeout: 30_000,
       },
     );
+  }
+
+  getAuthorizedLegacyTrainingRecords(
+    actorId: string,
+    clientId: string,
+    range: TrainingProgressRange,
+    options: { limit?: number; cursor?: string } = {},
+  ): Promise<LegacyTrainingRecordPage> {
+    return this.db.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        await this.#assertReadAccess(tx, actorId, clientId);
+        const actor = await tx.user.findUnique({
+          where: { id: actorId },
+          select: { role: true },
+        });
+        if (actor?.role !== Role.ADMIN && actor?.role !== Role.SUPER_ADMIN)
+          throw new ForbiddenException('Training progress access denied');
+        return this.#readLegacyTrainingRecords(tx, clientId, range, options);
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+        timeout: 30_000,
+      },
+    );
+  }
+
+  async #readLegacyTrainingRecords(
+    tx: Prisma.TransactionClient,
+    clientId: string,
+    range: TrainingProgressRange,
+    options: { limit?: number; cursor?: string },
+  ): Promise<LegacyTrainingRecordPage> {
+    if (!clientId || !validCivilDateRange(range))
+      throw new BadRequestException('Invalid civil date range');
+    const limit = options.limit ?? 25;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      throw new BadRequestException('Invalid page limit');
+    let cursor: LegacyRecordCursor | null = null;
+    if (options.cursor !== undefined) {
+      try {
+        if (
+          typeof options.cursor !== 'string' ||
+          options.cursor.length > 2048 ||
+          !/^[A-Za-z0-9_-]+$/.test(options.cursor)
+        )
+          throw Error('Invalid encoding');
+        const bytes = Buffer.from(options.cursor, 'base64url');
+        if (bytes.toString('base64url') !== options.cursor)
+          throw Error('Non-canonical cursor');
+        const decoded: unknown = JSON.parse(bytes.toString('utf8'));
+        if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded))
+          throw Error('Invalid cursor');
+        const value = decoded as Partial<LegacyRecordCursor>;
+        if (
+          Object.keys(value).sort().join(',') !== 'c,d,f,i,t,v' ||
+          value.v !== 1 ||
+          value.c !== clientId ||
+          value.f !== range.from ||
+          value.t !== range.to ||
+          typeof value.d !== 'string' ||
+          !validDate(value.d) ||
+          value.d < range.from ||
+          value.d > range.to ||
+          !Number.isSafeInteger(value.i) ||
+          (value.i ?? 0) < 1
+        )
+          throw Error('Cursor mismatch');
+        cursor = value as LegacyRecordCursor;
+      } catch {
+        throw new BadRequestException('Invalid legacy training cursor');
+      }
+    }
+    const rows = await tx.$queryRaw<LegacyRecordRow[]>(Prisma.sql`
+      WITH days AS (
+        SELECT date, training_completed, trainings_completed, training_sessions
+        FROM day_progress WHERE client_id = ${clientId}
+          AND date >= ${range.from}::date AND date <= ${range.to}::date
+      ), checked AS (
+        SELECT d.date,
+          CASE WHEN jsonb_typeof(e.value->'training_id') = 'string'
+            AND length(e.value->>'training_id') > 0
+            THEN e.value->>'training_id' END AS training_id
+        FROM days d CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(d.training_sessions) = 'array'
+            THEN d.training_sessions ELSE '[]'::jsonb END) e
+        WHERE jsonb_typeof(e.value) = 'object'
+      ), legacy AS (${legacyRecordsSql}), numbered AS (
+        SELECT date, row_number() OVER (
+          PARTITION BY date ORDER BY training_id COLLATE "C") AS record_index
+        FROM legacy
+      )
+      SELECT date::text AS date, record_index FROM numbered
+      WHERE (${cursor?.d ?? null}::date IS NULL OR date < ${cursor?.d ?? null}::date
+        OR (date = ${cursor?.d ?? null}::date AND record_index > ${cursor?.i ?? null}::bigint))
+      ORDER BY date DESC, record_index ASC LIMIT ${limit + 1}
+    `);
+    const pageRows = rows.slice(0, limit);
+    const page = pageRows.map((row) => ({
+      date: row.date,
+      record_index: safeBigintCount(row.record_index),
+      kind: 'uncertain_legacy' as const,
+    }));
+    const last = page.at(-1);
+    const nextCursor =
+      rows.length > limit && last
+        ? Buffer.from(
+            JSON.stringify({
+              v: 1,
+              c: clientId,
+              f: range.from,
+              t: range.to,
+              d: last.date,
+              i: last.record_index,
+            } satisfies LegacyRecordCursor),
+          ).toString('base64url')
+        : null;
+    return { page, nextCursor };
   }
 
   getAuthorizedSessionList(
@@ -1206,14 +1354,7 @@ export class TrainingProgressReadService {
           CASE WHEN session_id IS NULL THEN training_id END
         HAVING bool_and(training_id IS NOT NULL AND valid_confirmed AND valid_rpe AND valid_note)
           AND count(DISTINCT (training_id, rpe, note)) = 1
-      ), legacy AS (
-        SELECT DISTINCT d.date, t.training_id
-        FROM days d
-        CROSS JOIN LATERAL unnest(d.trainings_completed) t(training_id)
-        WHERE d.training_completed = true AND length(t.training_id) > 0 AND NOT EXISTS (
-          SELECT 1 FROM checked e WHERE e.date = d.date AND e.training_id = t.training_id
-        )
-      ), all_sessions AS (
+      ), legacy AS (${legacyRecordsSql}), all_sessions AS (
         SELECT rpe FROM unique_sessions UNION ALL SELECT NULL::numeric FROM legacy
       )
       SELECT count(*) AS completed, sum(rpe)::text AS rpe_total, count(rpe) AS rpe_count

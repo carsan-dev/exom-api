@@ -475,6 +475,91 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
       .expect(400);
     validate(responseSchema('/api/v1/trainings', 'post', 400), invalid.body);
   });
+  it('exposes only uncertain legacy date/ordinal pages to authorized admins', async () => {
+    const route = `/api/v1/admin/clients/${client}/progress/legacy-training-records`;
+    const schemaRoute =
+      '/api/v1/admin/clients/{id}/progress/legacy-training-records';
+    const range = '?from=2098-11-01&to=2098-11-02&limit=1';
+    const firstDate = new Date('2098-11-02');
+    const secondDate = new Date('2098-11-01');
+    await prisma.dayProgress.createMany({
+      data: [
+        {
+          client_id: client,
+          date: firstDate,
+          training_completed: true,
+          trainings_completed: ['historical-a', 'historical-b'],
+        },
+        {
+          client_id: client,
+          date: secondDate,
+          training_completed: true,
+          trainings_completed: ['historical-c'],
+        },
+      ],
+    });
+    try {
+      await request(server())
+        .get(`${route}${range}`)
+        .set('x-contract-owner', client)
+        .expect(403);
+      await request(server())
+        .get(`${route}${range}`)
+        .set('x-contract-owner', admin)
+        .expect(403);
+      const first = await request(server())
+        .get(`${route}${range}`)
+        .set('x-contract-owner', owner)
+        .expect(200);
+      validate(responseSchema(schemaRoute, 'get', 200), first.body);
+      const firstData = responseData(first);
+      expect(firstData.page).toEqual([
+        { date: '2098-11-02', record_index: 1, kind: 'uncertain_legacy' },
+      ]);
+      expect(typeof firstData.nextCursor).toBe('string');
+      const second = await request(server())
+        .get(`${route}${range}&cursor=${firstData.nextCursor as string}`)
+        .set('x-contract-owner', owner)
+        .expect(200);
+      validate(responseSchema(schemaRoute, 'get', 200), second.body);
+      const secondData = responseData(second);
+      expect(secondData.page).toEqual([
+        { date: '2098-11-02', record_index: 2, kind: 'uncertain_legacy' },
+      ]);
+      expect(typeof secondData.nextCursor).toBe('string');
+      const last = await request(server())
+        .get(`${route}${range}&cursor=${secondData.nextCursor as string}`)
+        .set('x-contract-owner', owner)
+        .expect(200);
+      expect(responseData(last)).toEqual({
+        page: [
+          { date: '2098-11-01', record_index: 1, kind: 'uncertain_legacy' },
+        ],
+        nextCursor: null,
+      });
+      for (const data of [firstData, secondData, responseData(last)]) {
+        expect(JSON.stringify(data)).not.toMatch(
+          /historical-|training_id|training_name|session_id/,
+        );
+      }
+      await prisma.adminClientAssignment.create({
+        data: { admin_id: admin, client_id: client, is_active: true },
+      });
+      const assigned = await request(server())
+        .get(`${route}${range}`)
+        .set('x-contract-owner', admin)
+        .expect(200);
+      expect(responseData(assigned)).toEqual(firstData);
+    } finally {
+      await prisma.adminClientAssignment.deleteMany({
+        where: { admin_id: admin, client_id: client },
+      });
+      await prisma.dayProgress.deleteMany({
+        where: { client_id: client, date: { in: [firstDate, secondDate] } },
+      });
+    }
+  });
+
   describe('real progress completion over HTTP and PostgreSQL', () => {
     let trainingId: string;
     let trainingExerciseId: string;

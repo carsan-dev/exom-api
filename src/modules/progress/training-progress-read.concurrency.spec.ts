@@ -224,6 +224,204 @@ suite('training progress bounded PostgreSQL read model', () => {
     }
   });
 
+  it('pages only the overview legacy contribution without disclosing historical identifiers', async () => {
+    const owner = await client();
+    const other = await client();
+    const coach = await client();
+    const chief = await client();
+    await db.user.update({ where: { id: coach }, data: { role: 'ADMIN' } });
+    await db.user.update({
+      where: { id: chief },
+      data: { role: 'SUPER_ADMIN' },
+    });
+    const rows = [
+      {
+        day: '2026-09-24',
+        completed: true,
+        ids: [
+          'z-secret',
+          'a-secret',
+          'a-secret',
+          'c-secret',
+          'd-secret',
+          '',
+          'claimed-secret',
+          'draft-secret',
+          'contradicted-secret',
+        ],
+        claims: [
+          {
+            training_id: 'claimed-secret',
+            training_session_id: 'confirmed',
+            rpe: 5,
+          },
+          {
+            training_id: 'draft-secret',
+            training_session_id: 'draft',
+            confirmed: false,
+          },
+          {
+            training_id: 'contradicted-secret',
+            training_session_id: 'same',
+            rpe: 5,
+          },
+          {
+            training_id: 'contradicted-secret',
+            training_session_id: 'same',
+            rpe: 9,
+          },
+        ],
+      },
+      {
+        day: '2026-09-23',
+        completed: true,
+        ids: ['m-secret', 'b-secret', 'm-secret'],
+        claims: 'malformed',
+      },
+      {
+        day: '2026-09-22',
+        completed: false,
+        ids: ['ignored-secret'],
+        claims: [],
+      },
+    ];
+    for (const row of rows) {
+      await db.dayProgress.create({
+        data: {
+          client_id: owner,
+          date: date(row.day),
+          training_completed: row.completed,
+          trainings_completed: row.ids,
+          training_sessions: row.claims,
+        },
+      });
+    }
+    await db.dayProgress.create({
+      data: {
+        client_id: other,
+        date: date('2026-09-24'),
+        training_completed: true,
+        trainings_completed: ['intruder-secret'],
+      },
+    });
+    const period = { from: '2026-09-22', to: '2026-09-24' };
+    const read = (
+      actor: string,
+      target = owner,
+      window = period,
+      options: { limit?: number; cursor?: string } = {},
+    ) =>
+      reader.getAuthorizedLegacyTrainingRecords(actor, target, window, options);
+    await expect(read(owner)).rejects.toMatchObject({ status: 403 });
+    await expect(read(other)).rejects.toMatchObject({ status: 403 });
+    await expect(read(coach)).rejects.toMatchObject({ status: 403 });
+    await db.adminClientAssignment.create({
+      data: { admin_id: coach, client_id: owner },
+    });
+    const first = await read(coach, owner, period, { limit: 2 });
+    expect(first.page).toEqual([
+      { date: '2026-09-24', record_index: 1, kind: 'uncertain_legacy' },
+      { date: '2026-09-24', record_index: 2, kind: 'uncertain_legacy' },
+    ]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(
+      JSON.parse(Buffer.from(first.nextCursor!, 'base64url').toString('utf8')),
+    ).toEqual({
+      v: 1,
+      c: owner,
+      f: period.from,
+      t: period.to,
+      d: '2026-09-24',
+      i: 2,
+    });
+    const second = await read(coach, owner, period, {
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    const third = await read(chief, owner, period, {
+      limit: 2,
+      cursor: second.nextCursor!,
+    });
+    expect([...first.page, ...second.page, ...third.page]).toEqual([
+      ...first.page,
+      { date: '2026-09-24', record_index: 3, kind: 'uncertain_legacy' },
+      { date: '2026-09-24', record_index: 4, kind: 'uncertain_legacy' },
+      { date: '2026-09-23', record_index: 1, kind: 'uncertain_legacy' },
+      { date: '2026-09-23', record_index: 2, kind: 'uncertain_legacy' },
+    ]);
+    expect(third.nextCursor).toBeNull();
+    const overview = await reader.getAuthorizedOverview(owner, owner, period);
+    // One valid explicit session plus six distinct legacy records.
+    expect(overview.indicators.trainings_completed).toBe(7);
+    expect(first.page.length + second.page.length + third.page.length).toBe(
+      overview.indicators.trainings_completed - 1,
+    );
+    const serialized = JSON.stringify([first, second, third]);
+    for (const secret of ['secret', 'intruder', 'confirmed', 'draft', 'same']) {
+      expect(serialized).not.toContain(secret);
+      expect(
+        Buffer.from(first.nextCursor!, 'base64url').toString('utf8'),
+      ).not.toContain(secret);
+    }
+    expect(
+      JSON.parse(Buffer.from(first.nextCursor!, 'base64url').toString('utf8')),
+    ).toEqual({
+      v: 1,
+      c: owner,
+      f: period.from,
+      t: period.to,
+      d: '2026-09-24',
+      i: 2,
+    });
+    await expect(
+      read(chief, other, period, { cursor: first.nextCursor! }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      read(
+        chief,
+        owner,
+        { from: '2026-09-23', to: period.to },
+        { cursor: first.nextCursor! },
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+    for (const cursor of [
+      'bad',
+      `${first.nextCursor!}=`,
+      Buffer.from(
+        JSON.stringify({
+          v: 1,
+          c: owner,
+          f: period.from,
+          t: period.to,
+          d: '2026-09-24',
+          i: 0,
+        }),
+      ).toString('base64url'),
+    ]) {
+      await expect(
+        read(chief, owner, period, { cursor }),
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    for (const limit of [0, 101, 1.5])
+      await expect(read(chief, owner, period, { limit })).rejects.toMatchObject(
+        { status: 400 },
+      );
+    await expect(
+      read(chief, owner, { from: '2024-01-01', to: '2025-01-01' }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      read(chief, owner, { from: '2026-02-30', to: period.to }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      read(chief, owner, { from: '2024-01-01', to: '2024-12-31' }),
+    ).resolves.toEqual({ page: [], nextCursor: null });
+    await db.adminClientAssignment.update({
+      where: { admin_id_client_id: { admin_id: coach, client_id: owner } },
+      data: { is_active: false },
+    });
+    await expect(read(coach)).rejects.toMatchObject({ status: 403 });
+  });
+
   it('counts historical IDs only on completed days, without changing the historical rows', async () => {
     const id = await client();
     const cases = [
