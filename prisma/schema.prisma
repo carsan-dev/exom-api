@@ -168,6 +168,8 @@ model User {
   created_at             DateTime              @default(now())
   updated_at             DateTime              @updatedAt
 
+  adherenceConfigHead           AdherenceConfigHead?
+  adherenceConfigRevisions      AdherenceConfigRevision[]
   profile                       Profile?
   adminOf                       AdminClientAssignment[] @relation("AdminAssignments")
   clientOf                      AdminClientAssignment[] @relation("ClientAssignments")
@@ -196,6 +198,43 @@ model User {
 
   @@index([role, created_at, id])
   @@map("users")
+}
+
+// The migration records when the global default first becomes historically knowable.
+model AdherenceConfigEpoch {
+  id             String   @id
+  effective_date DateTime @db.Date
+
+  @@map("adherence_config_epochs")
+}
+
+// Revisions are append-only; no legacy client is backfilled with invented history.
+model AdherenceConfigHead {
+  client_id String @id
+  version   Int    @default(0)
+  client    User   @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@map("adherence_config_heads")
+}
+
+model AdherenceConfigRevision {
+  id                     String   @id @default(uuid())
+  client_id              String
+  version                Int
+  effective_date         DateTime @db.Date
+  steps_goal             Int?
+  calorie_lower_percent  Int
+  calorie_upper_percent  Int
+  protein_min_percent    Int
+  steps_min_percent      Int
+  low_global_percent     Int
+  created_at             DateTime @default(now())
+  client                 User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([client_id, version])
+  @@unique([client_id, effective_date])
+  @@index([client_id, effective_date(sort: Desc)])
+  @@map("adherence_config_revisions")
 }
 
 model Profile {
