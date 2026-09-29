@@ -297,14 +297,17 @@ export function buildTrainingOverviewExerciseQuery(
         WHERE jsonb_typeof(e.value) = 'object'
           AND jsonb_typeof(e.value->'exercise_id') = 'string'
           AND length(e.value->>'exercise_id') > 0
-          AND jsonb_typeof(e.value->'sets') = 'array'
+          AND (NOT (e.value ? 'sets') OR jsonb_typeof(e.value->'sets') IN ('null', 'array'))
       ), raw_sets AS (
-        SELECT date, training_sessions, entry, s.value AS item FROM entries
-        CROSS JOIN LATERAL jsonb_array_elements(entry->'sets') s
-        WHERE jsonb_typeof(s.value) = 'object'
-          AND jsonb_typeof(s.value->'set_number') = 'number'
-          AND (s.value->>'set_number')::numeric BETWEEN 1 AND 9007199254740991
-          AND (s.value->>'set_number')::numeric = trunc((s.value->>'set_number')::numeric)
+        SELECT date, training_sessions, entry, valid.item FROM entries
+        LEFT JOIN LATERAL (
+          SELECT s.value AS item FROM jsonb_array_elements(CASE WHEN jsonb_typeof(entry->'sets') = 'array'
+            THEN entry->'sets' ELSE '[]'::jsonb END) s
+          WHERE jsonb_typeof(s.value) = 'object'
+            AND jsonb_typeof(s.value->'set_number') = 'number'
+            AND (s.value->>'set_number')::numeric BETWEEN 1 AND 9007199254740991
+            AND (s.value->>'set_number')::numeric = trunc((s.value->>'set_number')::numeric)
+        ) valid ON true
       ), parsed AS (
         SELECT date, training_sessions, entry, entry->>'exercise_id' AS exercise_id,
           CASE WHEN jsonb_typeof(entry->'training_session_id') = 'string'
@@ -336,7 +339,7 @@ export function buildTrainingOverviewExerciseQuery(
           AND weight * reps <= ${MAX_FLOAT}::numeric THEN weight * reps END AS term
         FROM parsed
       ), grouped AS (
-        SELECT exercise_id, count(*) AS sets, max(reps) AS max_reps,
+        SELECT exercise_id, count(set_number) AS sets, max(reps) AS max_reps,
           max(seconds) AS max_seconds, sum(term) AS total_volume,
           bool_or(reps IS NOT NULL AND weight IS NOT NULL AND term IS NULL) AS overflow,
           sum(rir) AS total_rir, count(rir) AS rir_count
@@ -355,8 +358,8 @@ export function buildTrainingOverviewExerciseQuery(
           sum(total_rir) AS total_rir, sum(rir_count) AS rir_count
         FROM grouped
       ), performed_entries AS (
-        SELECT DISTINCT date, t.exercise_id, entry, training_sessions
-        FROM terms t ${page && !filtered ? Prisma.sql`JOIN page_ids ids ON ids.exercise_id = t.exercise_id` : Prisma.empty}
+        SELECT DISTINCT date, e.entry->>'exercise_id' AS exercise_id, entry, training_sessions
+        FROM entries e ${page && !filtered ? Prisma.sql`JOIN page_ids ids ON ids.exercise_id = e.entry->>'exercise_id'` : Prisma.empty}
       ), entry_names AS (
         SELECT e.date, e.exercise_id, n.exercise_name
         FROM performed_entries e
@@ -395,7 +398,8 @@ export function buildTrainingOverviewExerciseQuery(
         FROM entry_names GROUP BY exercise_id, date
       ), latest_names AS MATERIALIZED (
         SELECT DISTINCT ON (exercise_id) exercise_id, exercise_name
-        FROM day_names ORDER BY exercise_id, date DESC
+        FROM day_names WHERE exercise_name IS NOT NULL
+        ORDER BY exercise_id, date DESC
       ), ${
         filtered
           ? Prisma.sql`page_ids AS (
@@ -1297,7 +1301,7 @@ export class TrainingProgressReadService {
       inputBytes: input.input_bytes,
       distinctExerciseCount: 0n,
     });
-    // Match the production query's valid-set definition, stopping at cap + 1.
+    // Bound every completed exercise identity before the overview query, including setless entries.
     const [distinct] = await tx.$queryRaw<
       { exercise_count: bigint }[]
     >(Prisma.sql`
@@ -1306,18 +1310,12 @@ export class TrainingProgressReadService {
         FROM day_progress d
         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(d.exercises_completed) = 'array'
           THEN d.exercises_completed ELSE '[]'::jsonb END) e
-        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.value->'sets') = 'array'
-          THEN e.value->'sets' ELSE '[]'::jsonb END) s
         WHERE d.client_id = ${clientId} AND d.date >= ${range.from}::date
           AND d.date <= ${range.to}::date
           AND jsonb_typeof(e.value) = 'object'
           AND jsonb_typeof(e.value->'exercise_id') = 'string'
           AND length(e.value->>'exercise_id') > 0
-          AND jsonb_typeof(e.value->'sets') = 'array'
-          AND jsonb_typeof(s.value) = 'object'
-          AND jsonb_typeof(s.value->'set_number') = 'number'
-          AND (s.value->>'set_number')::numeric BETWEEN 1 AND 9007199254740991
-          AND (s.value->>'set_number')::numeric = trunc((s.value->>'set_number')::numeric)
+          AND (NOT (e.value ? 'sets') OR jsonb_typeof(e.value->'sets') IN ('null', 'array'))
         LIMIT ${TRAINING_OVERVIEW_MAX_DISTINCT_EXERCISES + 1}
       ) bounded
     `);
