@@ -14,8 +14,9 @@ import {
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { PrismaService } from '../../prisma/prisma.service';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import { withLiveUsers } from '../../common/user-external-effect';
+import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { UsersService } from '../users/users.service';
 import {
@@ -519,6 +520,112 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
       last_error: null,
       attempts: 2,
     });
+  });
+
+  it('serializes deletion before user locks under planning contention', async () => {
+    const owner = await client();
+    await prisma.planAssignment.create({
+      data: {
+        client_id: owner.id,
+        date: new Date('2026-09-01'),
+        is_rest_day: true,
+      },
+    });
+    const deadlockCount = async () => {
+      const result = await pool.query<{ deadlocks: string }>(
+        'SELECT deadlocks::text FROM pg_stat_database WHERE datname = current_database()',
+      );
+      return Number(result.rows[0].deadlocks);
+    };
+    const deadlocksBefore = await deadlockCount();
+    let release!: () => void;
+    let entered!: (pid: number) => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<number>((resolve) => {
+      entered = resolve;
+    });
+    // Prisma commits or rolls back A before it releases its connection.
+    const failureCode = (error: unknown) => {
+      if (typeof error !== 'object' || error === null) return 'unknown failure';
+      if ('code' in error && error.code === '40P01') return '40P01';
+      if (
+        'meta' in error &&
+        typeof error.meta === 'object' &&
+        error.meta !== null &&
+        'code' in error.meta &&
+        error.meta.code === '40P01'
+      )
+        return '40P01';
+      if ('code' in error && error.code === 'P2034') return 'P2034';
+      return 'other failure';
+    };
+    const planning = prisma
+      .$transaction(
+        async (tx) => {
+          await lockClientDayProgress(tx, owner.id);
+          const [{ pid }] = await tx.$queryRaw<
+            { pid: number }[]
+          >`SELECT pg_backend_pid() AS pid`;
+          entered(pid);
+          await gate;
+          await tx.$queryRaw`SELECT id FROM users WHERE id = ${owner.id} FOR UPDATE`;
+        },
+        { timeout: 30_000 },
+      )
+      .then(
+        () => 'acquired',
+        (error: unknown) => failureCode(error),
+      );
+    const planningPid = await ready;
+    const deletion = service.request(owner.id, adminId).then(
+      (operation) => ({ status: 'deleted', operation }),
+      (error: unknown) => ({ status: failureCode(error) }),
+    );
+    let waitingOnAdvisory = false;
+    let planningResult: string;
+    let deletionResult: Awaited<typeof deletion>;
+    try {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const observed = await pool.query<{ waiting: boolean }>(
+          `SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity
+            WHERE application_name = 'f004-deletion-test'
+              AND pid <> $1 AND wait_event_type = 'Lock'
+              AND wait_event = 'advisory' AND $1 = ANY(pg_blocking_pids(pid))
+          ) AS waiting`,
+          [planningPid],
+        );
+        if (observed.rows[0].waiting) {
+          waitingOnAdvisory = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    } finally {
+      // Even a failed synchronization must release A and settle B before fixture cleanup.
+      release();
+      [planningResult, deletionResult] = await Promise.all([
+        planning,
+        deletion,
+      ]);
+    }
+    const deadlocksObserved = (await deadlockCount()) - deadlocksBefore;
+    expect(waitingOnAdvisory).toBe(true);
+    expect(planningResult).toBe('acquired');
+    // Prisma maps PostgreSQL's 40P01 deadlock into P2034 at this boundary.
+    expect({ status: deletionResult.status, deadlocksObserved }).toEqual({
+      status: 'deleted',
+      deadlocksObserved: 0,
+    });
+    expect(await prisma.user.count({ where: { id: owner.id } })).toBe(0);
+    expect(
+      await prisma.planAssignment.count({ where: { client_id: owner.id } }),
+    ).toBe(0);
+    expect(removeIdentity).not.toHaveBeenCalled();
+    expect(removeObject).not.toHaveBeenCalled();
   });
 
   it('rejects an archive request waiting behind deletion without recreating the client', async () => {
