@@ -156,6 +156,51 @@ function summarizePlan(raw: unknown): object {
   };
 }
 
+function summarizeEstimatedPlan(raw: unknown): {
+  nodes: number;
+  truncated: boolean;
+  root: { type: string; rows: number; cost: number };
+  mostExpensiveSubtree: { type: string; rows: number; cost: number } | null;
+} {
+  const result = typeof raw === 'string' ? (JSON.parse(raw) as unknown) : raw;
+  if (!Array.isArray(result) || result.length !== 1)
+    throw Error('Invalid estimated plan root');
+  const root = planObject(result[0]);
+  const pending: unknown[] = [root.Plan];
+  let nodes = 0;
+  let first: { type: string; rows: number; cost: number } | undefined;
+  let mostExpensiveSubtree: typeof first;
+  while (pending.length && nodes < 64) {
+    const node = planObject(pending.shift());
+    const type = node['Node Type'];
+    const rows = planMetric(node, 'Plan Rows');
+    const cost = planMetric(node, 'Total Cost');
+    if (
+      typeof type !== 'string' ||
+      !/^[A-Za-z ]{1,48}$/.test(type) ||
+      rows === null ||
+      cost === null
+    )
+      throw Error('Invalid estimated plan node');
+    const summary = { type, rows, cost };
+    if (nodes === 0) first = summary;
+    else if (!mostExpensiveSubtree || cost > mostExpensiveSubtree.cost)
+      mostExpensiveSubtree = summary;
+    nodes += 1;
+    if (Array.isArray(node.Plans)) {
+      for (const child of (node.Plans as unknown[]).slice(0, 64))
+        pending.push(child);
+    }
+  }
+  if (!first) throw Error('Empty estimated plan');
+  return {
+    nodes,
+    truncated: pending.length > 0,
+    root: first,
+    mostExpensiveSubtree: mostExpensiveSubtree ?? null,
+  };
+}
+
 describe('P3-T6-B real HTTP training overview measurements', () => {
   let app: NestExpressApplication | undefined;
   let prisma: PrismaService | undefined;
@@ -414,6 +459,72 @@ describe('P3-T6-B real HTTP training overview measurements', () => {
       }
     });
   }
+
+  it('reports sanitized 10000-exercise plan shape without execution', async () => {
+    if (!prisma || !fixtureCommitted) throw Error('Fixture not committed');
+    // EXPLAIN without ANALYZE plans but does not execute the query. A 5s
+    // statement budget bounds planning; estimates are not measured latency.
+    const [row] = await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        await tx.$executeRaw`SET LOCAL statement_timeout = '5s'`;
+        return tx.$queryRaw<{ 'QUERY PLAN': unknown }[]>(Prisma.sql`
+          EXPLAIN (FORMAT JSON)
+          ${buildTrainingOverviewExerciseQuery(clients[1], { from: day, to: day })}
+        `);
+      },
+      { timeout: 8_000 },
+    );
+    const summary = summarizeEstimatedPlan(row?.['QUERY PLAN']);
+    expect(summary.nodes).toBeGreaterThan(0);
+    expect(summary.root.cost).toBeGreaterThanOrEqual(0);
+    // Whitelisted plan fields only: no SQL, predicates, IDs or parameters.
+    console.info(
+      JSON.stringify({ diagnostic: 'P4-T3B-estimated-plan', ...summary }),
+    );
+  });
+
+  it('diagnoses 10000-exercise query with nested loops disabled', async () => {
+    if (!prisma || !fixtureCommitted) throw Error('Fixture not committed');
+    const start = performance.now();
+    try {
+      const rows = await prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+          await tx.$executeRaw`SET LOCAL statement_timeout = '20s'`;
+          await tx.$executeRaw`SET LOCAL enable_nestloop = off`;
+          return tx.$queryRaw<unknown[]>(
+            buildTrainingOverviewExerciseQuery(clients[1], {
+              from: day,
+              to: day,
+            }),
+          );
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+          timeout: 25_000,
+        },
+      );
+      console.info(
+        JSON.stringify({
+          diagnostic: 'P4-T3B-no-nested-loop-query',
+          status: 'completed',
+          elapsedMs: Math.round(performance.now() - start),
+          rows: rows.length,
+        }),
+      );
+      expect(rows).toHaveLength(10_000);
+    } catch {
+      console.info(
+        JSON.stringify({
+          diagnostic: 'P4-T3B-no-nested-loop-query',
+          status: 'failed',
+          elapsedMs: Math.round(performance.now() - start),
+        }),
+      );
+      throw Error('P4-T3B isolated no-nested-loop query diagnosis failed');
+    }
+  });
 
   it('pages the 366-day training overview over HTTP with global indicators and bound cursors', async () => {
     if (!app || !fixtureCommitted) throw Error('Fixture not committed');
