@@ -17,6 +17,29 @@ enum Role {
   CLIENT
 }
 
+enum ClientFollowUpTaskType {
+  TRAINING_UPDATE
+  DIET_UPDATE
+  PHOTO_REVIEW
+  RECAP_REVIEW
+  REVIEW
+  CALL
+  FEEDBACK
+}
+
+enum ClientFollowUpTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ClientFollowUpTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum AuthProvider {
   email
   google
@@ -178,6 +201,9 @@ model User {
   bodyMetrics                   BodyMetric[]
   streak                        Streak?
   weeklyRecaps                  WeeklyRecap[]
+  clientFollowUpTasks            ClientFollowUpTask[]    @relation("FollowUpTaskClient")
+  assignedFollowUpTasks          ClientFollowUpTask[]    @relation("FollowUpTaskAssignee")
+  createdFollowUpTasks           ClientFollowUpTask[]    @relation("FollowUpTaskCreator")
   clientChallenges              ChallengeClient[]
   userAchievements              UserAchievement[]
   feedbackMedia                 FeedbackMedia[]
@@ -922,6 +948,32 @@ model Streak {
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
   @@map("streaks")
+}
+
+model ClientFollowUpTask {
+  id             String                     @id @default(uuid())
+  client_id      String
+  assigned_to_id String?
+  created_by_id  String?
+  type           ClientFollowUpTaskType
+  title          String                     @db.VarChar(160)
+  description    String?                    @db.VarChar(3000)
+  due_date       DateTime                    @db.Date
+  priority       ClientFollowUpTaskPriority @default(MEDIUM)
+  status         ClientFollowUpTaskStatus   @default(PENDING)
+  version        Int                        @default(1)
+  completed_at   DateTime?                  @db.Timestamptz(3)
+  cancelled_at   DateTime?                  @db.Timestamptz(3)
+  created_at     DateTime                   @default(now()) @db.Timestamptz(3)
+  updated_at     DateTime                   @updatedAt @db.Timestamptz(3)
+
+  client      User  @relation("FollowUpTaskClient", fields: [client_id], references: [id], onDelete: Cascade)
+  assigned_to User? @relation("FollowUpTaskAssignee", fields: [assigned_to_id], references: [id], onDelete: SetNull)
+  created_by  User? @relation("FollowUpTaskCreator", fields: [created_by_id], references: [id], onDelete: SetNull)
+
+  @@index([client_id, status, due_date, priority, created_at], map: "client_followup_tasks_queue_idx")
+  @@index([client_id, type, status, due_date], map: "client_followup_tasks_type_queue_idx")
+  @@map("client_followup_tasks")
 }
 
 // ─── Weekly Recap ─────────────────────────────────────────────────────────────
