@@ -181,6 +181,420 @@ async function publish(source = bundle()): Promise<StoredPrescription> {
   return result;
 }
 
+const coveredSources = [
+  'catalog_colors',
+  'diet_groups',
+  'diets',
+  'exercises',
+  'ingredients',
+  'meal_ingredients',
+  'meals',
+  'plan_assignment_trainings',
+  'plan_assignments',
+  'training_blocks',
+  'training_exercises',
+  'training_groups',
+  'trainings',
+  'diet_day_snapshots',
+  'rir_day_targets',
+  'training_day_snapshots',
+];
+function coveredBundle() {
+  const b = bundle();
+  b.baseline[3] = baseline('plan_assignments', { ...assignment, diet_id: 'd' });
+  b.baseline.push(
+    baseline('diets', {
+      id: 'd',
+      name: 'Catalog',
+      total_calories: 2200,
+      total_protein_g: 120,
+    }),
+  );
+  return b;
+}
+function cover(b: ReturnType<typeof bundle>) {
+  const counts = Object.fromEntries(
+    coveredSources.map((s) => [
+      s,
+      b.baseline.filter((r) => r.source_table === s).length,
+    ]),
+  );
+  b.baseline.push(
+    baseline('__adherence_coverage__', {
+      id: 'effective-prescription-v2',
+      version: 2,
+      sources: coveredSources,
+      counts,
+    }),
+  );
+  return b;
+}
+const snapshotMeal = {
+  id: 'm',
+  diet_id: 'd',
+  parent_meal_id: null,
+  type: 'LUNCH',
+  name: 'Lunch',
+  order: 0,
+  calories: 400,
+  protein_g: 30,
+  carbs_g: 40,
+  fat_g: 10,
+  ingredients: [
+    {
+      id: 'mi',
+      meal_id: 'm',
+      ingredient_id: 'i',
+      quantity: 100,
+      unit: 'g',
+      grams_equivalent: null,
+      ingredient: {
+        id: 'i',
+        name: 'Food',
+        calories_per_100g: 400,
+        protein_per_100g: 30,
+        carbs_per_100g: 40,
+        fat_per_100g: 10,
+        created_by: 'private',
+        icon: 'https://private',
+      },
+    },
+  ],
+  variants: [],
+  image_url: 'https://private',
+};
+function overlay(source: string, row: Record<string, unknown>) {
+  const tail =
+    source === 'diet_day_snapshots'
+      ? row.diet_id
+      : source === 'training_day_snapshots'
+        ? row.training_id
+        : row.training_exercise_id;
+  return {
+    source_table: source,
+    row_key: `[${[row.client_id, row.date, tail].map((v) => JSON.stringify(v)).join(', ')}]`,
+    row_image: row,
+  };
+}
+async function effective(b: ReturnType<typeof bundle>) {
+  const db = new Store();
+  db.source = b;
+  return new AdherencePrescriptionService(db, db).publish(
+    'c',
+    '2020-01-01',
+    key,
+  );
+}
+
+describe('verified sixteen-source effective prescription', () => {
+  it('distinguishes H1 snapshot diet/timing/day RIR from H2 catalog using all three inputs', async () => {
+    const h1 = coveredBundle();
+    h1.baseline.push(
+      overlay('diet_day_snapshots', {
+        client_id: 'c',
+        date: '2020-01-01',
+        diet_id: 'd',
+        version: 1,
+        provenance: 'legacy_available',
+        captured_at: '1999-01-01',
+        diet: {
+          id: 'd',
+          name: 'Snapshot',
+          total_calories: 1800,
+          total_protein_g: 90,
+          meals: [snapshotMeal],
+        },
+      }),
+      overlay('training_day_snapshots', {
+        client_id: 'c',
+        date: '2020-01-01',
+        training_id: 't',
+        version: 1,
+        payload: {
+          ...training,
+          blocks: [],
+          exercises: [
+            {
+              ...occurrence,
+              target_value: 120,
+              measure_type: 'SECONDS',
+              reps_or_duration: '120 s',
+              exercise,
+              timed_config: {
+                version: 1,
+                unit: 'SECONDS',
+                segments: [{ action: 'Run', seconds: 20, unit: 'SECONDS' }],
+              },
+            },
+          ],
+        },
+      }),
+      overlay('rir_day_targets', {
+        client_id: 'c',
+        date: '2020-01-01',
+        training_id: 't',
+        training_exercise_id: 'o',
+        target_rir: 1,
+      }),
+    );
+    const h2 = coveredBundle();
+    h2.baseline.push(
+      baseline('meals', {
+        ...snapshotMeal,
+        variants: undefined,
+        ingredients: undefined,
+      }),
+    );
+    const a = await effective(cover(h1));
+    const c = await effective(cover(h2));
+    expect(a).toMatchObject({
+      status: 'stored',
+      prescription: {
+        nutrition: {
+          basis: 'known',
+          total_calories: 1800,
+          total_protein_g: 90,
+          groups: [
+            {
+              id: 'm',
+              alternatives: [{ id: 'm', ingredients: [{ quantity: 100 }] }],
+            },
+          ],
+        },
+        training: {
+          units: [
+            {
+              effective_content: {
+                basis: 'known',
+                training: { exercises: [{ target_value: 120, target_rir: 1 }] },
+              },
+              effective_rir: { basis: 'known' },
+            },
+          ],
+        },
+      },
+    });
+    expect(c).toMatchObject({
+      status: 'stored',
+      prescription: {
+        nutrition: {
+          basis: 'known',
+          total_calories: 2200,
+          total_protein_g: 120,
+        },
+        training: {
+          units: [
+            {
+              effective_content: {
+                basis: 'known',
+                training: { exercises: [{ target_rir: 3 }] },
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(a).not.toEqual(c);
+    expect(JSON.stringify(a)).not.toMatch(
+      /private|captured_at|legacy_available|image_url|icon/,
+    );
+  });
+  it('missing exact overlay field is UNKNOWN, never catalog fallback or invented null', async () => {
+    const b = coveredBundle();
+    b.baseline.push(
+      overlay('training_day_snapshots', {
+        client_id: 'c',
+        date: '2020-01-01',
+        training_id: 't',
+        version: 1,
+        payload: { ...training, exercises: [], blocks: null },
+      }),
+    );
+    expect(await effective(cover(b))).toMatchObject({ status: 'unknown' });
+  });
+  it('replays composite OLD-key moves in commit order with owner/date/occurrence isolation and explicit null', async () => {
+    const b = coveredBundle();
+    const old = {
+      client_id: 'other',
+      date: '2020-01-01',
+      training_exercise_id: 'o',
+      training_id: 't',
+      target_rir: 1,
+    };
+    const moved = { ...old, client_id: 'c', target_rir: null };
+    b.baseline.push(
+      overlay('rir_day_targets', old),
+      overlay('rir_day_targets', {
+        ...old,
+        client_id: 'c',
+        date: '2020-01-02',
+        target_rir: 2,
+      }),
+    );
+    cover(b);
+    b.manifest.proofs.push({
+      proof: { full_xid: '9007199254740994', microseconds: '1000' },
+    });
+    b.events.push(
+      event('2', '9007199254740994', 'rir_day_targets', old, moved),
+    );
+    expect(await effective(b)).toMatchObject({
+      status: 'stored',
+      prescription: {
+        training: {
+          units: [
+            {
+              effective_content: {
+                basis: 'known',
+                training: { exercises: [{ target_rir: null }] },
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+  it.each(['total_calories', 'total_protein_g', 'meals'])(
+    'incomplete snapshot %s does not fall back to complete catalog',
+    async (field) => {
+      const b = coveredBundle();
+      const diet: Record<string, unknown> = {
+        id: 'd',
+        total_calories: 1800,
+        total_protein_g: 90,
+        meals: [snapshotMeal],
+      };
+      delete diet[field];
+      b.baseline.push(
+        overlay('diet_day_snapshots', {
+          client_id: 'c',
+          date: '2020-01-01',
+          diet_id: 'd',
+          diet,
+        }),
+      );
+      expect(await effective(cover(b))).toMatchObject({ status: 'unknown' });
+    },
+  );
+  it('retains every root and alternative, including ingredient-backed fractional nutrients', async () => {
+    const b = coveredBundle();
+    const variant = {
+      ...snapshotMeal,
+      id: 'alt',
+      parent_meal_id: 'm',
+      ingredients: [],
+      variants: undefined,
+    };
+    const root = { ...snapshotMeal, protein_g: 30.5, variants: [variant] };
+    b.baseline.push(
+      overlay('diet_day_snapshots', {
+        client_id: 'c',
+        date: '2020-01-01',
+        diet_id: 'd',
+        diet: {
+          id: 'd',
+          total_calories: 1800,
+          total_protein_g: 90.5,
+          meals: [
+            root,
+            { ...snapshotMeal, id: 'second', order: 1, ingredients: [] },
+          ],
+        },
+      }),
+    );
+    expect(await effective(cover(b))).toMatchObject({
+      status: 'stored',
+      prescription: {
+        nutrition: {
+          total_protein_g: 90.5,
+          groups: [
+            { id: 'm', alternatives: [{ protein_g: 30.5 }, { id: 'alt' }] },
+            { id: 'second' },
+          ],
+        },
+      },
+    });
+  });
+  it('does not silently drop an incomplete snapshot block into a known empty training', async () => {
+    const b = coveredBundle();
+    const block = {
+      id: 'block',
+      order: 0,
+      type: 'CIRCUIT',
+      name: null,
+      rounds: 3,
+      rest_between_rounds_seconds: 60,
+      exercises: [],
+    };
+    b.baseline.push(
+      overlay('training_day_snapshots', {
+        client_id: 'c',
+        date: '2020-01-01',
+        training_id: 't',
+        version: 1,
+        payload: { ...training, exercises: [], blocks: [block] },
+      }),
+    );
+    expect(await effective(cover(b))).toMatchObject({ status: 'unknown' });
+  });
+  it('preserves valid snapshot flat and nested circuit occurrence formats together', async () => {
+    const b = coveredBundle();
+    const e = {
+      ...occurrence,
+      block_id: 'block',
+      position_in_block: 0,
+      exercise,
+    };
+    const block = {
+      id: 'block',
+      training_id: 't',
+      order: 0,
+      type: 'CIRCUIT',
+      name: null,
+      rounds: 3,
+      rest_between_rounds_seconds: 60,
+    };
+    b.baseline.push(
+      overlay('training_day_snapshots', {
+        client_id: 'c',
+        date: '2020-01-01',
+        training_id: 't',
+        version: 1,
+        payload: {
+          ...training,
+          exercises: [{ ...e, block }],
+          blocks: [{ ...block, exercises: [e] }],
+        },
+      }),
+    );
+    expect(await effective(cover(b))).toMatchObject({
+      status: 'stored',
+      prescription: {
+        training: {
+          units: [
+            {
+              effective_content: {
+                basis: 'known',
+                training: {
+                  blocks: [{ id: 'block', rounds: 3 }],
+                  exercises: [
+                    { id: 'o', block_id: 'block', position_in_block: 0 },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+  });
+  it('rejects a forged/incomplete coverage marker', async () => {
+    const b = cover(coveredBundle());
+    b.baseline.at(-1)!.row_image.counts = {};
+    expect(await effective(b)).toMatchObject({ status: 'unknown' });
+  });
+});
+
 describe('immutable historical prescription consumer', () => {
   it('publishes full untimed catalog projection and reads only the bounded stored membership basis', async () => {
     const db = new Store();

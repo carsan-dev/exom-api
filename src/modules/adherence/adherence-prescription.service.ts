@@ -32,6 +32,9 @@ const SOURCES = [
   'training_exercises',
   'training_groups',
   'trainings',
+  'diet_day_snapshots',
+  'rir_day_targets',
+  'training_day_snapshots',
 ] as const;
 type Row = Record<string, unknown>;
 type State = Map<string, Map<string, Row>>;
@@ -99,6 +102,45 @@ export interface UnprovenTrainingRir {
   basis: typeof BASIS.UNKNOWN;
   reason: typeof OVERLAY_UNKNOWN.RIR;
 }
+type EffectiveTraining = Omit<CatalogTrainingProjection, 'authoritative'>;
+export interface KnownTrainingContent {
+  basis: typeof BASIS.KNOWN;
+  training: EffectiveTraining;
+}
+export interface KnownTrainingRir {
+  basis: typeof BASIS.KNOWN;
+}
+export interface PrescriptionIngredient {
+  id: string;
+  ingredient_id: string;
+  quantity: number;
+  unit: string;
+  grams_equivalent: number | null;
+  ingredient: PrescriptionIngredientNutrients;
+}
+export interface PrescriptionIngredientNutrients {
+  id: string;
+  name: string;
+  calories_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+}
+export interface PrescriptionMeal {
+  id: string;
+  type: string;
+  name: string;
+  order: number;
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  ingredients: PrescriptionIngredient[];
+}
+export interface PrescriptionMealGroup {
+  id: string;
+  alternatives: PrescriptionMeal[];
+}
 export interface PrescriptionUnit {
   id: string;
   assignment_id: string;
@@ -107,8 +149,8 @@ export interface PrescriptionUnit {
   last_set_video_policy: string;
   requires_last_set_video: boolean;
   legacy_video_exempt: boolean;
-  effective_content: UnprovenTrainingContent;
-  effective_rir: UnprovenTrainingRir;
+  effective_content: UnprovenTrainingContent | KnownTrainingContent;
+  effective_rir: UnprovenTrainingRir | KnownTrainingRir;
   catalog_projection: CatalogTrainingProjection;
 }
 export interface PrescriptionTrainingBasis {
@@ -120,7 +162,9 @@ export interface PrescriptionNutritionBasis {
   basis: (typeof BASIS)[keyof typeof BASIS];
   reason: string | null;
   diet_id: string | null;
-  groups: readonly [];
+  groups: PrescriptionMealGroup[];
+  total_calories?: number;
+  total_protein_g?: number;
 }
 export interface HistoricalPrescription {
   version: 1;
@@ -221,12 +265,12 @@ function apply(state: State, tx: Transaction): State | null {
     const rows = trial.get(e.source);
     if (!rows) throw new Error('invalid_history');
     if (e.old) {
-      const id = text(e.old.id);
+      const id = rowKey(e.source, e.old);
       if (!isDeepStrictEqual(rows.get(id), e.old)) return null;
       rows.delete(id); // Crucial: OLD key must not survive a primary-key move.
     }
     if (e.next) {
-      const id = text(e.next.id);
+      const id = rowKey(e.source, e.next);
       if (rows.has(id)) return null;
       rows.set(id, e.next);
     }
@@ -238,7 +282,7 @@ function touched(tx: Transaction): Set<string> {
     tx.events.flatMap((e) =>
       [e.old, e.next]
         .filter((r) => r !== null)
-        .map((r) => JSON.stringify([e.source, text(r.id)])),
+        .map((r) => JSON.stringify([e.source, rowKey(e.source, r)])),
     ),
   );
 }
@@ -256,9 +300,14 @@ function replay(bundle: Row): State {
   const state: State = new Map(SOURCES.map((s) => [s, new Map<string, Row>()]));
   for (const b of bundle.baseline) {
     if (!object(b) || !object(b.row_image)) throw new Error('invalid_baseline');
+    if (b.source_table === '__adherence_coverage__') continue;
     const rows = state.get(text(b.source_table));
     const id = text(b.row_key);
-    if (!rows || id !== b.row_image.id || rows.has(id))
+    if (
+      !rows ||
+      id !== rowKey(text(b.source_table), b.row_image) ||
+      rows.has(id)
+    )
       throw new Error('invalid_baseline');
     rows.set(id, b.row_image);
   }
@@ -353,17 +402,366 @@ function replay(bundle: Row): State {
   }
   return current;
 }
-function project(
+function catalogTraining(
   state: State,
-  client: string,
-  date: string,
-): HistoricalPrescription {
+  trainingId: string,
+): CatalogTrainingProjection {
   const rows = (table: string) => [...(state.get(table)?.values() ?? [])];
   const get = (table: string, id: unknown): Row => {
     const row = state.get(table)?.get(text(id));
     if (!row) throw new Error('essential_prescription_field');
     return row;
   };
+  const t = get('trainings', trainingId);
+  const blocks = rows('training_blocks')
+    .filter((b) => b.training_id === trainingId)
+    .map(
+      (b): PrescriptionBlock => ({
+        id: text(b.id),
+        order: integer(b.order),
+        type: text(b.type),
+        name: nullableText(b.name),
+        rounds: integer(b.rounds),
+        rest_between_rounds_seconds: integer(b.rest_between_rounds_seconds),
+      }),
+    )
+    .sort((x, y) => x.order - y.order);
+  const exercises = rows('training_exercises')
+    .filter((e) => e.training_id === trainingId)
+    .map((e): PrescriptionExercise => {
+      const exercise = get('exercises', e.exercise_id);
+      const blockId = nullableText(e.block_id);
+      if (blockId && !blocks.some((b) => b.id === blockId))
+        throw new Error('essential_prescription_field');
+      const measure = nullableText(e.measure_type);
+      if (measure !== null && !['REPS', 'SECONDS'].includes(measure))
+        throw new Error('essential_prescription_field');
+      return {
+        id: text(e.id),
+        exercise_id: text(e.exercise_id),
+        name: text(exercise.name),
+        order: integer(e.order),
+        block_id: blockId,
+        position_in_block: nullableInt(e.position_in_block),
+        sets: integer(e.sets),
+        reps_or_duration: text(e.reps_or_duration),
+        measure_type: measure,
+        target_value: nullableInt(e.target_value),
+        target_value_min: nullableInt(e.target_value_min),
+        target_value_max: nullableInt(e.target_value_max),
+        target_rir: nullableInt(e.target_rir),
+        request_set_tracking: bool(e.request_set_tracking),
+        rest_seconds: integer(e.rest_seconds),
+        timed_config:
+          e.timed_config === null ? null : validateTimedConfig(e.timed_config),
+        rir_override:
+          e.rir_override === null ? null : validateRirOverride(e.rir_override),
+      };
+    })
+    .sort((x, y) => x.order - y.order);
+  return {
+    authoritative: false,
+    id: trainingId,
+    name: text(t.name),
+    type: text(t.type),
+    types: strings(t.types),
+    rir_proposal:
+      t.rir_proposal === null ? null : validateRirSequence(t.rir_proposal),
+    estimated_duration_min: nullableInt(t.estimated_duration_min),
+    warmup_description: nullableText(t.warmup_description),
+    warmup_duration_min: nullableInt(t.warmup_duration_min),
+    cooldown_description: nullableText(t.cooldown_description),
+    blocks,
+    exercises,
+  };
+}
+
+function rowKey(source: string, row: Row): string {
+  const field =
+    source === 'diet_day_snapshots'
+      ? 'diet_id'
+      : source === 'training_day_snapshots'
+        ? 'training_id'
+        : source === 'rir_day_targets'
+          ? 'training_exercise_id'
+          : null;
+  if (!field) return text(row.id);
+  const date = text(row.date);
+  if (!dateValid(date)) throw new Error('invalid_overlay_key');
+  // PostgreSQL canonical jsonb string-array text; no synthetic id on source rows.
+  return `[${[text(row.client_id), date, text(row[field])].map((v) => JSON.stringify(v)).join(', ')}]`;
+}
+function hasCoverage(bundle: Row): boolean {
+  if (!Array.isArray(bundle.baseline)) throw new Error('invalid_baseline');
+  const baseline: unknown[] = bundle.baseline;
+  const markers = baseline.filter(
+    (b: unknown) => object(b) && b.source_table === '__adherence_coverage__',
+  );
+  if (!markers.length) return false;
+  if (
+    markers.length !== 1 ||
+    !object(markers[0]) ||
+    !object(markers[0].row_image)
+  )
+    throw new Error('invalid_coverage');
+  const marker = markers[0].row_image;
+  const counts = Object.fromEntries(
+    SOURCES.map((source) => [
+      source,
+      baseline.filter((b: unknown) => object(b) && b.source_table === source)
+        .length,
+    ]),
+  );
+  if (
+    markers[0].row_key !== 'effective-prescription-v2' ||
+    !isDeepStrictEqual(marker, {
+      id: 'effective-prescription-v2',
+      version: 2,
+      sources: [...SOURCES],
+      counts,
+    })
+  )
+    throw new Error('invalid_coverage');
+  return true;
+}
+function array(v: unknown): Row[] {
+  if (!Array.isArray(v) || !v.every(object))
+    throw new Error('essential_prescription_field');
+  return v;
+}
+function number(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0)
+    throw new Error('essential_prescription_field');
+  return v;
+}
+function nullableNumber(v: unknown): number | null {
+  return v === null ? null : number(v);
+}
+function overlayRow(
+  state: State,
+  source: string,
+  client: string,
+  date: string,
+  field: string,
+  id: string,
+): Row | undefined {
+  return [...(state.get(source)?.values() ?? [])].find(
+    (r) => r.client_id === client && r.date === date && r[field] === id,
+  );
+}
+function effectiveTraining(
+  state: State,
+  client: string,
+  date: string,
+  id: string,
+  catalog: CatalogTrainingProjection,
+): EffectiveTraining {
+  const snapshot = overlayRow(
+    state,
+    'training_day_snapshots',
+    client,
+    date,
+    'training_id',
+    id,
+  );
+  let projection = catalog;
+  // Mirrors loadTrainingHistory's version=1 and snapshot-first replacement.
+  if (snapshot && integer(snapshot.version) === 1) {
+    if (!object(snapshot.payload) || snapshot.payload.id !== id)
+      throw new Error('essential_prescription_field');
+    const payload = snapshot.payload;
+    const isolated: State = new Map(
+      SOURCES.map((s) => [s, new Map<string, Row>()]),
+    );
+    isolated.get('trainings')!.set(id, payload);
+    const occurrences = array(payload.exercises);
+    const blocks = array(payload.blocks);
+    const flat = new Map(occurrences.map((e) => [text(e.id), e]));
+    if (flat.size !== occurrences.length)
+      throw new Error('invalid_snapshot_occurrences');
+    for (const b of blocks) {
+      if (
+        b.training_id !== id ||
+        isolated.get('training_blocks')!.has(text(b.id))
+      )
+        throw new Error('invalid_snapshot_blocks');
+      isolated.get('training_blocks')!.set(text(b.id), b);
+      for (const e of array(b.exercises)) {
+        const original = flat.get(text(e.id));
+        if (
+          !original ||
+          original.block_id !== b.id ||
+          !isDeepStrictEqual(
+            { ...original, block: undefined },
+            { ...e, block: undefined },
+          )
+        )
+          throw new Error('invalid_snapshot_occurrences');
+      }
+      const nestedIds = array(b.exercises).map((e) => text(e.id));
+      if (
+        new Set(nestedIds).size !== nestedIds.length ||
+        occurrences
+          .filter((e) => e.block_id === b.id)
+          .some((e) => !nestedIds.includes(text(e.id)))
+      )
+        throw new Error('invalid_snapshot_occurrences');
+    }
+    for (const e of occurrences) {
+      if (
+        e.training_id !== id ||
+        !object(e.exercise) ||
+        e.exercise.id !== e.exercise_id
+      )
+        throw new Error('essential_prescription_field');
+      isolated.get('training_exercises')!.set(text(e.id), e);
+      isolated.get('exercises')!.set(text(e.exercise_id), e.exercise);
+    }
+    projection = catalogTraining(isolated, id);
+  }
+  const { authoritative: _authoritative, ...training } = projection;
+  void _authoritative;
+  return {
+    ...training,
+    exercises: training.exercises.map((e) => {
+      const target = overlayRow(
+        state,
+        'rir_day_targets',
+        client,
+        date,
+        'training_exercise_id',
+        e.id,
+      );
+      // Actual reader keys by occurrence, NOT catalog exercise or training id.
+      return target ? { ...e, target_rir: nullableInt(target.target_rir) } : e;
+    }),
+  };
+}
+function effectiveNutrition(
+  state: State,
+  client: string,
+  date: string,
+  id: string,
+): PrescriptionNutritionBasis {
+  const snapshot = overlayRow(
+    state,
+    'diet_day_snapshots',
+    client,
+    date,
+    'diet_id',
+    id,
+  );
+  let diet: Row;
+  if (snapshot) {
+    if (!object(snapshot.diet)) throw new Error('essential_prescription_field');
+    diet = snapshot.diet;
+  } else {
+    const catalog = state.get('diets')?.get(id);
+    if (!catalog) throw new Error('essential_prescription_field');
+    const meals = [...(state.get('meals')?.values() ?? [])].filter(
+      (m) => m.diet_id === id,
+    );
+    const links = [...(state.get('meal_ingredients')?.values() ?? [])];
+    const enrich = (m: Row): Row => ({
+      ...m,
+      ingredients: links
+        .filter((l) => l.meal_id === m.id)
+        .map((l) => {
+          const ingredient = state
+            .get('ingredients')
+            ?.get(text(l.ingredient_id));
+          if (!ingredient) throw new Error('essential_prescription_field');
+          return { ...l, ingredient };
+        }),
+    });
+    const roots = meals.filter((m) => m.parent_meal_id === null);
+    if (
+      meals.some(
+        (m) =>
+          m.parent_meal_id !== null &&
+          !roots.some((r) => r.id === m.parent_meal_id),
+      )
+    )
+      throw new Error('essential_prescription_field');
+    diet = {
+      ...catalog,
+      meals: roots.map((m) => ({
+        ...enrich(m),
+        variants: meals.filter((v) => v.parent_meal_id === m.id).map(enrich),
+      })),
+    };
+  }
+  if (diet.id !== id) throw new Error('essential_prescription_field');
+  const seen = new Set<string>();
+  const meal = (m: Row, parent: string | null): PrescriptionMeal => {
+    const mealId = text(m.id);
+    if (seen.has(mealId) || m.diet_id !== id || m.parent_meal_id !== parent)
+      throw new Error('invalid_meal_membership');
+    seen.add(mealId);
+    return {
+      id: mealId,
+      name: text(m.name),
+      type: text(m.type),
+      order: integer(m.order),
+      calories: nullableNumber(m.calories),
+      protein_g: nullableNumber(m.protein_g),
+      carbs_g: nullableNumber(m.carbs_g),
+      fat_g: nullableNumber(m.fat_g),
+      ingredients: array(m.ingredients).map((l): PrescriptionIngredient => {
+        if (
+          l.meal_id !== mealId ||
+          !object(l.ingredient) ||
+          l.ingredient.id !== l.ingredient_id
+        )
+          throw new Error('essential_prescription_field');
+        const i = l.ingredient;
+        return {
+          id: text(l.id),
+          ingredient_id: text(l.ingredient_id),
+          quantity: number(l.quantity),
+          unit: text(l.unit),
+          grams_equivalent: nullableNumber(l.grams_equivalent),
+          ingredient: {
+            id: text(i.id),
+            name: text(i.name),
+            calories_per_100g: number(i.calories_per_100g),
+            protein_per_100g: number(i.protein_per_100g),
+            carbs_per_100g: number(i.carbs_per_100g),
+            fat_per_100g: number(i.fat_per_100g),
+          },
+        };
+      }),
+    };
+  };
+  const groups = array(diet.meals)
+    .sort((a, b) => integer(a.order) - integer(b.order))
+    .map(
+      (m): PrescriptionMealGroup => ({
+        id: text(m.id),
+        alternatives: [
+          meal(m, null),
+          ...array(m.variants)
+            .sort((a, b) => integer(a.order) - integer(b.order))
+            .map((v) => meal(v, text(m.id))),
+        ],
+      }),
+    );
+  return {
+    basis: BASIS.KNOWN,
+    reason: null,
+    diet_id: id,
+    total_calories: number(diet.total_calories),
+    total_protein_g: number(diet.total_protein_g),
+    groups,
+  };
+}
+function project(
+  state: State,
+  client: string,
+  date: string,
+  covered: boolean,
+): HistoricalPrescription {
+  const rows = (table: string) => [...(state.get(table)?.values() ?? [])];
   const assignmentRows = rows('plan_assignments');
   for (const a of assignmentRows) {
     text(a.client_id);
@@ -397,57 +795,10 @@ function project(
         throw new Error('invalid_assignment_membership');
       positions.add(position);
       ids.add(trainingId);
-      const t = get('trainings', trainingId);
-      const blocks = rows('training_blocks')
-        .filter((b) => b.training_id === trainingId)
-        .map(
-          (b): PrescriptionBlock => ({
-            id: text(b.id),
-            order: integer(b.order),
-            type: text(b.type),
-            name: nullableText(b.name),
-            rounds: integer(b.rounds),
-            rest_between_rounds_seconds: integer(b.rest_between_rounds_seconds),
-          }),
-        )
-        .sort((x, y) => x.order - y.order);
-      const exercises = rows('training_exercises')
-        .filter((e) => e.training_id === trainingId)
-        .map((e): PrescriptionExercise => {
-          const exercise = get('exercises', e.exercise_id);
-          const blockId = nullableText(e.block_id);
-          if (blockId && !blocks.some((b) => b.id === blockId))
-            throw new Error('essential_prescription_field');
-          const measure = nullableText(e.measure_type);
-          if (measure !== null && !['REPS', 'SECONDS'].includes(measure))
-            throw new Error('essential_prescription_field');
-          return {
-            id: text(e.id),
-            exercise_id: text(e.exercise_id),
-            name: text(exercise.name),
-            order: integer(e.order),
-            block_id: blockId,
-            position_in_block: nullableInt(e.position_in_block),
-            sets: integer(e.sets),
-            reps_or_duration: text(e.reps_or_duration),
-            measure_type: measure,
-            target_value: nullableInt(e.target_value),
-            target_value_min: nullableInt(e.target_value_min),
-            target_value_max: nullableInt(e.target_value_max),
-            target_rir: nullableInt(e.target_rir),
-            request_set_tracking: bool(e.request_set_tracking),
-            rest_seconds: integer(e.rest_seconds),
-            timed_config:
-              e.timed_config === null
-                ? null
-                : validateTimedConfig(e.timed_config),
-            rir_override:
-              e.rir_override === null
-                ? null
-                : validateRirOverride(e.rir_override),
-          };
-        })
-        .sort((x, y) => x.order - y.order);
+      const catalog = catalogTraining(state, trainingId);
+      const effective = covered
+        ? effectiveTraining(state, client, date, trainingId, catalog)
+        : null;
       units.push({
         id: text(l.id),
         assignment_id: text(a.id),
@@ -456,28 +807,16 @@ function project(
         last_set_video_policy: text(l.last_set_video_policy),
         requires_last_set_video: bool(l.requires_last_set_video),
         legacy_video_exempt: bool(l.legacy_video_exempt),
-        effective_content: {
-          basis: BASIS.UNKNOWN,
-          reason: OVERLAY_UNKNOWN.CONTENT,
-        },
-        effective_rir: { basis: BASIS.UNKNOWN, reason: OVERLAY_UNKNOWN.RIR },
-        catalog_projection: {
-          authoritative: false,
-          id: trainingId,
-          name: text(t.name),
-          type: text(t.type),
-          types: strings(t.types),
-          rir_proposal:
-            t.rir_proposal === null
-              ? null
-              : validateRirSequence(t.rir_proposal),
-          estimated_duration_min: nullableInt(t.estimated_duration_min),
-          warmup_description: nullableText(t.warmup_description),
-          warmup_duration_min: nullableInt(t.warmup_duration_min),
-          cooldown_description: nullableText(t.cooldown_description),
-          blocks,
-          exercises,
-        },
+        effective_content: effective
+          ? { basis: BASIS.KNOWN, training: effective }
+          : {
+              basis: BASIS.UNKNOWN,
+              reason: OVERLAY_UNKNOWN.CONTENT,
+            },
+        effective_rir: effective
+          ? { basis: BASIS.KNOWN }
+          : { basis: BASIS.UNKNOWN, reason: OVERLAY_UNKNOWN.RIR },
+        catalog_projection: catalog,
       });
     }
   }
@@ -490,12 +829,15 @@ function project(
     date,
     assignment_id: a ? text(a.id) : null,
     training: { membership_basis: BASIS.KNOWN, rest, units },
-    nutrition: {
-      basis: diet ? BASIS.UNKNOWN : BASIS.KNOWN,
-      reason: diet ? 'unproven_original_diet_snapshot_precedence' : null,
-      diet_id: diet,
-      groups: [],
-    },
+    nutrition:
+      diet && covered
+        ? effectiveNutrition(state, client, date, diet)
+        : {
+            basis: diet ? BASIS.UNKNOWN : BASIS.KNOWN,
+            reason: diet ? 'unproven_original_diet_snapshot_precedence' : null,
+            diet_id: diet,
+            groups: [],
+          },
   };
 }
 function stored(
@@ -522,11 +864,12 @@ function stored(
     manifest_digest: value.manifest_digest,
   };
 }
-/** Proven membership is NOT proof of effective training content. Original13
- * cannot authenticate snapshot-first training content or per-day RIR overrides.
- * Catalog projection is explicitly nonauthoritative; no overlay fallback.
- * Internal T2 boundary, not HTTP authorization. Reader is client/date bounded
- * and never reads baseline, journals, current catalog, User, Profile or snapshots. */
+/** Original13 proves membership only; its content stays UNKNOWN. Fresh16
+ * coverage is an activation-baseline marker hashed by the original cut proof,
+ * not a historical assertion about a legacy snapshot's captured_at. Replay uses
+ * snapshot-first readers then day RIR; catalog stays separate/nonauthoritative.
+ * Internal T2 boundary, not HTTP authorization. The bounded application reader
+ * never reads baseline, journals, current catalog, User, Profile or snapshots. */
 export class AdherencePrescriptionService {
   constructor(
     private readonly reader: AdherenceCommitSql,
@@ -570,7 +913,12 @@ export class AdherencePrescriptionService {
         return unknown('unproven_original_cut');
       let prescription: HistoricalPrescription;
       try {
-        prescription = project(replay(bundle), client, date);
+        prescription = project(
+          replay(bundle),
+          client,
+          date,
+          hasCoverage(bundle),
+        );
       } catch (error) {
         return unknown(
           error instanceof Error ? error.message : 'invalid_prescription',
