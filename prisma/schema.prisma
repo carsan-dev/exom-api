@@ -697,6 +697,21 @@ model PlanAssignmentTraining {
   @@map("plan_assignment_trainings")
 }
 
+// Transactional row events only, not a closed-day prescription or commit clock.
+// No source foreign keys: OLD/NEW evidence must survive source deletion.
+model AdherenceAssignmentJournal {
+  event_sequence BigInt   @id @default(autoincrement())
+  transaction_id String   @default(dbgenerated("(pg_current_xact_id())::text")) @db.Text
+  source_table   String   @db.Text
+  operation      String   @db.Text
+  old_row        Json?    @db.JsonB
+  new_row        Json?    @db.JsonB
+  observed_at    DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([transaction_id, event_sequence])
+  @@map("adherence_assignment_journal")
+}
+
 model AutoAssignmentRule {
   id                String    @id @default(uuid())
   client_id         String
