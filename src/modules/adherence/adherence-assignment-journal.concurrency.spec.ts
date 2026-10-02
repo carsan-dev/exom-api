@@ -47,6 +47,8 @@ function reverse(state: State, events: Event[]): State {
 describe('assignment row journal on actual PostgreSQL tables', () => {
   let pool: Pool;
   let fixture: Fixture;
+  const restrictedRole = `journal_writer_${randomUUID().replaceAll('-', '')}`;
+  const hostileSchema = `journal_hostile_${randomUUID().replaceAll('-', '')}`;
 
   beforeAll(async () => {
     if (!process.env.TEST_DATABASE_URL) {
@@ -61,6 +63,30 @@ describe('assignment row journal on actual PostgreSQL tables', () => {
       statement_timeout: 10000,
     });
     await assertTestDatabase(pool);
+    // Fixture-only permissions on an explicitly isolated server, never runtime grants.
+    await pool.query(`CREATE ROLE ${restrictedRole} NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOBYPASSRLS`);
+    await pool.query(`GRANT USAGE ON SCHEMA public TO ${restrictedRole}`);
+    for (const table of Object.values(SOURCE)) {
+      await pool.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON public.${table}
+        TO ${restrictedRole}`);
+      await pool.query(`CREATE POLICY ${restrictedRole} ON public.${table}
+        TO ${restrictedRole} USING (true) WITH CHECK (true)`);
+    }
+    // Existing invoker RIR triggers also require these specific dependencies.
+    await pool.query(`GRANT SELECT ON public.rir_protected_days, public.day_progress,
+      public.users, public.rir_cycle_versions, public.training_exercises,
+      public.rir_day_targets TO ${restrictedRole}`);
+    await pool.query(
+      `GRANT INSERT, UPDATE ON public.rir_day_targets TO ${restrictedRole}`,
+    );
+    await pool.query(
+      `CREATE SCHEMA ${hostileSchema} AUTHORIZATION ${restrictedRole}`,
+    );
+    await pool.query(`CREATE TABLE ${hostileSchema}.plan_assignments(id text)`);
+    await pool.query(
+      `ALTER TABLE ${hostileSchema}.plan_assignments OWNER TO ${restrictedRole}`,
+    );
   });
   afterAll(async () => {
     await pool?.end();
@@ -165,6 +191,184 @@ describe('assignment row journal on actual PostgreSQL tables', () => {
       }
     }
   }
+
+  async function restricted(
+    mutate: (connection: PoolClient) => Promise<void>,
+    rollback = false,
+  ): Promise<string> {
+    await assertTestDatabase(pool);
+    return transaction(async (connection) => {
+      await connection.query(`SET LOCAL ROLE ${restrictedRole}`);
+      await mutate(connection);
+    }, rollback);
+  }
+
+  it('captures permitted nonowner INSERT/UPDATE/DELETE with complete images on both sources', async () => {
+    const before = await state();
+    const parent = `${fixture.parent}-restricted`;
+    const link = `${parent}-link`;
+    const xid = await restricted(async (connection) => {
+      const updated = await connection.query(
+        `UPDATE public.plan_assignments SET notes='restricted' WHERE id=$1 RETURNING id`,
+        [fixture.parent],
+      );
+      expect(updated.rowCount).toBe(1);
+      const statements: [string, string[]][] = [
+        [
+          `INSERT INTO public.plan_assignments(id,client_id,date,updated_at)
+          VALUES ($1,$2,'2099-01-05',now()) RETURNING id`,
+          [parent, fixture.user],
+        ],
+        [
+          `INSERT INTO public.plan_assignment_trainings(id,assignment_id,training_id,position)
+          VALUES ($1,$2,$3,0) RETURNING id`,
+          [link, parent, fixture.trainings[3]],
+        ],
+        [
+          `UPDATE public.plan_assignment_trainings SET last_set_video_policy='NEVER'
+          WHERE id=$1 RETURNING id`,
+          [link],
+        ],
+        [
+          'DELETE FROM public.plan_assignment_trainings WHERE id=$1 RETURNING id',
+          [link],
+        ],
+        [
+          'DELETE FROM public.plan_assignments WHERE id=$1 RETURNING id',
+          [parent],
+        ],
+      ];
+      for (const [sql, parameters] of statements) {
+        expect((await connection.query(sql, parameters)).rowCount).toBe(1);
+      }
+    });
+    const rows = await events(xid);
+    assertTransaction(rows, xid);
+    // Six caller mutations plus two legacy mirror updates, all captured atomically.
+    expect(rows).toHaveLength(8);
+    for (const source of Object.values(SOURCE)) {
+      for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+        expect(
+          rows.some(
+            (row) => row.source_table === source && row.operation === operation,
+          ),
+        ).toBe(true);
+      }
+      const original = before.get(
+        `${source}:${source === SOURCE.ASSIGNMENT ? fixture.parent : fixture.links[0]}`,
+      );
+      for (const row of rows.filter((event) => event.source_table === source)) {
+        for (const image of [row.old_row, row.new_row]) {
+          if (image)
+            expect(Object.keys(image).sort()).toEqual(
+              Object.keys(original ?? {}).sort(),
+            );
+        }
+      }
+    }
+    expect(reverse(await state(), rows)).toEqual(before);
+  });
+
+  it('rolls back a restricted source mutation and its journal on subsequent failure', async () => {
+    const before = await state();
+    let xid = '';
+    await expect(
+      restricted(async (connection) => {
+        xid = (
+          await connection.query<{ xid: string }>(
+            'SELECT pg_current_xact_id()::text AS xid',
+          )
+        ).rows[0].xid;
+        expect(
+          (
+            await connection.query(
+              `UPDATE public.plan_assignments SET notes='rollback'
+        WHERE id=$1 RETURNING id`,
+              [fixture.parent],
+            )
+          ).rowCount,
+        ).toBe(1);
+        await connection.query('SELECT 1/0');
+      }),
+    ).rejects.toMatchObject({ code: '22012' });
+    expect(await events(xid)).toEqual([]);
+    expect(await state()).toEqual(before);
+  });
+
+  it('denies direct journal access, sequence use, execution and hostile trigger attachment', async () => {
+    for (const sql of [
+      'SELECT * FROM public.adherence_assignment_journal',
+      `INSERT INTO public.adherence_assignment_journal(source_table,operation,new_row)
+        VALUES ('plan_assignments','INSERT','{"id":"forged"}')`,
+      'UPDATE public.adherence_assignment_journal SET operation=operation',
+      'DELETE FROM public.adherence_assignment_journal',
+      'TRUNCATE public.adherence_assignment_journal',
+      "SELECT nextval('public.adherence_assignment_journal_event_sequence_seq')",
+      'SELECT public.capture_adherence_assignment_event()',
+    ]) {
+      await expect(
+        restricted(async (connection) => {
+          await connection.query(sql);
+        }),
+      ).rejects.toMatchObject({ code: '42501' });
+    }
+    await expect(
+      restricted(async (connection) => {
+        await connection.query(`CREATE TRIGGER forged AFTER INSERT ON ${hostileSchema}.plan_assignments
+        FOR EACH ROW EXECUTE FUNCTION public.capture_adherence_assignment_event()`);
+      }),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('gates foreign-schema and same-schema spoof OIDs even for owner-attached triggers', async () => {
+    const xid = await transaction(async (connection) => {
+      await connection.query(`CREATE TRIGGER forged_owner AFTER INSERT ON ${hostileSchema}.plan_assignments
+        FOR EACH ROW EXECUTE FUNCTION public.capture_adherence_assignment_event()`);
+      await connection.query(`CREATE TABLE public.${hostileSchema}(id text)`);
+      await connection.query(`CREATE TRIGGER forged_oid AFTER INSERT ON public.${hostileSchema}
+        FOR EACH ROW EXECUTE FUNCTION public.capture_adherence_assignment_event()`);
+    });
+    expect(await events(xid)).toEqual([]);
+    for (const table of [
+      `${hostileSchema}.plan_assignments`,
+      `public.${hostileSchema}`,
+    ]) {
+      await expect(
+        transaction(async (connection) => {
+          await connection.query(`INSERT INTO ${table} VALUES ('forged')`);
+        }),
+      ).rejects.toMatchObject({ code: '42501' });
+      expect((await pool.query(`SELECT * FROM ${table}`)).rowCount).toBe(0);
+    }
+  });
+
+  it('retains the migration journal owner, fixed search path and no bypass role grants', async () => {
+    const result = await pool.query(`SELECT p.prosecdef, p.proconfig,
+      p.proowner=c.relowner AS journal_owner, r.rolname=current_user AS migration_owner,
+      has_function_privilege(current_user,p.oid,'EXECUTE') AS owner_execute
+      FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+      JOIN pg_class c ON c.oid='public.adherence_assignment_journal'::regclass
+      WHERE p.oid='public.capture_adherence_assignment_event()'::regprocedure`);
+    expect(result.rows[0]).toMatchObject({
+      prosecdef: true,
+      proconfig: ['search_path=pg_catalog'],
+      journal_owner: true,
+      migration_owner: true,
+      owner_execute: true,
+    });
+    const role = await pool.query(
+      `SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolbypassrls
+      FROM pg_roles WHERE rolname=$1`,
+      [restrictedRole],
+    );
+    expect(role.rows[0]).toEqual({
+      rolsuper: false,
+      rolcreatedb: false,
+      rolcreaterole: false,
+      rolinherit: false,
+      rolbypassrls: false,
+    });
+  });
 
   it('reconstructs all three pretransaction links after a full SQL bulk delete', async () => {
     const before = await state();
