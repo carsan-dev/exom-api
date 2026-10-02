@@ -3,7 +3,8 @@
   "rootDir": "..",
   "testMatch": [
     "<rootDir>/test/adherence-commit-ledger.pg-spec.ts",
-    "<rootDir>/test/adherence-history-origin.pg-spec.ts"
+    "<rootDir>/test/adherence-history-origin.pg-spec.ts",
+    "<rootDir>/test/adherence-history-cut.pg-spec.ts"
   ],
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"

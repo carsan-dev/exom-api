@@ -148,7 +148,8 @@ describe('actual fresh activation and continuous backend commit fence', () => {
     ]);
     const migrationRoot = join(__dirname, '../prisma/migrations');
     const migrations = readdirSync(migrationRoot)
-      .filter((name) => /^\d/.test(name))
+      // Preserve the approved87 predecessor fixture, independent of later migrations.
+      .filter((name) => /^\d/.test(name) && name < '20261002030000')
       .sort();
     expect(migrations).toHaveLength(87);
     for (const name of migrations)

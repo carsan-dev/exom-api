@@ -725,6 +725,7 @@ model AdherenceHistoryEpoch {
   source_database_oid      BigInt?
   baselines                AdherenceHistoryBaseline[]
   commit_evidence          AdherenceCommitEvidence[]
+  cuts                     AdherenceHistoryCut[]
 
   @@map("adherence_history_epochs")
 }
@@ -747,6 +748,18 @@ model AdherenceCommitEvidence {
 
   @@id([epoch_id, origin, full_xid])
   @@map("adherence_commit_evidence")
+}
+
+// Private immutable complete cut; exact UTC text and canonical PG JSONB proof.
+model AdherenceHistoryCut {
+  epoch_id   String
+  origin     String @db.Text
+  cutoff_utc String @db.Text
+  manifest   Json   @db.JsonB
+  epoch      AdherenceHistoryEpoch @relation(fields: [epoch_id], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([epoch_id, origin, cutoff_utc])
+  @@map("adherence_history_cuts")
 }
 
 // Private full row images; no source/User FK and no fabricated historical date.
