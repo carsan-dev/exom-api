@@ -724,8 +724,29 @@ model AdherenceHistoryEpoch {
   source_timeline          Int?
   source_database_oid      BigInt?
   baselines                AdherenceHistoryBaseline[]
+  commit_evidence          AdherenceCommitEvidence[]
 
   @@map("adherence_history_epochs")
+}
+
+// Conditional owner-only immutable evidence; use exact text, never Date/float.
+model AdherenceCommitEvidence {
+  epoch_id         String
+  origin           String @db.Text
+  full_xid         String @db.Text
+  digest_version   Int
+  baseline_digest  String @db.Text
+  event_digest     String @db.Text
+  content_digest   String @db.Text
+  proof_digest     String @db.Text
+  event_count      String @db.Text
+  activation       Boolean
+  timestamp_utc    String @db.Text
+  microseconds     String @db.Text
+  epoch            AdherenceHistoryEpoch @relation(fields: [epoch_id], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([epoch_id, origin, full_xid])
+  @@map("adherence_commit_evidence")
 }
 
 // Private full row images; no source/User FK and no fabricated historical date.
