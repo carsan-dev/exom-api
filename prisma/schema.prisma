@@ -762,6 +762,17 @@ model AdherenceHistoryCut {
   @@map("adherence_history_cuts")
 }
 
+// Immutable sanitized closed-day read model; no source/User FK or evaluations.
+// Application role receives SELECT only; privileged publisher validates original cut.
+model AdherenceHistoricalPrescription {
+  client_id String
+  date      DateTime @db.Date
+  payload   Json @db.JsonB
+
+  @@id([client_id, date])
+  @@map("adherence_historical_prescriptions")
+}
+
 // Private full row images; no source/User FK and no fabricated historical date.
 model AdherenceHistoryBaseline {
   epoch_id     String
