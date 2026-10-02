@@ -31,6 +31,16 @@ export interface WeeklyStepsRecap {
   average_daily_steps: number | null;
 }
 
+export interface DatedWeeklyStepsTarget {
+  date: string;
+  steps_goal: number | null;
+  steps_min_percent: number | null;
+}
+
+export interface WeeklyStepsIndicator extends TargetIndicator {
+  threshold: number | null;
+}
+
 export interface TargetIndicatorInput {
   prescription: PrescribedDietDaySnapshotTotals;
   intake: MarkedIntakeEstimate;
@@ -66,6 +76,60 @@ function checkPercent(value: number, maximum: number, name: string): void {
   ) {
     throw new RangeError(`Invalid ${name}`);
   }
+}
+
+function classifyWeeklySteps(
+  recap: WeeklyStepsRecap | null,
+  threshold: number,
+): IndicatorStatus {
+  if (recap === null || recap.average_daily_steps === null)
+    return INDICATOR_STATUS.INSUFFICIENT;
+  checkNonNegative(recap.average_daily_steps, 'average_daily_steps');
+  return recap.average_daily_steps >= threshold
+    ? INDICATOR_STATUS.MET
+    : INDICATOR_STATUS.BELOW;
+}
+
+/** A recap describes the complete Monday..Sunday UTC week, never a selected
+ * period subset. Average each day's threshold, not goals/percentages separately.
+ * Null or missing policy on any date makes that whole week's target unknown. */
+export function evaluateWeeklyStepsIndicator(
+  weekStart: string,
+  days: readonly DatedWeeklyStepsTarget[],
+  recap: WeeklyStepsRecap | null,
+): WeeklyStepsIndicator {
+  const insufficient: WeeklyStepsIndicator = {
+    status: INDICATOR_STATUS.INSUFFICIENT,
+    threshold: null,
+  };
+  const start = new Date(`${weekStart}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(weekStart) ||
+    !Number.isFinite(start.getTime()) ||
+    start.toISOString().slice(0, 10) !== weekStart ||
+    start.getUTCDay() !== 1 ||
+    days.length !== 7
+  )
+    return insufficient;
+  const byDate = new Map(days.map((day) => [day.date, day]));
+  if (byDate.size !== 7) return insufficient;
+  let total = 0;
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(start.getTime() + i * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const day = byDate.get(date);
+    if (!day || day.steps_goal === null || day.steps_min_percent === null)
+      return insufficient;
+    if (!Number.isSafeInteger(day.steps_goal) || day.steps_goal < 1)
+      throw new RangeError('Invalid steps_goal');
+    checkPercent(day.steps_min_percent, 200, 'steps_min_percent');
+    total += (day.steps_goal * day.steps_min_percent) / 100;
+  }
+  const threshold = total / 7;
+  if (!Number.isFinite(threshold))
+    throw new RangeError('Invalid weekly steps threshold');
+  return { status: classifyWeeklySteps(recap, threshold), threshold };
 }
 
 export function evaluateTargetIndicators(
@@ -130,18 +194,11 @@ export function evaluateTargetIndicators(
 
   let weeklySteps: IndicatorStatus = INDICATOR_STATUS.NOT_APPLICABLE;
   if (config.steps_goal !== null) {
-    if (weeklyRecap === null || weeklyRecap.average_daily_steps === null) {
-      weeklySteps = INDICATOR_STATUS.INSUFFICIENT;
-    } else {
-      const threshold = (config.steps_goal * config.steps_min_percent) / 100;
-      if (!Number.isFinite(threshold)) {
-        throw new RangeError('Invalid steps threshold');
-      }
-      weeklySteps =
-        weeklyRecap.average_daily_steps >= threshold
-          ? INDICATOR_STATUS.MET
-          : INDICATOR_STATUS.BELOW;
+    const threshold = (config.steps_goal * config.steps_min_percent) / 100;
+    if (!Number.isFinite(threshold)) {
+      throw new RangeError('Invalid steps threshold');
     }
+    weeklySteps = classifyWeeklySteps(weeklyRecap, threshold);
   }
   return {
     calories: { status: calories },

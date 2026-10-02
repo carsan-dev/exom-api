@@ -773,6 +773,26 @@ model AdherenceHistoricalPrescription {
   @@map("adherence_historical_prescriptions")
 }
 
+// Immutable application evaluations, independent of mutable source rows.
+model AdherenceEvaluationRevision {
+  client_id             String
+  date                  DateTime @db.Date
+  revision              Int
+  idempotency_key       String
+  original_basis_id     String?
+  original_basis_digest String
+  cut_binding           String? @db.Text
+  config_revision_id    String?
+  config_digest         String
+  evidence_digest       String
+  evaluation            Json @db.JsonB
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([client_id, date, revision])
+  @@unique([client_id, date, idempotency_key])
+  @@map("adherence_evaluation_revisions")
+}
+
 // Private full row images; no source/User FK and no fabricated historical date.
 model AdherenceHistoryBaseline {
   epoch_id     String

@@ -1,5 +1,6 @@
 import {
   evaluateTargetIndicators,
+  evaluateWeeklyStepsIndicator,
   INDICATOR_STATUS,
 } from './adherence-target-indicators';
 import { evaluateDailyAdherence } from './daily-adherence-evaluator';
@@ -23,6 +24,69 @@ function calorieStatus(value: number) {
     intake: { ...base.intake, estimated_calories: value },
   }).calories.status;
 }
+
+describe('full seven-day weekly step thresholds', () => {
+  const dates = [
+    '2019-12-30',
+    '2019-12-31',
+    '2020-01-01',
+    '2020-01-02',
+    '2020-01-03',
+    '2020-01-04',
+    '2020-01-05',
+  ];
+  const targets = dates.map((date, index) => ({
+    date,
+    steps_goal: index < 2 ? 1000 : 7000,
+    steps_min_percent: 100,
+  }));
+  it('uses full-week thresholds for a partial-month recap comparison', () => {
+    expect(
+      evaluateWeeklyStepsIndicator('2019-12-30', targets, {
+        average_daily_steps: 6000,
+      }),
+    ).toEqual({ status: INDICATOR_STATUS.MET, threshold: 37000 / 7 });
+  });
+  it('averages individual variable-percentage thresholds with inclusive unrounded equality', () => {
+    const varying = targets.map((target, index) => ({
+      ...target,
+      steps_min_percent: index < 2 ? 50 : 100,
+    }));
+    expect(
+      evaluateWeeklyStepsIndicator('2019-12-30', varying, {
+        average_daily_steps: 36000 / 7,
+      }),
+    ).toEqual({ status: INDICATOR_STATUS.MET, threshold: 36000 / 7 });
+    expect(
+      evaluateWeeklyStepsIndicator('2019-12-30', varying, {
+        average_daily_steps: 36000 / 7 - 0.001,
+      }).status,
+    ).toBe(INDICATOR_STATUS.BELOW);
+  });
+  it('requires all seven dated goals/configs, including dates outside a requested window', () => {
+    for (const incomplete of [
+      targets.slice(2),
+      targets.map((target, index) => ({
+        ...target,
+        steps_goal: index === 0 ? null : target.steps_goal,
+      })),
+      targets.map((target, index) => ({
+        ...target,
+        steps_min_percent: index === 1 ? null : target.steps_min_percent,
+      })),
+      [...targets.slice(1), targets[1]],
+    ]) {
+      expect(
+        evaluateWeeklyStepsIndicator('2019-12-30', incomplete, {
+          average_daily_steps: 6000,
+        }).status,
+      ).toBe(INDICATOR_STATUS.INSUFFICIENT);
+    }
+    expect(
+      evaluateWeeklyStepsIndicator('2019-12-30', targets, null).status,
+    ).toBe(INDICATOR_STATUS.INSUFFICIENT);
+  });
+});
 
 describe('pure numeric adherence indicators', () => {
   it('includes exact asymmetric calorie edges, and distinguishes outside edges', () => {
