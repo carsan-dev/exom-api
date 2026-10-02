@@ -712,6 +712,34 @@ model AdherenceAssignmentJournal {
   @@map("adherence_assignment_journal")
 }
 
+// Initial coherent state only: observation is NOT commit time or UTC proof.
+// Optional real source metadata does not alone prove continuity across restores.
+model AdherenceHistoryEpoch {
+  id                       String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  source_set_version       Int
+  activating_full_xid      String   @db.Text
+  sequence_boundary        BigInt
+  capture_observed_at      DateTime @db.Timestamptz(6)
+  source_system_identifier String?  @db.Text
+  source_timeline          Int?
+  source_database_oid      BigInt?
+  baselines                AdherenceHistoryBaseline[]
+
+  @@map("adherence_history_epochs")
+}
+
+// Private full row images; no source/User FK and no fabricated historical date.
+model AdherenceHistoryBaseline {
+  epoch_id     String
+  source_table String @db.Text
+  row_key      String @db.Text
+  row_image    Json   @db.JsonB
+  epoch        AdherenceHistoryEpoch @relation(fields: [epoch_id], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([epoch_id, source_table, row_key])
+  @@map("adherence_history_baselines")
+}
+
 // Full catalog row events; no source/User FKs, bootstrap or commit-time claim.
 // Resolve the existing assignment sequence instead of creating a second allocator.
 model AdherenceCatalogJournal {
