@@ -102,6 +102,29 @@ function decode(
   };
 }
 
+/** Privileged READ ONLY durable proof validation against the ORIGINAL binding.
+ * No live-origin verification, snapshot/status/timestamp lookup or issuance fallback.
+ * Restores may reuse only exact SQL-validated baseline and BOTH-journal digests.
+ */
+export async function validateStoredAdherenceCommitEvidence(
+  sql: AdherenceCommitSql,
+  request: AdherenceCommitRequest,
+): Promise<AdherenceCommitEvidence> {
+  if (
+    !request.epochId ||
+    !request.origin ||
+    !/^[1-9][0-9]*$/.test(request.fullXid) ||
+    BigInt(request.fullXid) > 18446744073709551615n ||
+    !STAMP.test(request.cutoffUtc)
+  )
+    return unknown();
+  try {
+    return decode(await read(sql, request), request);
+  } catch {
+    return unknown();
+  }
+}
+
 /**
  * Owner-only orchestration, deliberately not wired to a runtime endpoint.
  * There is NO default origin provider. Authenticated external authority must

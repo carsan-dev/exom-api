@@ -1,5 +1,6 @@
 import {
   persistAdherenceCommitEvidence,
+  validateStoredAdherenceCommitEvidence,
   type AdherenceCommitProof,
 } from './adherence-commit-ledger';
 import type { AdherenceCommitSessionProvider } from './adherence-commit-resolver';
@@ -38,6 +39,34 @@ function stored(value: unknown) {
 }
 
 describe('immutable commit evidence boundary', () => {
+  it('validates original durable proof without live origin or metadata issuance', async () => {
+    const { provider, query } = stored({
+      value: { state: 'proof', proof: fixture },
+      atOrBeforeCutoff: true,
+    });
+    await provider.withSession(async ({ sql }) => {
+      expect(await validateStoredAdherenceCommitEvidence(sql, request)).toEqual(
+        {
+          status: 'proof',
+          proof: fixture,
+          atOrBeforeCutoff: true,
+        },
+      );
+    });
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+  it.each(['missing', 'invalid'])(
+    'readonly %s never falls back to XID lookup',
+    async (state) => {
+      const { provider, query } = stored({ value: { state } });
+      await provider.withSession(async ({ sql }) => {
+        expect(
+          await validateStoredAdherenceCommitEvidence(sql, request),
+        ).toEqual({ status: 'unknown' });
+      });
+      expect(query).toHaveBeenCalledTimes(1);
+    },
+  );
   it('rejects missing origin before any privileged SQL', async () => {
     const query = jest.fn(() => {
       throw new Error('SQL must not run');
