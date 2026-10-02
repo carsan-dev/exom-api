@@ -712,6 +712,21 @@ model AdherenceAssignmentJournal {
   @@map("adherence_assignment_journal")
 }
 
+// Full catalog row events; no source/User FKs, bootstrap or commit-time claim.
+// Resolve the existing assignment sequence instead of creating a second allocator.
+model AdherenceCatalogJournal {
+  event_sequence BigInt   @id @default(dbgenerated("nextval((pg_get_serial_sequence('public.adherence_assignment_journal'::text, 'event_sequence'::text))::regclass)"))
+  transaction_id String   @default(dbgenerated("(pg_current_xact_id())::text")) @db.Text
+  source_table   String   @db.Text
+  operation      String   @db.Text
+  old_row        Json?    @db.JsonB
+  new_row        Json?    @db.JsonB
+  observed_at    DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([transaction_id, event_sequence])
+  @@map("adherence_catalog_journal")
+}
+
 model AutoAssignmentRule {
   id                String    @id @default(uuid())
   client_id         String
