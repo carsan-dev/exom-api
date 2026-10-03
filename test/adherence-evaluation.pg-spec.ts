@@ -549,118 +549,168 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     });
   });
   it('forces competing evaluation/assignment writes to block until the authorized reader commits', async () => {
+    const service = app.get(AdherenceEvaluationService);
+    const query = { start: '2019-12-30', end: '2019-12-30' };
+    const previous = await service.get(admin, Role.ADMIN, client, query);
+    const before = await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: client, date: new Date(query.start) },
+      orderBy: { revision: 'asc' },
+    });
+    // Real late evidence changes the fingerprint; cached replay cannot reach
+    // a BEFORE INSERT gate. Do not backdate policy or edit immutable revisions.
+    const recap = await prisma.weeklyRecap.update({
+      where: {
+        client_id_week_start_date: {
+          client_id: client,
+          week_start_date: new Date('2019-12-30'),
+        },
+      },
+      data: {
+        average_daily_steps: 1001,
+        submitted_at: new Date(),
+        status: 'SUBMITTED',
+      },
+    });
+    expect(recap.average_daily_steps).toBe(1001);
     const holder = await pool.connect();
     const revoker = await pool.connect();
-    const service = app.get(AdherenceEvaluationService);
+    const pending: Promise<unknown>[] = [];
     const nonce = randomUUID().replaceAll('-', '');
     const trigger = 'evaluation_fixture_' + nonce;
     const key = 'evaluation-fixture:' + nonce;
-    await pool.query(
-      `CREATE FUNCTION public.${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.client_id='${client}' AND NEW.date='2019-12-30'::date THEN PERFORM pg_advisory_xact_lock(hashtextextended('${key}',0)); END IF; RETURN NEW; END $$; CREATE TRIGGER ${trigger} BEFORE INSERT ON adherence_evaluation_revisions FOR EACH ROW EXECUTE FUNCTION public.${trigger}()`,
-    );
-    await holder.query('BEGIN');
-    await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-      key,
-    ]);
-    const holderPid = (
-      await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')
-    ).rows[0].pid;
-    const first = service.get(admin, Role.ADMIN, client, {
-      start: '2019-12-30',
-      end: '2019-12-30',
-    });
-    let readerPid = 0;
-    for (let i = 0; i < 200; i++) {
-      const result = await pool.query<{ pid: number }>(
-        'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
-        [holderPid],
+    try {
+      await pool.query(
+        `CREATE FUNCTION public.${trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.client_id='${client}' AND NEW.date='2019-12-30'::date THEN PERFORM pg_advisory_xact_lock(hashtextextended('${key}',0)); END IF; RETURN NEW; END $$; CREATE TRIGGER ${trigger} BEFORE INSERT ON adherence_evaluation_revisions FOR EACH ROW EXECUTE FUNCTION public.${trigger}()`,
       );
-      if (result.rows.length) {
-        readerPid = result.rows[0].pid;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    await blocked(readerPid, holderPid);
-    const second = service.get(client, Role.CLIENT, client, {
-      start: '2019-12-30',
-      end: '2019-12-30',
-    });
-    await revoker.query('BEGIN');
-    const revokerPid = (
-      await revoker.query<{ pid: number }>('SELECT pg_backend_pid() pid')
-    ).rows[0].pid;
-    const revoke = revoker.query(
-      'UPDATE admin_client_assignments SET is_active=false WHERE admin_id=$1 AND client_id=$2',
-      [admin, client],
-    );
-    await blocked(revokerPid, readerPid);
-    let secondPid = 0;
-    for (let i = 0; i < 200; i++) {
-      const result = await pool.query<{ pid: number }>(
-        'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND pid<>$2',
-        [readerPid, revokerPid],
+      await holder.query('BEGIN');
+      await holder.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+        [key],
       );
-      if (result.rows.length) {
-        secondPid = result.rows[0].pid;
-        break;
+      const holderPid = (
+        await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')
+      ).rows[0].pid;
+      const first = service.get(admin, Role.ADMIN, client, query);
+      pending.push(Promise.allSettled([first]));
+      let readerPid = 0;
+      for (let i = 0; i < 200; i++) {
+        const result = await pool.query<{ pid: number }>(
+          'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+          [holderPid],
+        );
+        if (result.rows.length) {
+          readerPid = result.rows[0].pid;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await blocked(readerPid, holderPid);
+      const second = service.get(client, Role.CLIENT, client, query);
+      pending.push(Promise.allSettled([second]));
+      await revoker.query('BEGIN');
+      const revokerPid = (
+        await revoker.query<{ pid: number }>('SELECT pg_backend_pid() pid')
+      ).rows[0].pid;
+      const revoke = revoker.query(
+        'UPDATE admin_client_assignments SET is_active=false WHERE admin_id=$1 AND client_id=$2',
+        [admin, client],
+      );
+      pending.push(Promise.allSettled([revoke]));
+      await blocked(revokerPid, readerPid);
+      let secondPid = 0;
+      for (let i = 0; i < 200; i++) {
+        const result = await pool.query<{ pid: number }>(
+          'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND pid<>$2',
+          [readerPid, revokerPid],
+        );
+        if (result.rows.length) {
+          secondPid = result.rows[0].pid;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await blocked(secondPid, readerPid);
+      await holder.query('COMMIT');
+      const results = await Promise.all([first, second]);
+      await revoke;
+      await revoker.query('ROLLBACK');
+      expect(results[0].days).toEqual(results[1].days);
+      expect(results[0].days[0].revision).toBe(previous.days[0].revision! + 1);
+      const after = await prisma.adherenceEvaluationRevision.findMany({
+        where: { client_id: client, date: new Date(query.start) },
+        orderBy: { revision: 'asc' },
+      });
+      expect(after).toHaveLength(before.length + 1);
+      expect(after.slice(0, before.length)).toEqual(before);
+      expect(after[after.length - 1].evidence_digest).not.toBe(
+        before[before.length - 1].evidence_digest,
+      );
+    } finally {
+      // Release the gate before draining readers/revoker, even on assertion
+      // failure. allSettled is cleanup only; normal awaits above still fail.
+      try {
+        await holder.query('ROLLBACK');
+        await Promise.allSettled(pending);
+        await revoker.query('ROLLBACK');
+        await pool.query(
+          `DROP TRIGGER IF EXISTS ${trigger} ON adherence_evaluation_revisions; DROP FUNCTION IF EXISTS public.${trigger}()`,
+        );
+      } finally {
+        holder.release();
+        revoker.release();
+      }
     }
-    await blocked(secondPid, readerPid);
-    await holder.query('COMMIT');
-    holder.release();
-    const results = await Promise.all([first, second]);
-    await revoke;
-    await revoker.query('ROLLBACK');
-    revoker.release();
-    expect(results[0].days).toEqual(results[1].days);
-    expect(
-      await prisma.adherenceEvaluationRevision.count({
-        where: { client_id: client, date: new Date('2019-12-30') },
-      }),
-    ).toBe(1);
-  });
+  }, 15000);
   it('serializes current assignment revocation under a held barrier and denies without data leakage', async () => {
     const holder = await pool.connect();
     const service = app.get(AdherenceEvaluationService);
-    await holder.query('BEGIN');
-    const pid = (
-      await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')
-    ).rows[0].pid;
-    await holder.query(
-      "SELECT pg_advisory_xact_lock(hashtextextended('exom:diet-history',0))",
-    );
-    const pending = service.get(admin, Role.ADMIN, client, {
-      start: date,
-      end: date,
-    });
-    let waiter = 0;
-    for (let i = 0; i < 200; i++) {
-      const result = await pool.query<{ pid: number }>(
-        'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
-        [pid],
+    let settled: Promise<unknown> | undefined;
+    try {
+      await holder.query('BEGIN');
+      const pid = (
+        await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')
+      ).rows[0].pid;
+      await holder.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('exom:diet-history',0))",
       );
-      if (result.rows.length) {
-        waiter = result.rows[0].pid;
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    await blocked(waiter, pid);
-    await holder.query(
-      'UPDATE admin_client_assignments SET is_active=false WHERE admin_id=$1 AND client_id=$2',
-      [admin, client],
-    );
-    await holder.query('COMMIT');
-    holder.release();
-    await expect(pending).rejects.toThrow('Client access denied');
-    await expect(
-      service.get(client, Role.CLIENT, randomUUID(), {
+      const pending = service.get(admin, Role.ADMIN, client, {
         start: date,
         end: date,
-      }),
-    ).rejects.toThrow('Client access denied');
+      });
+      settled = Promise.allSettled([pending]);
+      let waiter = 0;
+      for (let i = 0; i < 200; i++) {
+        const result = await pool.query<{ pid: number }>(
+          'SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))',
+          [pid],
+        );
+        if (result.rows.length) {
+          waiter = result.rows[0].pid;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await blocked(waiter, pid);
+      await holder.query(
+        'UPDATE admin_client_assignments SET is_active=false WHERE admin_id=$1 AND client_id=$2',
+        [admin, client],
+      );
+      await holder.query('COMMIT');
+      await expect(pending).rejects.toThrow('Client access denied');
+      await expect(
+        service.get(client, Role.CLIENT, randomUUID(), {
+          start: date,
+          end: date,
+        }),
+      ).rejects.toThrow('Client access denied');
+    } finally {
+      try {
+        await holder.query('ROLLBACK');
+        await settled;
+      } finally {
+        holder.release();
+      }
+    }
   });
   it('evaluates using runtime SELECT/INSERT permissions without private history privileges', async () => {
     const role = 'evaluation_reader_' + randomUUID().replaceAll('-', '');
@@ -726,17 +776,29 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
         low_global_percent: 80,
       },
     });
-    await prisma.weeklyRecap.create({
-      data: {
+    // This owned client/week already exists in the submitted-steps case.
+    const weeklyFixture = {
+      week_end_date: new Date('2020-01-05'),
+      average_daily_steps: 6000,
+      submitted_at: new Date(),
+      status: 'SUBMITTED' as const,
+      improvement_areas: [],
+    };
+    const recap = await prisma.weeklyRecap.upsert({
+      where: {
+        client_id_week_start_date: {
+          client_id: client,
+          week_start_date: new Date('2019-12-30'),
+        },
+      },
+      create: {
         client_id: client,
         week_start_date: new Date('2019-12-30'),
-        week_end_date: new Date('2020-01-05'),
-        average_daily_steps: 6000,
-        submitted_at: new Date(),
-        status: 'SUBMITTED',
-        improvement_areas: [],
+        ...weeklyFixture,
       },
+      update: weeklyFixture,
     });
+    expect(recap.average_daily_steps).toBe(6000);
     actor = { id: client, role: Role.CLIENT };
     const server: unknown = app.getHttpServer();
     if (!(server instanceof Server)) throw new Error('Expected HTTP server');

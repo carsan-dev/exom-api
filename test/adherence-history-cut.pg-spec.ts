@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -175,11 +175,53 @@ describe('actual complete immutable history cut on PG17', () => {
     const migrations = readdirSync(migrationRoot)
       .filter((name) => /^\d/.test(name))
       .sort();
-    expect(migrations).toHaveLength(88);
-    for (const name of migrations)
-      await pool.query(
-        readFileSync(join(migrationRoot, name, 'migration.sql'), 'utf8'),
-      );
+    expect(migrations[87]).toBe(
+      '20261002030000_adherence_history_cut_manifest',
+    );
+    expect(migrations.slice(88)).toEqual([
+      '20261002040000_adherence_historical_prescription',
+      '20261002050000_adherence_effective_prescription_lineage',
+      '20261002060000_adherence_evaluation_revisions',
+    ]);
+    const databaseUrl = url.toString();
+    execFileSync(
+      process.execPath,
+      [
+        join(__dirname, '../node_modules/prisma/build/index.js'),
+        'migrate',
+        'deploy',
+        '--schema',
+        join(__dirname, '../prisma/schema.prisma'),
+      ],
+      {
+        cwd: join(__dirname, '..'),
+        env: {
+          ...process.env,
+          TEST_DATABASE_URL: databaseUrl,
+          DATABASE_URL: databaseUrl,
+          DIRECT_URL: databaseUrl,
+          PRISMA_DATABASE_URL: databaseUrl,
+        },
+        shell: false,
+        stdio: 'ignore',
+      },
+    );
+    const deployed = await pool.query<{
+      migration_name: string;
+      checksum: string;
+    }>(`SELECT migration_name, checksum FROM _prisma_migrations
+        WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
+        ORDER BY migration_name`);
+    expect(deployed.rows).toEqual(
+      migrations.map((migration_name) => ({
+        migration_name,
+        checksum: createHash('sha256')
+          .update(
+            readFileSync(join(migrationRoot, migration_name, 'migration.sql')),
+          )
+          .digest('hex'),
+      })),
+    );
     await pool.query(`INSERT INTO users(id,email,firebase_uid,updated_at)
       VALUES ('cut-user','cut@example.test','cut-user',now());
       INSERT INTO training_groups(id,name,normalized_name,updated_at)
@@ -220,12 +262,46 @@ describe('actual complete immutable history cut on PG17', () => {
       await blocked(pid, writerPid);
       await writer.query('COMMIT');
       await waitFor(() => transport.waiting);
-      const locks = await pool.query<{ n: number }>(
-        `SELECT count(*)::int n FROM pg_locks
-        WHERE pid=$1 AND mode='ShareRowExclusiveLock' AND granted`,
+      // Migration90 retains the foundation13 and adds exactly three overlays.
+      const sourceRelations = [
+        'catalog_colors',
+        'diet_groups',
+        'diets',
+        'exercises',
+        'ingredients',
+        'meal_ingredients',
+        'meals',
+        'plan_assignment_trainings',
+        'plan_assignments',
+        'training_blocks',
+        'training_exercises',
+        'training_groups',
+        'trainings',
+        'diet_day_snapshots',
+        'rir_day_targets',
+        'training_day_snapshots',
+      ].sort();
+      const locks = await pool.query<{ name: string; oid: number }>(
+        `SELECT c.relname name,c.oid::int oid FROM pg_catalog.pg_locks l
+        JOIN pg_catalog.pg_class c ON c.oid=l.relation
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE l.pid=$1 AND l.locktype='relation'
+          AND l.database=(SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database())
+          AND l.mode='ShareRowExclusiveLock' AND l.granted
+          AND n.nspname='public' ORDER BY c.relname COLLATE "C"`,
         [pid],
       );
-      expect(locks.rows[0].n).toBe(13);
+      const expectedRelations = await pool.query<{ name: string; oid: number }>(
+        `SELECT c.relname name,c.oid::int oid FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname=ANY($1::text[])
+        ORDER BY c.relname COLLATE "C"`,
+        [sourceRelations],
+      );
+      expect(expectedRelations.rows.map((row) => row.name)).toEqual(
+        sourceRelations,
+      );
+      expect(locks.rows).toEqual(expectedRelations.rows);
       const futureWrite = future.query(
         "UPDATE training_groups SET name='postbarrier' WHERE id='cut-group'",
       );

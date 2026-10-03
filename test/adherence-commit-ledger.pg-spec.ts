@@ -39,8 +39,12 @@ describe('owner-controlled immutable PG commit evidence', () => {
   let epochId: string;
   let activationXid: string;
   let fullXid: string;
-  let initialImages: unknown[];
-  const origin = 'synthetic-ledger-fixture-only';
+  let initialImages: ImageRow[];
+  const fixtureNonce = randomUUID();
+  const legacyClient = 'ledger-client-' + fixtureNonce;
+  const legacyGroup = 'ledger-legacy-group-' + fixtureNonce;
+  const legacyAssignment = 'ledger-legacy-assignment-' + fixtureNonce;
+  const origin = 'synthetic-ledger-fixture-only-' + fixtureNonce;
   const cutoffUtc = '2099-01-01T00:00:00.000000Z';
   const request = (xid = fullXid): AdherenceCommitRequest => ({
     epochId,
@@ -84,13 +88,23 @@ describe('owner-controlled immutable PG commit evidence', () => {
       dir: '/var/lib/postgresql/exom-ci-data',
       tracking: 'on',
     });
-    const epochs = await pool.query<{
-      id: string;
-      activating_full_xid: string;
-    }>('SELECT id,activating_full_xid FROM public.adherence_history_epochs');
-    expect(epochs.rowCount).toBe(1);
-    epochId = epochs.rows[0].id;
-    activationXid = epochs.rows[0].activating_full_xid;
+    // This namespace is a fixture authority, never a production capability.
+    // Other ON suites may retain epochs/source rows: seed our own preactivation
+    // legacy data without clearing or adopting anyone else's append-only history.
+    await pool.query(
+      `INSERT INTO users(id,email,firebase_uid,updated_at) VALUES ($1,$1 || '@example.test',$1,now())`,
+      [legacyClient],
+    );
+    await pool.query(
+      `INSERT INTO training_groups(id,name,normalized_name,updated_at)
+        VALUES ($1,'Synthetic legacy',$1,now())`,
+      [legacyGroup],
+    );
+    await pool.query(
+      `INSERT INTO plan_assignments(id,client_id,date,updated_at)
+        VALUES ($1,$2,'2098-01-01',now())`,
+      [legacyAssignment, legacyClient],
+    );
     const sources = [
       'catalog_colors',
       'diet_groups',
@@ -105,21 +119,55 @@ describe('owner-controlled immutable PG commit evidence', () => {
       'training_exercises',
       'training_groups',
       'trainings',
+      // Migration90 adds overlays and a marker; foundation13 is unchanged.
+      'diet_day_snapshots',
+      'rir_day_targets',
+      'training_day_snapshots',
     ];
-    initialImages = (
-      await pool.query(
-        'SELECT * FROM (' +
-          sources
-            .map(
-              (table) =>
-                `SELECT '${table}' source_table,id row_key,to_jsonb(s) row_image FROM public.${table} s`,
-            )
-            .join(' UNION ALL ') +
-          ') images ORDER BY source_table COLLATE "C",row_key COLLATE "C"',
-      )
-    ).rows;
     const client = await pool.connect();
     try {
+      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+      const activated = await client.query<{
+        id: string;
+        activating_full_xid: string;
+      }>('SELECT * FROM public.activate_adherence_history_origin()');
+      expect(activated.rowCount).toBe(1);
+      epochId = activated.rows[0].id;
+      activationXid = activated.rows[0].activating_full_xid;
+      const epochs = await client.query(
+        'SELECT id,activating_full_xid FROM public.adherence_history_epochs WHERE id=$1',
+        [epochId],
+      );
+      expect(epochs.rows).toEqual(activated.rows);
+      initialImages = (
+        await client.query<ImageRow>(
+          'SELECT * FROM (' +
+            sources
+              .map(
+                (table) =>
+                  `SELECT '${table}' source_table,public.adherence_effective_row_key('${table}',to_jsonb(s)) row_key,to_jsonb(s) row_image FROM public.${table} s`,
+              )
+              .join(' UNION ALL ') +
+            ') images ORDER BY source_table COLLATE "C",row_key COLLATE "C"',
+        )
+      ).rows;
+      initialImages.unshift({
+        source_table: '__adherence_coverage__',
+        row_key: 'effective-prescription-v2',
+        row_image: {
+          id: 'effective-prescription-v2',
+          version: 2,
+          sources,
+          counts: Object.fromEntries(
+            sources.map((source) => [
+              source,
+              initialImages.filter((row) => row.source_table === source).length,
+            ]),
+          ),
+        },
+      });
+      // Keep the activation source locks until expected images are captured.
+      await client.query('COMMIT');
       await client.query('BEGIN');
       fullXid = (
         await client.query<{ xid: string }>(
@@ -131,14 +179,20 @@ describe('owner-controlled immutable PG commit evidence', () => {
         `INSERT INTO training_groups(id,name,normalized_name,updated_at)
           VALUES ('ledger-group-a','Synthetic A','synthetic a',now()),
             ('ledger-group-b','Synthetic B','synthetic b',now());
-        UPDATE training_groups SET name=name || ' changed' WHERE id LIKE 'ledger-group-%';
-        INSERT INTO plan_assignments(id,client_id,date,updated_at)
-          VALUES ('ledger-assignment-a','legacy-client','2098-01-02',now()),
-            ('ledger-assignment-b','legacy-client','2098-01-03',now());
-        UPDATE plan_assignments SET notes='synthetic changed' WHERE id LIKE 'ledger-assignment-%'`,
+        UPDATE training_groups SET name=name || ' changed' WHERE id IN ('ledger-group-a','ledger-group-b')`,
+      );
+      await client.query(
+        `INSERT INTO plan_assignments(id,client_id,date,updated_at)
+          VALUES ('ledger-assignment-a',$1,'2098-01-02',now()),
+            ('ledger-assignment-b',$1,'2098-01-03',now())`,
+        [legacyClient],
+      );
+      await client.query(
+        `UPDATE plan_assignments SET notes='synthetic changed' WHERE id IN ('ledger-assignment-a','ledger-assignment-b')`,
       );
       await client.query('COMMIT');
     } finally {
+      await client.query('ROLLBACK');
       client.release();
     }
   });
@@ -198,21 +252,21 @@ describe('owner-controlled immutable PG commit evidence', () => {
     expect(p.activation).toBe(true);
     expect(p.event_count).toBe('0');
     const baseline = await pool.query<ImageRow>(
-      'SELECT source_table,row_key,row_image FROM public.adherence_history_baselines ORDER BY source_table COLLATE "C",row_key COLLATE "C"',
+      'SELECT source_table,row_key,row_image FROM public.adherence_history_baselines WHERE epoch_id=$1 ORDER BY source_table COLLATE "C",row_key COLLATE "C"',
+      [epochId],
     );
     expect(baseline.rows).toEqual(initialImages);
-    expect(baseline.rows.some((row) => row.row_key === 'legacy-group')).toBe(
+    expect(baseline.rows.some((row) => row.row_key === legacyGroup)).toBe(true);
+    expect(baseline.rows.some((row) => row.row_key === legacyAssignment)).toBe(
       true,
     );
-    expect(
-      baseline.rows.some((row) => row.row_key === 'legacy-assignment'),
-    ).toBe(true);
     const evidence = await proven(activationXid);
     expect(evidence.content_digest).toBe(p.content_digest);
     // Epoch observation is not a proof of precapture source transactions.
     const old = await pool.query<{ transaction_id: string }>(
       `SELECT transaction_id FROM public.adherence_catalog_journal
-        WHERE source_table='training_groups' AND new_row->>'id'='legacy-group'`,
+        WHERE source_table='training_groups' AND new_row->>'id'=$1`,
+      [legacyGroup],
     );
     expect(await payload(old.rows[0].transaction_id)).toBeNull();
   });
