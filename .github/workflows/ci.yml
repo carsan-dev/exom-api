@@ -51,9 +51,12 @@ jobs:
       - name: Verify disposable database before migrations
         run: node scripts/test-database.cjs
       - run: npm exec -- prisma migrate deploy
-      - run: node --test scripts/test-database.test.cjs
-      - run: npm test -- --runInBand
-      - run: npm run test:concurrency
+      - name: Test database identity and launcher safety gates
+        run: node --test scripts/test-database.test.cjs scripts/run-adherence-integration.test.cjs
+      - name: Run all src suites and full concurrency with legacy84 and tracking OFF
+        run: npm run test:adherence:off
+      - name: Run all five external PostgreSQL suites and resolver with owned tracking ON
+        run: npm run test:adherence:on
       - name: Run isolated HTTP integration suite
         run: npm run test:e2e
         env:

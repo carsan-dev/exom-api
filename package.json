@@ -19,6 +19,8 @@
     "identity:diagnose": "ts-node src/scripts/diagnose-identities.ts",
     "db:audit-fks": "ts-node src/scripts/audit-foreign-keys.ts --read-only",
     "test:concurrency": "node scripts/run-integration.cjs concurrency",
+    "test:adherence:off": "node scripts/run-adherence-integration.cjs off",
+    "test:adherence:on": "node scripts/run-adherence-integration.cjs on",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
