@@ -59,6 +59,7 @@ DECLARE
     timeline integer;
     database_oid bigint;
 BEGIN
+    -- FORCE RLS is compatible only when this effective role sees all rows.
     -- Require owner visibility on every source too: a filtered RLS policy must
     -- never silently turn a partial row set into a purported full baseline.
     seq_oid := pg_catalog.pg_get_serial_sequence(
@@ -81,7 +82,7 @@ BEGIN
             'public.plan_assignments'::regclass, 'public.training_blocks'::regclass,
             'public.training_exercises'::regclass, 'public.training_groups'::regclass,
             'public.trainings'::regclass)
-            AND (c.relowner <> s.relowner OR c.relforcerowsecurity))
+            AND (c.relowner <> s.relowner OR pg_catalog.row_security_active(c.oid)))
         AND NOT EXISTS (
           SELECT 1 FROM pg_catalog.pg_proc f
           WHERE f.oid IN ('public.capture_adherence_assignment_event()'::regprocedure,

@@ -25,6 +25,7 @@ BEGIN
       public.plan_assignment_trainings, public.plan_assignments,
       public.training_blocks, public.training_exercises, public.training_groups,
       public.trainings IN SHARE ROW EXCLUSIVE MODE;
+    -- FORCE RLS is compatible only when this effective invoker sees all rows.
     seq_oid := pg_catalog.pg_get_serial_sequence(
       'public.adherence_assignment_journal', 'event_sequence')::regclass;
     SELECT format('%I.%I', n.nspname, s.relname) INTO qualified_sequence
@@ -45,7 +46,7 @@ BEGIN
             'public.plan_assignments'::regclass, 'public.training_blocks'::regclass,
             'public.training_exercises'::regclass, 'public.training_groups'::regclass,
             'public.trainings'::regclass)
-            AND (c.relowner <> s.relowner OR c.relforcerowsecurity))
+            AND (c.relowner <> s.relowner OR pg_catalog.row_security_active(c.oid)))
         AND NOT EXISTS (
           SELECT 1 FROM pg_catalog.pg_proc f
           WHERE f.oid IN ('public.capture_adherence_assignment_event()'::regprocedure,

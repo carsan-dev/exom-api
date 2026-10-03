@@ -50,6 +50,7 @@ ALTER TABLE public.adherence_history_baselines ADD CONSTRAINT adherence_history_
 
 -- Legitimate nonowner source INSERT/UPDATE/cascade writers must not receive
 -- journal or allocator privileges. Only these exact OIDs can enter this definer.
+-- Check effective definer visibility, not FORCE alone; exact ownership remains.
 CREATE FUNCTION public.capture_adherence_effective_event() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
@@ -60,7 +61,7 @@ BEGIN
       OR (TG_TABLE_NAME = 'training_day_snapshots' AND TG_RELID = 'public.training_day_snapshots'::regclass))
     OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c
       WHERE c.oid IN (TG_RELID, 'public.adherence_catalog_journal'::regclass)
-      AND (c.relowner <> (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user) OR c.relforcerowsecurity)) THEN
+      AND (c.relowner <> (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user) OR pg_catalog.row_security_active(c.oid))) THEN
     RAISE EXCEPTION 'Untrusted effective capture context' USING ERRCODE = '42501';
   END IF;
   INSERT INTO public.adherence_catalog_journal(transaction_id, source_table, operation, old_row, new_row)
@@ -74,11 +75,12 @@ REVOKE EXECUTE ON FUNCTION public.capture_adherence_effective_event() FROM PUBLI
 DO $$ DECLARE source text;
 BEGIN
   PERFORM public.assert_adherence_commit_owner();
+  -- Effective migration-owner visibility must cover all three overlays.
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_class c
     WHERE c.oid IN ('public.diet_day_snapshots'::regclass, 'public.rir_day_targets'::regclass,
       'public.training_day_snapshots'::regclass,
       pg_get_serial_sequence('public.adherence_assignment_journal', 'event_sequence')::regclass)
-    AND (c.relowner <> (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user) OR c.relforcerowsecurity)) THEN
+    AND (c.relowner <> (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user) OR pg_catalog.row_security_active(c.oid))) THEN
     RAISE EXCEPTION 'Effective capture requires migration/source/allocator owner' USING ERRCODE = '42501';
   END IF;
   FOREACH source IN ARRAY ARRAY['diet_day_snapshots', 'rir_day_targets', 'training_day_snapshots'] LOOP
@@ -133,6 +135,7 @@ BEGIN
       public.training_blocks, public.training_exercises, public.training_groups,
       public.trainings, public.diet_day_snapshots, public.rir_day_targets,
       public.training_day_snapshots IN SHARE ROW EXCLUSIVE MODE;
+    -- FORCE RLS is compatible only when this effective invoker sees all rows.
     seq_oid := pg_catalog.pg_get_serial_sequence(
       'public.adherence_assignment_journal', 'event_sequence')::regclass;
     SELECT format('%I.%I', n.nspname, s.relname) INTO qualified_sequence
@@ -154,7 +157,7 @@ BEGIN
             'public.training_exercises'::regclass, 'public.training_groups'::regclass,
             'public.trainings'::regclass, 'public.diet_day_snapshots'::regclass,
             'public.rir_day_targets'::regclass, 'public.training_day_snapshots'::regclass)
-            AND (c.relowner <> s.relowner OR c.relforcerowsecurity))
+            AND (c.relowner <> s.relowner OR pg_catalog.row_security_active(c.oid)))
         AND NOT EXISTS (
           SELECT 1 FROM pg_catalog.pg_proc f
           WHERE f.oid IN ('public.capture_adherence_assignment_event()'::regprocedure,
