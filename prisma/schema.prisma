@@ -17,6 +17,29 @@ enum Role {
   CLIENT
 }
 
+enum ClientFollowUpTaskType {
+  TRAINING_UPDATE
+  DIET_UPDATE
+  PHOTO_REVIEW
+  RECAP_REVIEW
+  REVIEW
+  CALL
+  FEEDBACK
+}
+
+enum ClientFollowUpTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ClientFollowUpTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum AuthProvider {
   email
   google
@@ -168,34 +191,76 @@ model User {
   created_at             DateTime              @default(now())
   updated_at             DateTime              @updatedAt
 
+  adherenceConfigHead           AdherenceConfigHead?
+  adherenceConfigRevisions      AdherenceConfigRevision[]
   profile                       Profile?
-  adminOf                       AdminClientAssignment[] @relation("AdminAssignments")
-  clientOf                      AdminClientAssignment[] @relation("ClientAssignments")
+  adminOf                       AdminClientAssignment[]   @relation("AdminAssignments")
+  clientOf                      AdminClientAssignment[]   @relation("ClientAssignments")
   dayProgress                   DayProgress[]
   dietDaySnapshots              DietDaySnapshot[]
   bodyMetrics                   BodyMetric[]
   streak                        Streak?
   weeklyRecaps                  WeeklyRecap[]
+  clientFollowUpTasks           ClientFollowUpTask[]      @relation("FollowUpTaskClient")
+  assignedFollowUpTasks         ClientFollowUpTask[]      @relation("FollowUpTaskAssignee")
+  createdFollowUpTasks          ClientFollowUpTask[]      @relation("FollowUpTaskCreator")
   clientChallenges              ChallengeClient[]
   userAchievements              UserAchievement[]
   feedbackMedia                 FeedbackMedia[]
   managedUploads                ManagedUpload[]
   progressOperations            ProgressOperation[]
-  sentNotifications             Notification[]          @relation("SentNotifications")
-  receivedNotifications         Notification[]          @relation("ReceivedNotifications")
+  sentNotifications             Notification[]            @relation("SentNotifications")
+  receivedNotifications         Notification[]            @relation("ReceivedNotifications")
   durableWork                   DurableWork[]
-  approvalRequestsMade          ApprovalRequest[]       @relation("ApprovalRequester")
-  approvalRequestsReviewed      ApprovalRequest[]       @relation("ApprovalReviewer")
-  planAssignmentsAsClient       PlanAssignment[]        @relation("PlanAssignmentClient")
-  planAssignmentsAsAdmin        PlanAssignment[]        @relation("PlanAssignmentAdmin")
-  autoAssignmentRulesAsClient   AutoAssignmentRule[]    @relation("AutoAssignmentRuleClient")
-  autoAssignmentRulesAsAdmin    AutoAssignmentRule[]    @relation("AutoAssignmentRuleAdmin")
-  progressPhotoSessions         ProgressPhotoSession[]  @relation("ProgressPhotoSessionClient")
-  progressPhotoSessionsUploaded ProgressPhotoSession[]  @relation("ProgressPhotoSessionUploader")
-  progressPhotosUploaded        ProgressPhoto[]         @relation("ProgressPhotoUploader")
+  approvalRequestsMade          ApprovalRequest[]         @relation("ApprovalRequester")
+  approvalRequestsReviewed      ApprovalRequest[]         @relation("ApprovalReviewer")
+  planAssignmentsAsClient       PlanAssignment[]          @relation("PlanAssignmentClient")
+  planAssignmentsAsAdmin        PlanAssignment[]          @relation("PlanAssignmentAdmin")
+  autoAssignmentRulesAsClient   AutoAssignmentRule[]      @relation("AutoAssignmentRuleClient")
+  autoAssignmentRulesAsAdmin    AutoAssignmentRule[]      @relation("AutoAssignmentRuleAdmin")
+  progressPhotoSessions         ProgressPhotoSession[]    @relation("ProgressPhotoSessionClient")
+  progressPhotoSessionsUploaded ProgressPhotoSession[]    @relation("ProgressPhotoSessionUploader")
+  progressPhotosUploaded        ProgressPhoto[]           @relation("ProgressPhotoUploader")
 
   @@index([role, created_at, id])
   @@map("users")
+}
+
+// The migration records when the global default first becomes historically knowable.
+model AdherenceConfigEpoch {
+  id             String   @id
+  effective_date DateTime @db.Date
+
+  @@map("adherence_config_epochs")
+}
+
+// Revisions are append-only; no legacy client is backfilled with invented history.
+model AdherenceConfigHead {
+  client_id String @id
+  version   Int    @default(0)
+  client    User   @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@map("adherence_config_heads")
+}
+
+model AdherenceConfigRevision {
+  id                    String   @id @default(uuid())
+  client_id             String
+  version               Int
+  effective_date        DateTime @db.Date
+  steps_goal            Int?
+  calorie_lower_percent Int
+  calorie_upper_percent Int
+  protein_min_percent   Int
+  steps_min_percent     Int
+  low_global_percent    Int
+  created_at            DateTime @default(now())
+  client                User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([client_id, version])
+  @@unique([client_id, effective_date])
+  @@index([client_id, effective_date(sort: Desc)])
+  @@map("adherence_config_revisions")
 }
 
 model Profile {
@@ -632,6 +697,129 @@ model PlanAssignmentTraining {
   @@map("plan_assignment_trainings")
 }
 
+// Transactional row events only, not a closed-day prescription or commit clock.
+// No source foreign keys: OLD/NEW evidence must survive source deletion.
+model AdherenceAssignmentJournal {
+  event_sequence BigInt   @id @default(autoincrement())
+  transaction_id String   @default(dbgenerated("(pg_current_xact_id())::text")) @db.Text
+  source_table   String   @db.Text
+  operation      String   @db.Text
+  old_row        Json?    @db.JsonB
+  new_row        Json?    @db.JsonB
+  observed_at    DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([transaction_id, event_sequence])
+  @@map("adherence_assignment_journal")
+}
+
+// Initial coherent state only: observation is NOT commit time or UTC proof.
+// Optional real source metadata does not alone prove continuity across restores.
+model AdherenceHistoryEpoch {
+  id                       String                     @id @default(dbgenerated("(gen_random_uuid())::text"))
+  source_set_version       Int
+  activating_full_xid      String                     @db.Text
+  sequence_boundary        BigInt
+  capture_observed_at      DateTime                   @db.Timestamptz(6)
+  source_system_identifier String?                    @db.Text
+  source_timeline          Int?
+  source_database_oid      BigInt?
+  baselines                AdherenceHistoryBaseline[]
+  commit_evidence          AdherenceCommitEvidence[]
+  cuts                     AdherenceHistoryCut[]
+
+  @@map("adherence_history_epochs")
+}
+
+// Conditional owner-only immutable evidence; use exact text, never Date/float.
+model AdherenceCommitEvidence {
+  epoch_id        String
+  origin          String                @db.Text
+  full_xid        String                @db.Text
+  digest_version  Int
+  baseline_digest String                @db.Text
+  event_digest    String                @db.Text
+  content_digest  String                @db.Text
+  proof_digest    String                @db.Text
+  event_count     String                @db.Text
+  activation      Boolean
+  timestamp_utc   String                @db.Text
+  microseconds    String                @db.Text
+  epoch           AdherenceHistoryEpoch @relation(fields: [epoch_id], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([epoch_id, origin, full_xid])
+  @@map("adherence_commit_evidence")
+}
+
+// Private immutable complete cut; exact UTC text and canonical PG JSONB proof.
+model AdherenceHistoryCut {
+  epoch_id   String
+  origin     String                @db.Text
+  cutoff_utc String                @db.Text
+  manifest   Json                  @db.JsonB
+  epoch      AdherenceHistoryEpoch @relation(fields: [epoch_id], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([epoch_id, origin, cutoff_utc])
+  @@map("adherence_history_cuts")
+}
+
+// Immutable sanitized closed-day read model; no source/User FK or evaluations.
+// Application role receives SELECT only; privileged publisher validates original cut.
+model AdherenceHistoricalPrescription {
+  client_id String
+  date      DateTime @db.Date
+  payload   Json     @db.JsonB
+
+  @@id([client_id, date])
+  @@map("adherence_historical_prescriptions")
+}
+
+// Immutable application evaluations, independent of mutable source rows.
+model AdherenceEvaluationRevision {
+  client_id             String
+  date                  DateTime @db.Date
+  revision              Int
+  idempotency_key       String
+  original_basis_id     String?
+  original_basis_digest String
+  cut_binding           String?  @db.Text
+  config_revision_id    String?
+  config_digest         String
+  evidence_digest       String
+  evaluation            Json     @db.JsonB
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([client_id, date, revision])
+  @@unique([client_id, date, idempotency_key])
+  @@map("adherence_evaluation_revisions")
+}
+
+// Private full row images; no source/User FK and no fabricated historical date.
+model AdherenceHistoryBaseline {
+  epoch_id     String
+  source_table String                @db.Text
+  row_key      String                @db.Text
+  row_image    Json                  @db.JsonB
+  epoch        AdherenceHistoryEpoch @relation(fields: [epoch_id], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([epoch_id, source_table, row_key])
+  @@map("adherence_history_baselines")
+}
+
+// Full catalog row events; no source/User FKs, bootstrap or commit-time claim.
+// Resolve the existing assignment sequence instead of creating a second allocator.
+model AdherenceCatalogJournal {
+  event_sequence BigInt   @id @default(dbgenerated("nextval((pg_get_serial_sequence('public.adherence_assignment_journal'::text, 'event_sequence'::text))::regclass)"))
+  transaction_id String   @default(dbgenerated("(pg_current_xact_id())::text")) @db.Text
+  source_table   String   @db.Text
+  operation      String   @db.Text
+  old_row        Json?    @db.JsonB
+  new_row        Json?    @db.JsonB
+  observed_at    DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  @@index([transaction_id, event_sequence])
+  @@map("adherence_catalog_journal")
+}
+
 model AutoAssignmentRule {
   id                String    @id @default(uuid())
   client_id         String
@@ -883,6 +1071,32 @@ model Streak {
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
   @@map("streaks")
+}
+
+model ClientFollowUpTask {
+  id             String                     @id @default(uuid())
+  client_id      String
+  assigned_to_id String?
+  created_by_id  String?
+  type           ClientFollowUpTaskType
+  title          String                     @db.VarChar(160)
+  description    String?                    @db.VarChar(3000)
+  due_date       DateTime                   @db.Date
+  priority       ClientFollowUpTaskPriority @default(MEDIUM)
+  status         ClientFollowUpTaskStatus   @default(PENDING)
+  version        Int                        @default(1)
+  completed_at   DateTime?                  @db.Timestamptz(3)
+  cancelled_at   DateTime?                  @db.Timestamptz(3)
+  created_at     DateTime                   @default(now()) @db.Timestamptz(3)
+  updated_at     DateTime                   @updatedAt @db.Timestamptz(3)
+
+  client      User  @relation("FollowUpTaskClient", fields: [client_id], references: [id], onDelete: Cascade)
+  assigned_to User? @relation("FollowUpTaskAssignee", fields: [assigned_to_id], references: [id], onDelete: SetNull)
+  created_by  User? @relation("FollowUpTaskCreator", fields: [created_by_id], references: [id], onDelete: SetNull)
+
+  @@index([client_id, status, due_date, priority, created_at], map: "client_followup_tasks_queue_idx")
+  @@index([client_id, type, status, due_date], map: "client_followup_tasks_type_queue_idx")
+  @@map("client_followup_tasks")
 }
 
 // ─── Weekly Recap ─────────────────────────────────────────────────────────────

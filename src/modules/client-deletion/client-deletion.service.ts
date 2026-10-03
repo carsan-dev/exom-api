@@ -9,6 +9,7 @@ import { Cron } from '@nestjs/schedule';
 import { ClientDeletion, Prisma, Role } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import * as admin from 'firebase-admin';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 
@@ -78,6 +79,8 @@ export class ClientDeletionService {
   async request(clientId: string, requesterId: string, self = false) {
     return this.prisma.$transaction(
       async (tx) => {
+        // Acquire the shared catalog barrier and client lock before user row locks.
+        await lockClientDayProgress(tx, clientId);
         // Canonical order across double requests, roles, uploads and external writers.
         await tx.$queryRaw`SELECT id FROM users WHERE id IN (${clientId}, ${requesterId}) ORDER BY id FOR UPDATE`;
         if (!self) {

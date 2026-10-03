@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Test } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
@@ -270,6 +272,130 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
         expect.objectContaining({ name, in: 'path', required: true }),
       );
     }
+  });
+  it('documents and validates the adherence configuration GET and PUT wire contract', async () => {
+    function requireRecord(value: unknown): Record<string, unknown> {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw Error('Expected stored OpenAPI object');
+      }
+      return Object.fromEntries(Object.entries(value));
+    }
+    const route = '/api/v1/admin/clients/{clientId}/adherence/config';
+    const url = `/api/v1/admin/clients/${client}/adherence/config`;
+    const stored = requireRecord(
+      JSON.parse(
+        readFileSync(resolve(__dirname, '../docs/openapi.json'), 'utf8'),
+      ) as unknown,
+    );
+    const storedPath = requireRecord(requireRecord(stored.paths)[route]);
+    const storedOperations = {
+      get: requireRecord(storedPath.get),
+      put: requireRecord(storedPath.put),
+    };
+    const storedSchemas = requireRecord(
+      requireRecord(stored.components).schemas,
+    );
+    for (const [verb, operationId] of [
+      ['get', 'AdherenceConfigController_get'],
+      ['put', 'AdherenceConfigController_update'],
+    ] as const) {
+      expect(document.paths[route][verb]!.operationId).toBe(operationId);
+      expect(storedOperations[verb].operationId).toBe(operationId);
+      expect(document.paths[route][verb]!.parameters).toContainEqual(
+        expect.objectContaining({
+          name: 'clientId',
+          in: 'path',
+          required: true,
+        }),
+      );
+    }
+    for (const operation of [
+      document.paths[route].get!,
+      storedOperations.get,
+    ]) {
+      expect(operation.parameters).toContainEqual(
+        expect.objectContaining({
+          name: 'date',
+          in: 'query',
+          required: false,
+          schema: { type: 'string' },
+        }),
+      );
+    }
+    const schemas = document.components!.schemas!;
+    expect(document.paths[route].put!.requestBody).toMatchObject({
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/UpdateAdherenceConfigDto' },
+        },
+      },
+      required: true,
+    });
+    const dtoSchema = schemas.UpdateAdherenceConfigDto;
+    if (!dtoSchema || '$ref' in dtoSchema) {
+      throw Error('Missing UpdateAdherenceConfigDto schema');
+    }
+    expect(dtoSchema.required).toEqual(
+      expect.arrayContaining([
+        'effective_date',
+        'expected_version',
+        'steps_goal',
+        'calorie_lower_percent',
+        'calorie_upper_percent',
+        'protein_min_percent',
+        'steps_min_percent',
+        'low_global_percent',
+      ]),
+    );
+    expect(storedSchemas.UpdateAdherenceConfigDto).toEqual(
+      schemas.UpdateAdherenceConfigDto,
+    );
+    const before = await request(server())
+      .get(`${url}?date=2099-12-30`)
+      .set('x-contract-owner', owner)
+      .expect(200);
+    validate(responseSchema(route, 'get', 200), before.body);
+    expect(responseData(before).version).toBe(0);
+    const input = {
+      effective_date: '2099-12-30',
+      expected_version: 0,
+      steps_goal: null,
+      calorie_lower_percent: 10,
+      calorie_upper_percent: 10,
+      protein_min_percent: 90,
+      steps_min_percent: 100,
+      low_global_percent: 80,
+    };
+    validate({ $ref: '#/components/schemas/UpdateAdherenceConfigDto' }, input);
+    const updated = await request(server())
+      .put(url)
+      .set('x-contract-owner', owner)
+      .send(input)
+      .expect(200);
+    validate(responseSchema(route, 'put', 200), updated.body);
+    expect(responseData(updated)).toMatchObject({
+      version: 1,
+      known: true,
+      source: 'revision',
+      steps_goal: null,
+    });
+    const after = await request(server())
+      .get(`${url}?date=2099-12-30`)
+      .set('x-contract-owner', owner)
+      .expect(200);
+    validate(responseSchema(route, 'get', 200), after.body);
+    expect(responseData(after)).toEqual(responseData(updated));
+    const invalid = { ...input, expected_version: undefined };
+    const check = new Ajv({ nullable: true }).compile({
+      $ref: '#/components/schemas/UpdateAdherenceConfigDto',
+      components: document.components,
+    });
+    expect(check(invalid)).toBe(false);
+    await request(server())
+      .put(url)
+      .set('x-contract-owner', owner)
+      .send(invalid)
+      .expect(400);
   });
   it('serializes liveness through the documented envelope', async () => {
     const res = await request(server()).get('/api/v1/health/live').expect(200);

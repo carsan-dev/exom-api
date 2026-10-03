@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -49,11 +50,11 @@ suite('training progress bounded PostgreSQL read model', () => {
   let pool: Pool;
   let db: PrismaClient;
   let reader: TrainingProgressReadService;
-  const prefix = `p3-read-${process.pid}-${Date.now()}`;
+  const prefix = `p3-read-${randomUUID()}`;
   const ids: string[] = [];
+  const syntheticTrainingIds: string[] = [];
   async function client() {
     const id = `${prefix}-${ids.length}`;
-    ids.push(id);
     await db.user.create({
       data: {
         id,
@@ -62,7 +63,19 @@ suite('training progress bounded PostgreSQL read model', () => {
         role: 'CLIENT',
       },
     });
+    ids.push(id);
     return id;
+  }
+  async function createSyntheticTrainings(trainingIds: string[]) {
+    await db.training.createMany({
+      data: trainingIds.map((id, position) => ({
+        id,
+        name: `Multi-assigned training ${position}`,
+        type: 'STRENGTH',
+        tags: [],
+      })),
+    });
+    syntheticTrainingIds.push(...trainingIds);
   }
   const date = (day: string) => new Date(`${day}T00:00:00.000Z`);
   const range = { from: '2026-09-23', to: '2026-09-24' };
@@ -75,8 +88,40 @@ suite('training progress bounded PostgreSQL read model', () => {
   afterAll(async () => {
     if (db && ids.length)
       await db.user.deleteMany({ where: { id: { in: ids } } });
+    if (db && syntheticTrainingIds.length)
+      await db.training.deleteMany({
+        where: { id: { in: syntheticTrainingIds } },
+      });
     await db?.$disconnect();
     await pool?.end();
+  });
+
+  it('does not register a failed fixture creation for teardown', async () => {
+    const before = [...ids];
+    const spy = jest
+      .spyOn(db.user, 'create')
+      .mockRejectedValue(new Error('simulated creation failure'));
+    try {
+      await expect(client()).rejects.toThrow('simulated creation failure');
+      expect(ids).toEqual(before);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not register failed synthetic training creation for teardown', async () => {
+    const before = [...syntheticTrainingIds];
+    const spy = jest
+      .spyOn(db.training, 'createMany')
+      .mockRejectedValue(new Error('simulated training creation failure'));
+    try {
+      await expect(
+        createSyntheticTrainings([`${prefix}-failed-training`]),
+      ).rejects.toThrow('simulated training creation failure');
+      expect(syntheticTrainingIds).toEqual(before);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('accepts at most 366 inclusive civil dates per authorized training read', async () => {
@@ -915,6 +960,40 @@ suite('training progress bounded PostgreSQL read model', () => {
     }
   }, 120_000);
 
+  it('bounds setless completed exercise identities before the overview query', async () => {
+    const owner = await client();
+    const day = '2026-09-24';
+    const period = { from: day, to: day };
+    const entries = Array.from({ length: 10_001 }, (_, index) => ({
+      exercise_id: `setless-${String(index).padStart(5, '0')}`,
+      training_session_id: 'performed',
+      training_exercise_id: `occurrence-${index}`,
+    }));
+    expect(Buffer.byteLength(JSON.stringify(entries), 'utf8')).toBeLessThan(
+      6 * 1024 * 1024,
+    );
+    await db.dayProgress.create({
+      data: {
+        client_id: owner,
+        date: date(day),
+        training_sessions: [
+          { training_id: 'training', training_session_id: 'performed' },
+        ],
+        exercises_completed: entries,
+      },
+    });
+
+    await expect(
+      reader.getAuthorizedOverview(owner, owner, period, {
+        identification: 'identified',
+        limit: 20,
+      }),
+    ).rejects.toMatchObject({
+      status: 413,
+      response: { code: 'TRAINING_OVERVIEW_LIMIT_EXCEEDED' },
+    });
+  }, 120_000);
+
   it('reports unweighted reps and timed seconds with names only from the confirmed session snapshot', async () => {
     const owner = await client();
     const day = '2026-09-24';
@@ -1018,6 +1097,354 @@ suite('training progress bounded PostgreSQL read model', () => {
         volume: null,
       }),
     ]);
+  });
+
+  it('keeps the latest historically evidenced name when a later completion has no sets', async () => {
+    const owner = await client();
+    const otherOwner = await client();
+    const firstDay = '2026-09-23';
+    const secondDay = '2026-09-24';
+    const exerciseId = 'stable-running';
+    const occurrenceId = 'running-occurrence';
+    await db.dayProgress.createMany({
+      data: [
+        {
+          client_id: owner,
+          date: date(firstDay),
+          training_sessions: [
+            {
+              training_id: 'named-training',
+              training_session_id: 'named-session',
+            },
+          ],
+          exercises_completed: [
+            {
+              exercise_id: exerciseId,
+              training_exercise_id: occurrenceId,
+              training_session_id: 'named-session',
+              sets: [{ set_number: 1, weight_kg: 20, reps: 8 }],
+            },
+          ],
+        },
+        {
+          client_id: owner,
+          date: date(secondDay),
+          training_sessions: [
+            {
+              training_id: 'legacy-training',
+              training_session_id: 'legacy-session',
+            },
+          ],
+          exercises_completed: [
+            {
+              exercise_id: exerciseId,
+              training_exercise_id: occurrenceId,
+              training_session_id: 'legacy-session',
+            },
+          ],
+        },
+      ],
+    });
+    await db.trainingDaySnapshot.createMany({
+      data: [
+        {
+          client_id: owner,
+          date: date(firstDay),
+          training_id: 'named-training',
+          version: 1,
+          payload: {
+            exercises: [
+              {
+                id: occurrenceId,
+                exercise_id: exerciseId,
+                exercise: { name: 'Contract running' },
+              },
+            ],
+          },
+        },
+        {
+          client_id: otherOwner,
+          date: date(secondDay),
+          training_id: 'legacy-training',
+          version: 1,
+          payload: {
+            exercises: [
+              {
+                id: occurrenceId,
+                exercise_id: exerciseId,
+                exercise: { name: 'Other owner running' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const latestOnly = await reader.getAuthorizedOverview(owner, owner, {
+      from: secondDay,
+      to: secondDay,
+    });
+    expect(latestOnly.exercises).toEqual([
+      expect.objectContaining({
+        exercise_id: exerciseId,
+        exercise_name: null,
+        sets: 0,
+        max_reps: null,
+        volume: null,
+      }),
+    ]);
+    const overview = await reader.getAuthorizedOverview(owner, owner, {
+      from: firstDay,
+      to: secondDay,
+    });
+    expect(overview.exercises).toEqual([
+      expect.objectContaining({
+        exercise_id: exerciseId,
+        exercise_name: 'Contract running',
+        sets: 1,
+        max_reps: 8,
+        volume: 160,
+      }),
+    ]);
+    expect(overview.indicators).toMatchObject({
+      trainings_completed: 2,
+      volume: 160,
+    });
+  });
+
+  it('includes completed exercises without recorded sets in a multi-assigned day', async () => {
+    const owner = await client();
+    const day = '2026-09-24';
+    const period = { from: day, to: day };
+    const entries = [
+      {
+        exercise_id: 'pull-up',
+        training_exercise_id: 'pull-up-occurrence',
+        training_session_id: 'performed',
+        sets: [{ set_number: 1, reps: 8 }],
+      },
+      {
+        exercise_id: 'squat',
+        training_exercise_id: 'squat-occurrence',
+        training_session_id: 'performed',
+      },
+      {
+        exercise_id: 'lunge',
+        training_exercise_id: 'lunge-occurrence',
+        training_session_id: 'performed',
+        sets: [],
+      },
+    ];
+    const trainingIds = [0, 1, 2].map(
+      (position) => `${prefix}-multi-assigned-training-${position}`,
+    );
+    await createSyntheticTrainings(trainingIds);
+    const assignment = await db.planAssignment.create({
+      data: {
+        client_id: owner,
+        date: date(day),
+        trainings: {
+          create: trainingIds.map((training_id, position) => ({
+            training_id,
+            position,
+          })),
+        },
+      },
+    });
+    const links = await db.planAssignmentTraining.findMany({
+      where: { assignment_id: assignment.id },
+      orderBy: { position: 'asc' },
+      select: { training_id: true, position: true },
+    });
+    expect(links).toEqual(
+      trainingIds.map((training_id, position) => ({ training_id, position })),
+    );
+    await db.dayProgress.create({
+      data: {
+        client_id: owner,
+        date: date(day),
+        training_sessions: [
+          {
+            training_id: trainingIds[0],
+            training_session_id: 'performed',
+          },
+        ],
+        exercises_completed: entries,
+      },
+    });
+    // Three assigned trainings share the date; only the first has a confirmed session.
+    await db.trainingDaySnapshot.createMany({
+      data: [
+        {
+          client_id: owner,
+          date: date(day),
+          training_id: trainingIds[0],
+          version: 1,
+          payload: {
+            exercises: [
+              {
+                id: 'pull-up-occurrence',
+                exercise_id: 'pull-up',
+                exercise: { name: 'Pull-up' },
+              },
+              {
+                id: 'squat-occurrence',
+                exercise_id: 'squat',
+                exercise: { name: 'Squat' },
+              },
+              {
+                id: 'lunge-occurrence',
+                exercise_id: 'lunge',
+                exercise: { name: 'Lunge' },
+              },
+            ],
+          },
+        },
+        ...trainingIds.slice(1).map((trainingId) => ({
+          client_id: owner,
+          date: date(day),
+          training_id: trainingId,
+          version: 1,
+          payload: { exercises: [] },
+        })),
+      ],
+    });
+    const stored = await db.dayProgress.findUniqueOrThrow({
+      where: { client_id_date: { client_id: owner, date: date(day) } },
+    });
+    expect(stored.exercises_completed).toEqual(entries);
+    expect(stored.training_sessions).toEqual([
+      { training_id: trainingIds[0], training_session_id: 'performed' },
+    ]);
+
+    const overview = await reader.getAuthorizedOverview(owner, owner, period);
+    expect(overview.exercises).toEqual([
+      expect.objectContaining({
+        exercise_id: 'lunge',
+        exercise_name: 'Lunge',
+        sets: 0,
+        max_reps: null,
+        max_seconds: null,
+        volume: null,
+        mean_rir: null,
+        pr: null,
+      }),
+      expect.objectContaining({
+        exercise_id: 'pull-up',
+        exercise_name: 'Pull-up',
+        sets: 1,
+        max_reps: 8,
+        max_seconds: null,
+        volume: null,
+      }),
+      expect.objectContaining({
+        exercise_id: 'squat',
+        exercise_name: 'Squat',
+        sets: 0,
+        max_reps: null,
+        max_seconds: null,
+        volume: null,
+        mean_rir: null,
+        pr: null,
+      }),
+    ]);
+    expect(overview.indicators).toMatchObject({
+      trainings_completed: 1,
+      volume: null,
+      mean_rir: null,
+      mean_rpe: null,
+    });
+    const first = await reader.getAuthorizedOverview(owner, owner, period, {
+      identification: 'identified',
+      limit: 2,
+    });
+    expect(first.exercises.map((item) => item.exercise_id)).toEqual([
+      'lunge',
+      'pull-up',
+    ]);
+    expect(first.next_cursor).toEqual(expect.any(String));
+    const second = await reader.getAuthorizedOverview(owner, owner, period, {
+      identification: 'identified',
+      limit: 2,
+      cursor: first.next_cursor!,
+    });
+    expect(second.exercises.map((item) => item.exercise_id)).toEqual(['squat']);
+    expect(second.next_cursor).toBeNull();
+    const searched = await reader.getAuthorizedOverview(owner, owner, period, {
+      identification: 'identified',
+      search: 'squat',
+      limit: 2,
+    });
+    expect(searched.exercises.map((item) => item.exercise_id)).toEqual([
+      'squat',
+    ]);
+  });
+
+  it('includes a confirmed completed exercise with explicit JSON null sets and its own snapshot name', async () => {
+    const owner = await client();
+    const other = await client();
+    const day = '2026-09-24';
+    const period = { from: day, to: day };
+    await db.dayProgress.create({
+      data: {
+        client_id: owner,
+        date: date(day),
+        training_sessions: [
+          {
+            training_id: 'null-sets-training',
+            training_session_id: 'performed',
+          },
+        ],
+        exercises_completed: [
+          {
+            exercise_id: 'null-sets-lift',
+            training_exercise_id: 'null-sets-occurrence',
+            training_session_id: 'performed',
+            sets: null,
+          },
+        ],
+      },
+    });
+    await db.trainingDaySnapshot.create({
+      data: {
+        client_id: owner,
+        date: date(day),
+        training_id: 'null-sets-training',
+        version: 1,
+        payload: {
+          exercises: [
+            {
+              id: 'null-sets-occurrence',
+              exercise_id: 'null-sets-lift',
+              exercise: { name: 'Historical null-sets lift' },
+            },
+          ],
+        },
+      },
+    });
+
+    const overview = await reader.getAuthorizedOverview(owner, owner, period);
+    expect(overview.exercises).toEqual([
+      expect.objectContaining({
+        exercise_id: 'null-sets-lift',
+        exercise_name: 'Historical null-sets lift',
+        sets: 0,
+        max_reps: null,
+        max_seconds: null,
+        volume: null,
+        mean_rir: null,
+        pr: null,
+      }),
+    ]);
+    expect(overview.indicators).toMatchObject({
+      trainings_completed: 1,
+      volume: null,
+      mean_rir: null,
+      mean_rpe: null,
+    });
+    await expect(
+      reader.getAuthorizedOverview(other, owner, period),
+    ).rejects.toMatchObject({ status: 403 });
   });
 
   it('does not revive an explicitly unconfirmed session from its legacy training ID', async () => {
