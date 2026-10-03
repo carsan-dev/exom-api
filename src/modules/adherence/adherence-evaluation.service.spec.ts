@@ -1,5 +1,11 @@
 import { COMPLETION } from '../../common/progress/daily-adherence-evaluator';
-import { normalizeAdherenceEvidence } from './adherence-evaluation.service';
+import { Test } from '@nestjs/testing';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AdherencePrescriptionService } from './adherence-prescription.service';
+import {
+  AdherenceEvaluationService,
+  normalizeAdherenceEvidence,
+} from './adherence-evaluation.service';
 import { AdherencePeriodQueryDto } from './dto/adherence-period-query.dto';
 
 const basis = {
@@ -58,6 +64,107 @@ function receipt() {
     },
   ];
 }
+describe('recent closed service collection', () => {
+  it.each([
+    ['2020-01-01', '2020-01-01', 7],
+    ['2030-01-01', '2030-01-31', 38],
+    ['2020-01-02', '2020-01-02', 8],
+  ])(
+    'keeps public days bounded while collecting original history for %s..%s',
+    async (start, end, count) => {
+      const read = jest
+        .spyOn(AdherencePrescriptionService.prototype, 'read')
+        .mockResolvedValue({ status: 'unknown', reason: 'missing_original' });
+      const current = jest.fn().mockResolvedValue(null);
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([]),
+        user: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'client',
+              role: 'CLIENT',
+              is_active: true,
+              is_locked: false,
+              is_archived: false,
+              identity_pending: false,
+            },
+          ]),
+        },
+        planAssignment: { findUnique: current },
+        weeklyRecap: { findFirst: jest.fn().mockResolvedValue(null) },
+        dayProgress: { findUnique: jest.fn().mockResolvedValue(null) },
+        progressOperation: { findMany: jest.fn().mockResolvedValue([]) },
+        adherenceEvaluationRevision: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue({}),
+        },
+      };
+      class FixedEvaluation extends AdherenceEvaluationService {
+        protected override utcInstant() {
+          return new Date('2020-01-02T12:00:00Z');
+        }
+      }
+      const module = await Test.createTestingModule({
+        providers: [
+          { provide: AdherenceEvaluationService, useClass: FixedEvaluation },
+          {
+            provide: PrismaService,
+            useValue: {
+              $transaction: (run: (value: typeof tx) => Promise<unknown>) =>
+                run(tx),
+            },
+          },
+        ],
+      }).compile();
+      try {
+        const service = module.get(AdherenceEvaluationService);
+        const result = await service.get('client', 'CLIENT', 'client', {
+          start,
+          end,
+        });
+        expect(result.days.map((day) => day.date)).toEqual(
+          AdherencePeriodQueryDto.dates(start, end),
+        );
+        expect(
+          result.days.length +
+            read.mock.calls.filter(([, date]) => date < start).length,
+        ).toBe(count);
+        expect(result.recentClosed).toMatchObject({
+          start: '2019-12-26',
+          end: '2020-01-01',
+          status: 'insufficient',
+          configuration: { known: false, low_global_percent: null },
+        });
+        expect(result.recentClosed.aggregate.global.ratio).toBeNull();
+        expect(
+          read.mock.calls.every(
+            ([owner, date]) => owner === 'client' && date < '2020-01-02',
+          ),
+        ).toBe(true);
+        expect(current).toHaveBeenCalledTimes(start === '2020-01-02' ? 1 : 0);
+        expect(result.weeks).toHaveLength(
+          new Set(
+            AdherencePeriodQueryDto.dates(start, end).map((date) => {
+              const at = new Date(date);
+              at.setUTCDate(at.getUTCDate() - ((at.getUTCDay() + 6) % 7));
+              return at.toISOString().slice(0, 10);
+            }),
+          ).size,
+        );
+        const readsBeforeDenial = read.mock.calls.length;
+        await expect(
+          service.get('other', 'CLIENT', 'client', { start, end }),
+        ).rejects.toThrow('Client access denied');
+        expect(read).toHaveBeenCalledTimes(readsBeforeDenial);
+      } finally {
+        read.mockRestore();
+        await module.close();
+      }
+    },
+  );
+});
+
 describe('actual progress normalization and bounded UTC period', () => {
   it('credits exact session/occurrence and replacement root claim from owner/day receipt', () => {
     const result = normalizeAdherenceEvidence(

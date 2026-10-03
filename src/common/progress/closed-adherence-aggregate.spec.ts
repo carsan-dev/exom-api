@@ -1,5 +1,9 @@
 import { evaluateDailyAdherence } from './daily-adherence-evaluator';
-import { aggregateClosedAdherence } from './closed-adherence-aggregate';
+import {
+  aggregateClosedAdherence,
+  recentClosedAdherence,
+  recentClosedDates,
+} from './closed-adherence-aggregate';
 
 const cutoffDate = '2026-09-29';
 const day = (
@@ -26,6 +30,133 @@ const day = (
       })),
     },
   });
+
+describe('recent closed adherence', () => {
+  const configuration = {
+    known: true,
+    version: 1,
+    low_global_percent: 80,
+    effective_date: '2020-01-01',
+  };
+  it.each([
+    ['2020-03-01', '2020-04-01', '2020-02-24', '2020-03-01'],
+    ['2020-01-01', '2020-02-01', '2019-12-26', '2020-01-01'],
+    ['2026-10-20', '2026-09-29', '2026-09-22', '2026-09-28'],
+    ['2026-09-29', '2026-09-29', '2026-09-22', '2026-09-28'],
+  ])(
+    'anchors seven consecutive closed civil dates at %s',
+    (end, today, start, last) => {
+      const dates = recentClosedDates(end, today);
+      expect(dates).toHaveLength(7);
+      expect(dates[0]).toBe(start);
+      expect(dates[6]).toBe(last);
+    },
+  );
+  it('does not substitute selected month totals for the last seven dates', () => {
+    const input = [
+      day('2026-09-01', Array(100).fill('complete'), []),
+      ...recentClosedDates('2026-09-28', cutoffDate).map((date) =>
+        day(date, ['incomplete'], []),
+      ),
+      day(cutoffDate, ['complete'], ['complete']),
+      day('2026-09-30', ['complete'], ['complete']),
+    ];
+    expect(aggregateClosedAdherence(input).global.ratio).toBeGreaterThan(0.8);
+    const result = recentClosedAdherence(
+      input,
+      '2026-09-28',
+      cutoffDate,
+      configuration,
+    );
+    expect(result).toMatchObject({
+      start: '2026-09-22',
+      end: '2026-09-28',
+      status: 'low',
+    });
+    expect(result.aggregate.global.ratio).toBe(0);
+    expect(result.aggregate).toEqual(
+      aggregateClosedAdherence(input.slice(1, 8)),
+    );
+  });
+  it.each([
+    [80000, 'not_low'],
+    [79999, 'low'],
+  ] as const)(
+    'compares strictly below the dated threshold without rounding %s',
+    (complete, status) => {
+      const input = recentClosedDates('2026-09-28', cutoffDate).map((date) =>
+        day(date, [], []),
+      );
+      input[6] = day('2026-09-28', [], []);
+      // Large session counts exercise the exact ratio boundary, not formatted percentages.
+      input[6].training = {
+        status: 'evaluable',
+        numerator: complete,
+        denominator: 100000,
+        ratio: complete / 100000,
+        caveats: [],
+      };
+      input[6].global = {
+        ...input[6].global,
+        status: 'evaluable',
+        source: 'training_only',
+        ratio: complete / 100000,
+      };
+      expect(
+        recentClosedAdherence(input, '2026-09-28', cutoffDate, configuration)
+          .status,
+      ).toBe(status);
+      expect(
+        recentClosedAdherence(input, '2026-09-28', cutoffDate, {
+          ...configuration,
+          low_global_percent: 70,
+        }).status,
+      ).toBe('not_low');
+    },
+  );
+  it('keeps missing original days/configuration explicit, never turning them into zero', () => {
+    const input = [day('2026-09-28', ['incomplete'], [])];
+    const result = recentClosedAdherence(
+      input,
+      '2026-09-28',
+      cutoffDate,
+      configuration,
+    );
+    expect(result.status).toBe('insufficient');
+    expect(result.coverage).toMatchObject({
+      expected: 7,
+      available: 1,
+      insufficient: 6,
+    });
+    expect(result.aggregate.training.denominator).toBe(1);
+    const full = recentClosedDates('2026-09-28', cutoffDate).map((date) =>
+      day(date, [], []),
+    );
+    expect(
+      recentClosedAdherence(full, '2026-09-28', cutoffDate, configuration)
+        .status,
+    ).toBe('not_applicable');
+    full[0] = day('2026-09-22', ['incomplete'], []);
+    expect(
+      recentClosedAdherence(full, '2026-09-28', cutoffDate, {
+        known: false,
+        version: null,
+        low_global_percent: null,
+        effective_date: null,
+      }).status,
+    ).toBe('insufficient');
+    full[1] = evaluateDailyAdherence({
+      date: '2026-09-23',
+      cutoffDate,
+      training: { basis: 'unknown', rest: false, units: [] },
+      nutrition: { basis: 'unknown', groups: [] },
+    });
+    expect(
+      recentClosedAdherence(full, '2026-09-28', cutoffDate, configuration)
+        .coverage.insufficient,
+    ).toBe(1);
+  });
+});
 
 describe('aggregateClosedAdherence', () => {
   it('uses totals of sessions and binary nutrition days, then weights domain ratios equally', () => {

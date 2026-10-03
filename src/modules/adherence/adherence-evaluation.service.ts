@@ -8,7 +8,11 @@ import {
   type DailyAdherence,
   type PlannedUnit,
 } from '../../common/progress/daily-adherence-evaluator';
-import { aggregateClosedAdherence } from '../../common/progress/closed-adherence-aggregate';
+import {
+  aggregateClosedAdherence,
+  recentClosedAdherence,
+  recentClosedDates,
+} from '../../common/progress/closed-adherence-aggregate';
 import {
   evaluateTargetIndicators,
   evaluateWeeklyStepsIndicator,
@@ -576,6 +580,10 @@ export class AdherenceEvaluationService {
     const dates = AdherencePeriodQueryDto.dates(query.start, query.end);
     const instant = this.utcInstant();
     const today = civil(instant);
+    const recentDates = recentClosedDates(query.end, today);
+    // A disjoint future-only query adds exactly seven historical dates, never
+    // the intervening gap. Public DTO validation remains capped at 31 dates.
+    const collectedDates = [...new Set([...dates, ...recentDates])].sort();
     return this.prisma.$transaction(
       async (tx) => {
         await this.authorize(tx, actor, role, client);
@@ -587,20 +595,23 @@ export class AdherenceEvaluationService {
           },
         });
         const days: AdherenceDayResult[] = [];
-        const starts = [...new Set(dates.map(weekStart))];
-        const first = starts[0];
-        const last = new Date(starts[starts.length - 1] + 'T00:00:00Z');
-        last.setUTCDate(last.getUTCDate() + 6);
-        // One bounded statement resolves every date in all intersecting weeks,
-        // including at most twelve dates outside the requested 31-day window.
-        // The left join preserves unknown dates; no historical defaults.
+        const requestedStarts = new Set(dates.map(weekStart));
+        const starts = [...new Set(collectedDates.map(weekStart))];
+        const policyDates = starts.flatMap((start) =>
+          Array.from({ length: 7 }, (_, index) => {
+            const at = new Date(start + 'T00:00:00Z');
+            at.setUTCDate(at.getUTCDate() + index);
+            return civil(at);
+          }),
+        );
+        // Resolve only complete intersecting weeks, not gaps between a future
+        // report and recent history. The left join retains unknown policies.
         const policies = await tx.$queryRaw<DatedEffectivePolicy[]>(Prisma.sql`
           SELECT to_char(d.date, 'YYYY-MM-DD') AS date, r.id, r.version,
             to_char(r.effective_date, 'YYYY-MM-DD') AS effective_date,
             r.steps_goal, r.steps_min_percent, r.calorie_lower_percent,
             r.calorie_upper_percent, r.protein_min_percent, r.low_global_percent
-          FROM generate_series(${first}::date, ${civil(last)}::date,
-            interval '1 day') AS d(date)
+          FROM unnest(ARRAY[${Prisma.join(policyDates)}]::date[]) AS d(date)
           LEFT JOIN LATERAL (
             SELECT c.* FROM public.adherence_config_revisions c
             WHERE c.client_id = ${client} AND c.effective_date <= d.date::date
@@ -665,7 +676,7 @@ export class AdherenceEvaluationService {
             }),
           });
         }
-        for (const date of dates) {
+        for (const date of collectedDates) {
           const at = new Date(date + 'T00:00:00Z');
           const original =
             date < today ? await reader.read(client, date) : null;
@@ -866,27 +877,50 @@ export class AdherenceEvaluationService {
           }
           days.push(result);
         }
-        const evaluations = days.map((day) => day.evaluation);
-        const weeks = [...weekly.values()].map((week) => ({
-          start: week.start,
-          average_daily_steps: week.recap?.average_daily_steps ?? null,
-          weeklySteps: week.indicator,
-          dailyTargets: week.dailyTargets,
-          aggregate: aggregateClosedAdherence(
-            days
-              .filter((day) => weekStart(day.date) === week.start)
-              .map((day) => day.evaluation),
-          ),
-        }));
+        const reportDays = days.filter(
+          (day) => day.date >= query.start && day.date <= query.end,
+        );
+        const evaluations = reportDays.map((day) => day.evaluation);
+        const windowEnd = days.find((day) => day.date === recentDates[6]);
+        const endPolicy = byDate.get(recentDates[6]);
+        const windowConfiguration = windowEnd?.configuration;
+        const recentClosed = recentClosedAdherence(
+          days.map((day) => day.evaluation),
+          query.end,
+          today,
+          {
+            known: windowConfiguration?.known ?? false,
+            version: windowConfiguration?.version ?? null,
+            low_global_percent: windowConfiguration?.low_global_percent ?? null,
+            effective_date:
+              endPolicy?.version === windowConfiguration?.version
+                ? (endPolicy?.effective_date ?? null)
+                : null,
+          },
+        );
+        const weeks = [...weekly.values()]
+          .filter((week) => requestedStarts.has(week.start))
+          .map((week) => ({
+            start: week.start,
+            average_daily_steps: week.recap?.average_daily_steps ?? null,
+            weeklySteps: week.indicator,
+            dailyTargets: week.dailyTargets,
+            aggregate: aggregateClosedAdherence(
+              reportDays
+                .filter((day) => weekStart(day.date) === week.start)
+                .map((day) => day.evaluation),
+            ),
+          }));
         return {
           version: 1,
           start: query.start,
           end: query.end,
           evaluated_at: instant.toISOString(),
           today,
-          days,
+          days: reportDays,
           weeks,
           aggregate: aggregateClosedAdherence(evaluations),
+          recentClosed,
         };
       },
       {

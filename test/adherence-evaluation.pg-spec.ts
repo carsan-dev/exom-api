@@ -8,6 +8,7 @@ import request from 'supertest';
 import { Prisma, PrismaClient, Role } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { aggregateClosedAdherence } from '../src/common/progress/closed-adherence-aggregate';
 import { PrismaModule } from '../src/prisma/prisma.module';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { AdherenceConfigModule } from '../src/modules/adherence/adherence-config.module';
@@ -46,7 +47,18 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     }
     throw new Error('Expected real PostgreSQL blocking PID');
   }
-  async function fixture() {
+  async function fixture(rolling = false) {
+    const fixtureDates = rolling
+      ? [
+          '2019-12-26',
+          '2019-12-27',
+          '2019-12-28',
+          '2019-12-29',
+          '2019-12-30',
+          '2019-12-31',
+          date,
+        ]
+      : [date];
     client = randomUUID();
     admin = randomUUID();
     superadmin = randomUUID();
@@ -140,78 +152,92 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
         },
       },
     });
-    await prisma.planAssignment.create({
-      data: {
-        client_id: client,
-        date: new Date(date),
-        training_id: training,
-        diet_id: diet.id,
-        trainings: { create: { training_id: training, position: 0 } },
-      },
-    });
+    for (const fixtureDate of fixtureDates)
+      await prisma.planAssignment.create({
+        data: {
+          client_id: client,
+          date: new Date(fixtureDate),
+          training_id: training,
+          diet_id: diet.id,
+          trainings: { create: { training_id: training, position: 0 } },
+        },
+      });
     const epoch = (
       await pool.query<{ id: string }>(
         'SELECT * FROM public.activate_adherence_history_origin()',
       )
     ).rows[0].id;
     const origin = randomUUID();
-    const cutoff = '2020-01-02T00:00:00.000000Z';
-    const connection = await pool.connect();
-    try {
-      await connection.query('BEGIN');
-      await connection.query(
-        `LOCK TABLE ${sources
-          .split(',')
-          .map((s) => 'public.' + s)
-          .join(',')} IN SHARE ROW EXCLUSIVE MODE`,
-      );
-      const barrier = (
-        await connection.query<{
-          value: { full_xids: string[]; barrier_boundary: string };
-        }>('SELECT public.begin_adherence_history_cut($1,$2,128) value', [
-          epoch,
-          cutoff,
-        ])
-      ).rows[0].value;
-      for (const xid of barrier.full_xids) {
-        const content = (
-          await connection.query<{ value: { content_digest: string } }>(
-            'SELECT public.adherence_commit_payload($1,$2) value',
-            [epoch, xid],
-          )
-        ).rows[0].value.content_digest;
-        await connection.query(
-          "SELECT public.issue_adherence_commit_evidence($1,$2,$3,'2020-01-01T23:59:59.999999Z','1577923199999999',$4)",
-          [epoch, origin, xid, content],
-        );
-      }
-      await connection.query(
-        'SELECT public.issue_adherence_history_cut($1,$2,$3,$4::bigint)',
-        [epoch, origin, cutoff, barrier.barrier_boundary],
-      );
-      await connection.query('COMMIT');
-    } catch (error) {
-      await connection.query('ROLLBACK');
-      throw error;
-    } finally {
-      connection.release();
-    }
     const publisher = new AdherencePrescriptionService(
       prisma,
       new PrismaPrescriptionPublisher(prisma),
     );
-    original = await publisher.publish(client, date, {
-      epochId: epoch,
-      origin,
-      cutoffUtc: cutoff,
-    });
-    expect(original).toMatchObject({
-      status: 'stored',
-      prescription: {
-        training: { units: [{ effective_content: { basis: 'known' } }] },
-        nutrition: { basis: 'known' },
-      },
-    });
+    for (const fixtureDate of fixtureDates) {
+      const end = new Date(fixtureDate + 'T00:00:00Z');
+      end.setUTCDate(end.getUTCDate() + 1);
+      const cutoff = end.toISOString().replace('.000Z', '.000000Z');
+      const connection = await pool.connect();
+      try {
+        await connection.query('BEGIN');
+        await connection.query(
+          `LOCK TABLE ${sources
+            .split(',')
+            .map((s) => 'public.' + s)
+            .join(',')} IN SHARE ROW EXCLUSIVE MODE`,
+        );
+        const barrier = (
+          await connection.query<{
+            value: { full_xids: string[]; barrier_boundary: string };
+          }>('SELECT public.begin_adherence_history_cut($1,$2,128) value', [
+            epoch,
+            cutoff,
+          ])
+        ).rows[0].value;
+        for (const xid of barrier.full_xids) {
+          const content = (
+            await connection.query<{ value: { content_digest: string } }>(
+              'SELECT public.adherence_commit_payload($1,$2) value',
+              [epoch, xid],
+            )
+          ).rows[0].value.content_digest;
+          await connection.query(
+            'SELECT public.issue_adherence_commit_evidence($1,$2,$3,$4,$5,$6)',
+            [
+              epoch,
+              origin,
+              xid,
+              rolling
+                ? '2019-12-25T23:59:59.999999Z'
+                : '2020-01-01T23:59:59.999999Z',
+              rolling ? '1577318399999999' : '1577923199999999',
+              content,
+            ],
+          );
+        }
+        await connection.query(
+          'SELECT public.issue_adherence_history_cut($1,$2,$3,$4::bigint)',
+          [epoch, origin, cutoff, barrier.barrier_boundary],
+        );
+        await connection.query('COMMIT');
+      } catch (error) {
+        await connection.query('ROLLBACK');
+        throw error;
+      } finally {
+        connection.release();
+      }
+      original = await publisher.publish(client, fixtureDate, {
+        epochId: epoch,
+        origin,
+        cutoffUtc: cutoff,
+      });
+      expect(original).toMatchObject({
+        status: 'stored',
+        prescription: {
+          training: { units: [{ effective_content: { basis: 'known' } }] },
+          nutrition: { basis: 'known' },
+        },
+      });
+    }
     await prisma.adherenceConfigRevision.create({
       data: {
         client_id: client,
@@ -222,7 +248,7 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
         calorie_upper_percent: 10,
         protein_min_percent: 90,
         steps_min_percent: 100,
-        low_global_percent: 80,
+        low_global_percent: rolling ? 10 : 80,
       },
     });
     return {
@@ -393,9 +419,16 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     ).toEqual(progressBefore);
     expect(
       await prisma.adherenceEvaluationRevision.count({
-        where: { client_id: client },
+        where: { client_id: client, date: new Date(date) },
       }),
     ).toBe(2);
+    // Six preceding unknown dates now have append-only evaluations too;
+    // the accepted late evidence appends only the requested original day's row.
+    expect(
+      await prisma.adherenceEvaluationRevision.count({
+        where: { client_id: client },
+      }),
+    ).toBe(before.length + 1);
   });
   it('uses all root groups, never double-credits alternatives or Profile targets', async () => {
     const service = app.get(AdherenceEvaluationService);
@@ -848,6 +881,156 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
       ).read(client, date),
     ).toEqual(original);
   });
+  it('rolling closed HTTP: preceding year dates differ from a one-day report and preserve originals', async () => {
+    food = await fixture(true);
+    actor = { id: client, role: Role.CLIENT };
+    // Window-end historical policy wins over the first day's 10% threshold.
+    await prisma.adherenceConfigRevision.create({
+      data: {
+        client_id: client,
+        version: 2,
+        effective_date: new Date(date),
+        steps_goal: 1000,
+        calorie_lower_percent: 10,
+        calorie_upper_percent: 10,
+        protein_min_percent: 90,
+        steps_min_percent: 100,
+        low_global_percent: 80,
+      },
+    });
+    const session = randomUUID();
+    const progress = await prisma.dayProgress.create({
+      data: {
+        client_id: client,
+        date: new Date(date),
+        sync_revision: 1,
+        training_completed: true,
+        trainings_completed: [training],
+        training_sessions: [
+          {
+            training_session_id: session,
+            training_id: training,
+            rpe: 8,
+            note: null,
+          },
+        ],
+        exercises_completed: [
+          {
+            training_session_id: session,
+            training_exercise_id: occurrence,
+            exercise_id: 'synthetic',
+            completed_at: '2020-01-01T12:00:00Z',
+          },
+        ],
+        meals_completed: [food.alternative, food.second],
+      },
+    });
+    await prisma.progressOperation.create({
+      data: {
+        id: randomUUID(),
+        owner_id: client,
+        date: new Date(date),
+        payload_hash: 'rolling-synthetic',
+        response: JSON.parse(
+          JSON.stringify({ ...progress, operation_revision: 1 }),
+        ) as Prisma.InputJsonValue,
+      },
+    });
+    const server: unknown = app.getHttpServer();
+    if (!(server instanceof Server)) throw new Error('Expected HTTP server');
+    const response = await request(server)
+      .get('/adherence?start=' + date + '&end=' + date)
+      .expect(200);
+    // HTTP serializes the same allowlisted service result; assert its public
+    // contract below rather than accepting a distinct test-only payload shape.
+    const result = response.body as Awaited<
+      ReturnType<AdherenceEvaluationService['get']>
+    >;
+    expect(result.days.map((day) => day.date)).toEqual([date]);
+    expect(result.aggregate.global.ratio).toBe(1);
+    expect(result.recentClosed).toMatchObject({
+      start: '2019-12-26',
+      end: date,
+      status: 'low',
+      coverage: { available: 7, insufficient: 0 },
+      configuration: {
+        version: 2,
+        low_global_percent: 80,
+        effective_date: date,
+      },
+    });
+    expect(result.recentClosed.aggregate.global.ratio).toBeCloseTo(1 / 7);
+    const service = app.get(AdherenceEvaluationService);
+    const full = await service.get(client, Role.CLIENT, client, {
+      start: '2019-12-26',
+      end: date,
+    });
+    expect(result.recentClosed.aggregate).toEqual(
+      aggregateClosedAdherence(full.days.map((day) => day.evaluation)),
+    );
+    const rows = await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: client },
+      orderBy: { date: 'asc' },
+    });
+    expect(rows).toHaveLength(7);
+    await prisma.adherenceConfigRevision.create({
+      data: {
+        client_id: client,
+        version: 3,
+        effective_date: new Date('2020-01-02'),
+        steps_goal: 99999,
+        calorie_lower_percent: 10,
+        calorie_upper_percent: 10,
+        protein_min_percent: 90,
+        steps_min_percent: 100,
+        low_global_percent: 10,
+      },
+    });
+    await prisma.diet.update({
+      where: { id: food.diet },
+      data: { total_calories: 9999 },
+    });
+    const replay = await request(server)
+      .get('/adherence?start=' + date + '&end=' + date)
+      .expect(200);
+    const replayResult = replay.body as Awaited<
+      ReturnType<AdherenceEvaluationService['get']>
+    >;
+    expect(replayResult.recentClosed).toEqual(result.recentClosed);
+    // A future policy can append weekly-indicator revisions in the same week;
+    // historical daily policy/global and every previously written row remain intact.
+    expect(
+      await prisma.adherenceEvaluationRevision.findMany({
+        where: {
+          client_id: client,
+          OR: rows.map((row) => ({ date: row.date, revision: row.revision })),
+        },
+        orderBy: { date: 'asc' },
+      }),
+    ).toEqual(rows);
+    const after = await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: client },
+      orderBy: [{ date: 'asc' }, { revision: 'asc' }],
+    });
+    await request(server)
+      .get('/adherence?start=' + date + '&end=' + date)
+      .expect(200);
+    expect(
+      await prisma.adherenceEvaluationRevision.findMany({
+        where: { client_id: client },
+        orderBy: [{ date: 'asc' }, { revision: 'asc' }],
+      }),
+    ).toEqual(after);
+    expect(
+      await new AdherencePrescriptionService(
+        prisma,
+        new PrismaPrescriptionPublisher(prisma),
+      ).read(client, date),
+    ).toEqual(original);
+    await request(server)
+      .get('/adherence?start=2020-01-01&end=2020-02-01')
+      .expect(400);
+  }, 30000);
   it('rejects modification of earlier persisted evaluation rows', async () => {
     await expect(
       pool.query(
