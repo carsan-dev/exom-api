@@ -52,6 +52,18 @@ class RejectTaskPrototypeFields implements NestInterceptor {
 export class ClientFollowUpTasksController {
   constructor(private readonly tasks: ClientFollowUpTasksService) {}
 
+  @Get('summary')
+  @ApiOperation({
+    summary: 'Read canonical next task and review as of today UTC',
+  })
+  summary(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('clientId') clientId: string,
+  ) {
+    // No body/query clock or owner input: route and server clock are authoritative.
+    return this.tasks.summary(clientId, actor);
+  }
+
   @Get(':taskId')
   @ApiOperation({ summary: 'Read an internal manual task without changing it' })
   get(

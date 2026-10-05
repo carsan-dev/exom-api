@@ -118,6 +118,16 @@ Thumbs.db
 /docs/evidence/rest-t2c-20261005/**/*.json
 /docs/evidence/rest-t2c-20261005/**/*.snapshot*
 
+# REST-T2D: bounded generated runs/recovery are LOCAL ONLY; README stays visible.
+/docs/evidence/rest-t2d-20261005/http-*/
+/docs/evidence/rest-t2d-20261005/unit-*/
+/docs/evidence/rest-t2d-20261005/pg-*/
+/docs/evidence/rest-t2d-20261005/all-*/
+/docs/evidence/rest-t2d-20261005/before/
+/docs/evidence/rest-t2d-20261005/after-*/
+/docs/evidence/rest-t2d-20261005/checkpoint/
+/docs/evidence/rest-t2d-20261005/build/
+
 # REST-T2C independent verification: generated build and LOCAL ONLY artifacts
 /docs/evidence/rest-t2c-20261005/build-independent/
 /docs/evidence/rest-t2c-20261005/independent-verification/snapshots/

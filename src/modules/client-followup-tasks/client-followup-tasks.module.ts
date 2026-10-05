@@ -7,5 +7,6 @@ import { ClientFollowUpTasksService } from './client-followup-tasks.service';
   imports: [PrismaModule],
   controllers: [ClientFollowUpTasksController],
   providers: [ClientFollowUpTasksService],
+  exports: [ClientFollowUpTasksService],
 })
 export class ClientFollowUpTasksModule {}

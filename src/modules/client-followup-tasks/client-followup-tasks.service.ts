@@ -20,6 +20,22 @@ import {
   lockClientDayProgress,
 } from '../../common/progress/day-progress-lock';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  nextTasksQuery,
+  type NextTaskRow,
+  type SelectedNextTask,
+} from './client-followup-tasks.queries';
+
+export interface NextTaskProjection extends Omit<NextTaskRow, 'due_date'> {
+  due_date: string;
+  overdue: boolean;
+}
+
+export interface ClientFollowUpTaskSummary {
+  as_of_date: string;
+  next_task: NextTaskProjection | null;
+  next_review: NextTaskProjection | null;
+}
 
 export interface ClientFollowUpTaskActor {
   id: string;
@@ -158,9 +174,9 @@ export class ClientFollowUpTasksService {
     }
   }
 
-  private transaction(
-    work: (tx: Prisma.TransactionClient) => Promise<ClientFollowUpTask>,
-  ): Promise<ClientFollowUpTask> {
+  private transaction<T>(
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
     return this.prisma.$transaction(work, {
       ...DAY_PROGRESS_TRANSACTION_OPTIONS,
       isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
@@ -187,6 +203,40 @@ export class ClientFollowUpTasksService {
     return this.transaction(async (tx) => {
       await this.scope(tx, clientId, actor, false);
       return this.owned(tx, clientId, taskId);
+    });
+  }
+
+  // Canonical shared source for future staff consumers; never materializes tasks.
+  summary(
+    clientId: string,
+    actor: ClientFollowUpTaskActor,
+  ): Promise<ClientFollowUpTaskSummary> {
+    const asOfDate = formatDateOnly(new Date());
+    return this.transaction(async (tx) => {
+      await this.scope(tx, clientId, actor, false);
+      const rows = await tx.$queryRaw<SelectedNextTask[]>(
+        nextTasksQuery(clientId),
+      );
+      const project = (selector: string): NextTaskProjection | null => {
+        const row = rows.find((entry) => entry.selector === selector);
+        if (!row) return null;
+        const dueDate = formatDateOnly(row.due_date);
+        return {
+          id: row.id,
+          type: row.type,
+          title: row.title,
+          due_date: dueDate,
+          priority: row.priority,
+          assigned_to_id: row.assigned_to_id,
+          version: row.version,
+          overdue: dueDate < asOfDate,
+        };
+      };
+      return {
+        as_of_date: asOfDate,
+        next_task: project('task'),
+        next_review: project('review'),
+      };
     });
   }
 
