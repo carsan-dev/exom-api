@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -17,6 +19,12 @@ import {
 } from './dto/admin-recap-query.dto';
 import { Prisma, RecapStatus, Role } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
+import type { WeeklyRecap } from '@prisma/client';
+import { ReviewDraftDto, ReviewPublishDto } from './dto/review-publication.dto';
+import {
+  DAY_PROGRESS_TRANSACTION_OPTIONS,
+  lockClientDayProgress,
+} from '../../common/progress/day-progress-lock';
 
 type ClientFeedbackUpdate = {
   data: Record<string, unknown>;
@@ -58,12 +66,33 @@ const CLIENT_RECAP_SELECT = {
   client_feedback_text: true,
   client_feedback_sent_at: true,
   client_feedback_read_at: true,
+  published_coach_summary: true,
+  published_changes: true,
+  published_next_week_goals: true,
   status: true,
   reviewed_at: true,
   archived_at: true,
   created_at: true,
   updated_at: true,
   // admin_comments intentionally excluded — internal note
+} as const;
+
+const REVIEW_SELECT = {
+  id: true,
+  status: true,
+  reviewed_at: true,
+  review_version: true,
+  draft_coach_summary: true,
+  draft_changes: true,
+  draft_next_week_goals: true,
+  published_coach_summary: true,
+  published_changes: true,
+  published_next_week_goals: true,
+} as const;
+const DRAFT_REVIEW_FIELDS = {
+  coach_summary: 'draft_coach_summary',
+  changes: 'draft_changes',
+  next_week_goals: 'draft_next_week_goals',
 } as const;
 
 const ADMIN_RECAP_LIST_SELECT = {
@@ -383,14 +412,24 @@ export class RecapsService {
       throw new ForbiddenException('Only draft recaps can be submitted');
     }
 
-    return this.prisma.weeklyRecap.update({
-      where: { id },
-      data: {
-        status: RecapStatus.SUBMITTED,
-        submitted_at: new Date(),
-      },
-      select: CLIENT_RECAP_SELECT,
-    });
+    try {
+      // A stale pre-submit lookup cannot downgrade a later confirmed review.
+      return await this.prisma.weeklyRecap.update({
+        where: { id, client_id: clientId, status: RecapStatus.DRAFT },
+        data: {
+          status: RecapStatus.SUBMITTED,
+          submitted_at: new Date(),
+        },
+        select: CLIENT_RECAP_SELECT,
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      )
+        throw new ForbiddenException('Only draft recaps can be submitted');
+      throw error;
+    }
   }
 
   async findMyRecaps(clientId: string, pagination: PaginationDto) {
@@ -520,6 +559,157 @@ export class RecapsService {
 
   async getAdminRecapById(adminId: string, adminRole: string, id: string) {
     return this.assertAdminRecapAccess(id, adminId, adminRole);
+  }
+
+  private async reviewTransaction<T>(
+    adminId: string,
+    adminRole: string,
+    id: string,
+    work: (tx: Prisma.TransactionClient, recap: WeeklyRecap) => Promise<T>,
+  ): Promise<T> {
+    if (adminRole !== Role.ADMIN && adminRole !== Role.SUPER_ADMIN)
+      throw new ForbiddenException('Staff access required');
+    const lookup = await this.prisma.weeklyRecap.findUnique({
+      where: { id },
+      select: { client_id: true },
+    });
+    if (!lookup) throw new NotFoundException('Recap not found');
+    return this.prisma.$transaction(
+      async (tx) => {
+        // Match follow-up task/deletion order: client barrier, sorted users,
+        // active assignment, recap. SHARE protects eligibility through commit.
+        await lockClientDayProgress(tx, lookup.client_id);
+        const ids = [...new Set([adminId, lookup.client_id])].sort();
+        await tx.$queryRaw(Prisma.sql`
+          SELECT id FROM users WHERE id IN (${Prisma.join(ids)})
+          ORDER BY id FOR SHARE`);
+        const users = await tx.user.findMany({
+          where: { id: { in: ids } },
+          select: {
+            id: true,
+            role: true,
+            is_active: true,
+            is_locked: true,
+            is_archived: true,
+            identity_pending: true,
+          },
+        });
+        const actor = users.find((user) => user.id === adminId);
+        const client = users.find((user) => user.id === lookup.client_id);
+        const eligible = (user: (typeof users)[number]) =>
+          user.is_active &&
+          !user.is_locked &&
+          !user.is_archived &&
+          !user.identity_pending;
+        if (!actor || actor.role !== adminRole || !eligible(actor))
+          throw new ForbiddenException('Staff access changed');
+        if (!client || client.role !== Role.CLIENT)
+          throw new NotFoundException('Client not found');
+        if (
+          !eligible(client) ||
+          (await tx.clientDeletion.findUnique({
+            where: { client_id: client.id },
+            select: { id: true },
+          }))
+        )
+          throw new ForbiddenException('Client is not writable');
+        if (actor.role === Role.ADMIN) {
+          const assignments = await tx.$queryRaw<{ admin_id: string }[]>(
+            Prisma.sql`SELECT admin_id FROM admin_client_assignments
+              WHERE client_id = ${client.id} AND admin_id = ${actor.id}
+                AND is_active = true ORDER BY admin_id FOR UPDATE`,
+          );
+          if (!assignments.length)
+            throw new ForbiddenException('Client not assigned to staff');
+        }
+        await tx.$queryRaw(Prisma.sql`
+          SELECT id FROM weekly_recaps WHERE id = ${id}
+            AND client_id = ${client.id} FOR UPDATE`);
+        const recap = await tx.weeklyRecap.findUnique({ where: { id } });
+        if (!recap || recap.client_id !== client.id)
+          throw new NotFoundException('Recap not found');
+        if (
+          recap.status === RecapStatus.DRAFT ||
+          !recap.submitted_at ||
+          recap.archived_at
+        )
+          throw new ForbiddenException(
+            'Only submitted, unarchived recaps can be reviewed',
+          );
+        return work(tx, recap);
+      },
+      {
+        ...DAY_PROGRESS_TRANSACTION_OPTIONS,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      },
+    );
+  }
+
+  private assertReviewVersion(version: number) {
+    if (!Number.isInteger(version) || version < 0 || version > 2147483646)
+      throw new BadRequestException('Invalid expected_version');
+  }
+
+  private async writeReview(
+    tx: Prisma.TransactionClient,
+    recap: WeeklyRecap,
+    version: number,
+    data: Prisma.WeeklyRecapUpdateManyMutationInput,
+  ) {
+    if (recap.review_version !== version)
+      throw new ConflictException('Review version changed');
+    const updated = await tx.weeklyRecap.updateMany({
+      where: { id: recap.id, review_version: version },
+      data: { ...data, review_version: { increment: 1 } },
+    });
+    if (updated.count !== 1)
+      throw new ConflictException('Review version changed');
+    return tx.weeklyRecap.findUniqueOrThrow({
+      where: { id: recap.id },
+      select: REVIEW_SELECT,
+    });
+  }
+
+  async saveReviewDraft(
+    adminId: string,
+    adminRole: string,
+    id: string,
+    dto: ReviewDraftDto,
+  ) {
+    this.assertReviewVersion(dto.expected_version);
+    const data: Prisma.WeeklyRecapUpdateManyMutationInput = {};
+    for (const key of Object.keys(
+      DRAFT_REVIEW_FIELDS,
+    ) as (keyof typeof DRAFT_REVIEW_FIELDS)[]) {
+      if (dto[key] !== undefined)
+        data[DRAFT_REVIEW_FIELDS[key]] = this.normalizeOptionalText(dto[key]);
+    }
+    if (!Object.keys(data).length)
+      throw new BadRequestException('At least one draft field is required');
+    return this.reviewTransaction(adminId, adminRole, id, (tx, recap) =>
+      this.writeReview(tx, recap, dto.expected_version, data),
+    );
+  }
+
+  async publishReview(
+    adminId: string,
+    adminRole: string,
+    id: string,
+    dto: ReviewPublishDto,
+  ) {
+    this.assertReviewVersion(dto.expected_version);
+    if (dto.confirm !== true)
+      throw new BadRequestException('Explicit confirmation required');
+    return this.reviewTransaction(adminId, adminRole, id, (tx, recap) =>
+      this.writeReview(tx, recap, dto.expected_version, {
+        published_coach_summary: recap.draft_coach_summary,
+        published_changes: recap.draft_changes,
+        published_next_week_goals: recap.draft_next_week_goals,
+        ...(recap.status === RecapStatus.SUBMITTED
+          ? { status: RecapStatus.REVIEWED, reviewed_at: new Date() }
+          : {}),
+      }),
+    );
   }
 
   async review(

@@ -132,7 +132,12 @@ describe('RecapsService', () => {
                 training_notes: 'updated',
               })
             : await service.submit('client-1', 'recap-1');
-      expect(result).toEqual(legacy);
+      expect(result).toEqual({
+        ...legacy,
+        published_coach_summary: review.published_coach_summary,
+        published_changes: review.published_changes,
+        published_next_week_goals: review.published_next_week_goals,
+      });
       expect(stored.admin_comments).toBe('  Private coach note ñ\r\n  ');
       prisma.weeklyRecap.findUnique.mockResolvedValue(stored);
       const admin = await service.getAdminRecapById(
@@ -227,7 +232,11 @@ describe('RecapsService', () => {
     await service.submit('client-1', 'recap-1');
 
     expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
-      where: { id: 'recap-1' },
+      where: {
+        id: 'recap-1',
+        client_id: 'client-1',
+        status: RecapStatus.DRAFT,
+      },
       data: expect.objectContaining({
         status: RecapStatus.SUBMITTED,
         submitted_at: expect.any(Date),
