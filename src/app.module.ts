@@ -34,6 +34,7 @@ import { ApprovalRequestsModule } from './modules/approval-requests/approval-req
 import { PublicConfigModule } from './modules/public-config/public-config.module';
 import { ProgressPhotosModule } from './modules/progress-photos/progress-photos.module';
 import { AdherenceConfigModule } from './modules/adherence/adherence-config.module';
+import { ClientFollowUpTasksModule } from './modules/client-followup-tasks/client-followup-tasks.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { AdherenceConfigModule } from './modules/adherence/adherence-config.modu
     PublicConfigModule,
     ProgressPhotosModule,
     AdherenceConfigModule,
+    ClientFollowUpTasksModule,
   ],
   controllers: [HealthController],
   providers: [
