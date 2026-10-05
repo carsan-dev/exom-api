@@ -1148,6 +1148,16 @@ model WeeklyRecap {
   client_feedback_sent_at    DateTime?
   client_feedback_read_at    DateTime?
 
+  // Coach review storage: only explicit publication replaces the visible version.
+  // Legacy feedback and lifecycle fields remain independent; no backfill.
+  draft_coach_summary       String? @db.Text
+  draft_changes            String? @db.Text
+  draft_next_week_goals     String? @db.Text
+  published_coach_summary   String? @db.Text
+  published_changes        String? @db.Text
+  published_next_week_goals String? @db.Text
+  review_version           Int     @default(0)
+
   status      RecapStatus @default(DRAFT)
   reviewed_at DateTime?
   archived_at DateTime?

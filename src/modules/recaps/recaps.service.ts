@@ -66,6 +66,13 @@ const CLIENT_RECAP_SELECT = {
   // admin_comments intentionally excluded — internal note
 } as const;
 
+// Freeze the pre-review-storage mutation response shape, including its legacy
+// admin_comments field. New review storage must never be implicitly serialized.
+const CLIENT_RECAP_MUTATION_SELECT = {
+  ...CLIENT_RECAP_SELECT,
+  admin_comments: true,
+} as const satisfies Prisma.WeeklyRecapSelect;
+
 const ADMIN_RECAP_LIST_SELECT = {
   id: true,
   client_id: true,
@@ -297,6 +304,7 @@ export class RecapsService {
       return this.prisma.weeklyRecap.update({
         where: { id: existingRecap.id },
         data,
+        select: CLIENT_RECAP_MUTATION_SELECT,
       });
     }
 
@@ -333,6 +341,7 @@ export class RecapsService {
         improvement_feedback_text: dto.improvement_feedback_text,
         status: RecapStatus.DRAFT,
       },
+      select: CLIENT_RECAP_MUTATION_SELECT,
     });
   }
 
@@ -362,6 +371,7 @@ export class RecapsService {
     return this.prisma.weeklyRecap.update({
       where: { id },
       data: updateData,
+      select: CLIENT_RECAP_MUTATION_SELECT,
     });
   }
 
@@ -386,6 +396,7 @@ export class RecapsService {
         status: RecapStatus.SUBMITTED,
         submitted_at: new Date(),
       },
+      select: CLIENT_RECAP_MUTATION_SELECT,
     });
   }
 
