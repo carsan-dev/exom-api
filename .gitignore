@@ -77,3 +77,49 @@ prisma/migrations/migration_lock.toml
 # OS
 .DS_Store
 Thumbs.db
+
+# REST-T2B: retain receipt logs; hide only verified regenerable artifacts
+!/docs/evidence/rest-t2b-20261005/**/*.log
+/docs/evidence/rest-t2b-20261005/unit-*/cache/
+/docs/evidence/rest-t2b-20261005/pg-*/cache/
+/docs/evidence/rest-t2b-20261005/all-*/cache/
+/docs/evidence/rest-t2b-20261005/corrected-build/
+/docs/evidence/rest-t2b-20261005/independent-build/
+/docs/evidence/rest-t2b-20261005/final-independent-build/
+
+# REST-T2C: authored receipts/logs remain visible; only generated cache/build ignored
+!/docs/evidence/rest-t2c-20261005/**/*.log
+/docs/evidence/rest-t2c-20261005/http-*/cache/
+/docs/evidence/rest-t2c-20261005/unit-*/cache/
+/docs/evidence/rest-t2c-20261005/pg-*/cache/
+/docs/evidence/rest-t2c-20261005/all-*/cache/
+/docs/evidence/rest-t2c-20261005/build/
+
+# REST-T2B/T2C refinement: run evidence and checkpoints are LOCAL ONLY.
+# These later rules supersede the earlier receipt-log visibility exceptions.
+# Keep maintained Markdown receipts visible; do not ignore either whole root.
+/docs/evidence/rest-t2b-20261005/unit-*/
+/docs/evidence/rest-t2b-20261005/pg-*/
+/docs/evidence/rest-t2b-20261005/all-*/
+/docs/evidence/rest-t2b-20261005/before/
+/docs/evidence/rest-t2b-20261005/after-*/
+/docs/evidence/rest-t2b-20261005/final-checkpoint/
+/docs/evidence/rest-t2b-20261005/**/*.log
+/docs/evidence/rest-t2b-20261005/**/*.json
+/docs/evidence/rest-t2b-20261005/**/*.snapshot*
+/docs/evidence/rest-t2c-20261005/http-*/
+/docs/evidence/rest-t2c-20261005/unit-*/
+/docs/evidence/rest-t2c-20261005/pg-*/
+/docs/evidence/rest-t2c-20261005/all-*/
+/docs/evidence/rest-t2c-20261005/before/
+/docs/evidence/rest-t2c-20261005/after-*/
+/docs/evidence/rest-t2c-20261005/checkpoint/
+/docs/evidence/rest-t2c-20261005/**/*.log
+/docs/evidence/rest-t2c-20261005/**/*.json
+/docs/evidence/rest-t2c-20261005/**/*.snapshot*
+
+# REST-T2C independent verification: generated build and LOCAL ONLY artifacts
+/docs/evidence/rest-t2c-20261005/build-independent/
+/docs/evidence/rest-t2c-20261005/independent-verification/snapshots/
+/docs/evidence/rest-t2c-20261005/independent-verification/final-status.txt
+/docs/evidence/rest-t2c-20261005/independent-verification/tracked.patch
