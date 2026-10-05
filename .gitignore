@@ -128,6 +128,10 @@ Thumbs.db
 /docs/evidence/rest-t2d-20261005/checkpoint/
 /docs/evidence/rest-t2d-20261005/build/
 
+# REST-T2E API: only the maintained README is visible; retained local artifacts.
+/docs/evidence/rest-t2e-api-20261005/*
+!/docs/evidence/rest-t2e-api-20261005/README.md
+
 # REST-T2C independent verification: generated build and LOCAL ONLY artifacts
 /docs/evidence/rest-t2c-20261005/build-independent/
 /docs/evidence/rest-t2c-20261005/independent-verification/snapshots/

@@ -22,9 +22,22 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   nextTasksQuery,
+  assigneesQuery,
+  taskListQuery,
+  eligibleStaffFlags,
+  staffRoles,
+  requiresClientAssignment,
+  type AssigneeDisplay,
+  type ListedTask,
+  type PageSnapshot,
   type NextTaskRow,
   type SelectedNextTask,
 } from './client-followup-tasks.queries';
+
+import type {
+  ClientFollowUpTaskListDto,
+  FollowUpPageDto,
+} from './dto/client-followup-task-list.dto';
 
 export interface NextTaskProjection extends Omit<NextTaskRow, 'due_date'> {
   due_date: string;
@@ -94,10 +107,10 @@ export class ClientFollowUpTasksService {
     >,
   ): boolean {
     return (
-      user.is_active &&
-      !user.is_locked &&
-      !user.is_archived &&
-      !user.identity_pending
+      user.is_active === eligibleStaffFlags.is_active &&
+      user.is_locked === eligibleStaffFlags.is_locked &&
+      user.is_archived === eligibleStaffFlags.is_archived &&
+      user.identity_pending === eligibleStaffFlags.identity_pending
     );
   }
 
@@ -150,14 +163,16 @@ export class ClientFollowUpTasksService {
       if (
         !assignee ||
         !this.eligible(assignee) ||
-        (assignee.role !== Role.ADMIN && assignee.role !== Role.SUPER_ADMIN)
+        !staffRoles.includes(assignee.role)
       )
         throw new ForbiddenException('Assignee must be active staff');
     }
     const adminIds = [
       ...new Set([
         ...(current.role === Role.ADMIN ? [current.id] : []),
-        ...(assignee?.role === Role.ADMIN ? [assignee.id] : []),
+        ...(assignee && requiresClientAssignment(assignee.role)
+          ? [assignee.id]
+          : []),
       ]),
     ].sort();
     if (adminIds.length) {
@@ -238,6 +253,52 @@ export class ClientFollowUpTasksService {
         next_review: project('review'),
       };
     });
+  }
+
+  private readPage<T>(
+    clientId: string,
+    actor: ClientFollowUpTaskActor,
+    page: FollowUpPageDto,
+    query: Prisma.Sql,
+  ) {
+    return this.transaction(async (tx) => {
+      await this.scope(tx, clientId, actor, false);
+      const [snapshot] = await tx.$queryRaw<PageSnapshot<T>[]>(query);
+      const total = Number(snapshot.total);
+      return {
+        data: snapshot.data,
+        total,
+        page: page.page,
+        limit: page.limit,
+        totalPages: Math.ceil(total / page.limit),
+      };
+    });
+  }
+
+  list(
+    clientId: string,
+    actor: ClientFollowUpTaskActor,
+    query: ClientFollowUpTaskListDto,
+  ) {
+    return this.readPage<ListedTask>(
+      clientId,
+      actor,
+      query,
+      taskListQuery(clientId, query),
+    );
+  }
+
+  assignees(
+    clientId: string,
+    actor: ClientFollowUpTaskActor,
+    query: FollowUpPageDto,
+  ) {
+    return this.readPage<AssigneeDisplay>(
+      clientId,
+      actor,
+      query,
+      assigneesQuery(clientId, query),
+    );
   }
 
   private fields(input: ClientFollowUpTaskFields): NormalizedTaskFields {

@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 const { assertTestDatabase } = require('./test-database.cjs');
 const ROOT = resolve(__dirname, '..');
 const evidenceRoot = process.env.FOLLOWUP_EVIDENCE_ROOT ?? (process.argv[2] === 'http' ? 'docs/evidence/rest-t2c-20261005' : 'docs/evidence/rest-t2b-20261005');
-if (!['docs/evidence/rest-t2b-20261005', 'docs/evidence/rest-t2c-20261005', 'docs/evidence/rest-t2d-20261005'].includes(evidenceRoot)) throw Error('Unapproved evidence root');
+if (!['docs/evidence/rest-t2b-20261005', 'docs/evidence/rest-t2c-20261005', 'docs/evidence/rest-t2d-20261005', 'docs/evidence/rest-t2e-api-20261005'].includes(evidenceRoot)) throw Error('Unapproved evidence root');
 const BASE = join(ROOT, evidenceRoot);
 const targets = ['src/modules/client-followup-tasks/client-followup-tasks.service.ts', 'src/modules/client-followup-tasks/client-followup-tasks.service.spec.ts', 'scripts/probe-client-deletion-lock-order.cjs'];
 function preserveNoncompilableSnapshots() {
@@ -51,7 +51,8 @@ function checkpoint(label) {
   const hashes = {};
   const snapshot_paths = {};
   const httpSources = !evidenceRoot.endsWith('rest-t2b-20261005') ? ['src/modules/client-followup-tasks/client-followup-tasks.queries.ts', 'src/modules/client-followup-tasks/client-followup-tasks.projection.spec.ts', '.gitignore', 'src/app.module.ts', 'src/modules/client-followup-tasks/client-followup-tasks.controller.ts', 'src/modules/client-followup-tasks/client-followup-tasks.module.ts', 'src/modules/client-followup-tasks/client-followup-tasks.http.spec.ts', 'src/modules/client-followup-tasks/dto/client-followup-task.dto.ts'] : [];
-  const selected = [...targets, 'scripts/run-followup-tasks-integration.cjs', 'src/modules/client-followup-tasks/client-followup-tasks.pg.spec.ts', ...httpSources].filter(path => fs.existsSync(join(ROOT, path)));
+  const listSources = evidenceRoot.endsWith('rest-t2e-api-20261005') ? ['src/modules/client-followup-tasks/dto/client-followup-task-list.dto.ts', 'src/modules/client-followup-tasks/client-followup-tasks.list.spec.ts'] : [];
+  const selected = [...listSources, ...targets, 'scripts/run-followup-tasks-integration.cjs', 'src/modules/client-followup-tasks/client-followup-tasks.pg.spec.ts', ...httpSources].filter(path => fs.existsSync(join(ROOT, path)));
   for (const path of selected) {
     const bytes = fs.readFileSync(join(ROOT, path));
     const relative = path.endsWith('.ts') ? path + '.snapshot' : path;
@@ -142,7 +143,7 @@ async function main() {
   const args = [require.resolve('jest/bin/jest'), '--config', JSON.stringify(config), '--runInBand', '--json', '--outputFile', join(directory, 'jest.json')];
   if (mode === 'unit') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.service.spec.ts', 'src/modules/client-followup-tasks/client-followup-tasks.projection.spec.ts');
   if (mode === 'pg') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.pg.spec.ts', 'src/modules/client-followup-tasks/client-followup-tasks.projection.spec.ts');
-  if (mode === 'http') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.http.spec.ts');
+  if (mode === 'http') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.http.spec.ts', ...(evidenceRoot.endsWith('rest-t2e-api-20261005') ? ['src/modules/client-followup-tasks/client-followup-tasks.list.spec.ts'] : []));
   try { run(process.execPath, args, env, join(directory, 'jest.log')); }
   finally {
     if (mode !== 'unit') {
@@ -160,6 +161,7 @@ async function main() {
   if (!report.success || report.numPendingTests) throw Error('Incomplete test receipt');
   if (mode === 'all' && !report.testResults.some(result => result.name.endsWith('client-followup-tasks.http.spec.ts') && result.status === 'passed' && result.assertionResults.length > 0 && result.assertionResults.every(test => test.status === 'passed'))) throw Error('Full suite did not execute HTTP coverage');
   if (['pg', 'all'].includes(mode) && !report.testResults.some(result => result.name.endsWith('client-followup-tasks.projection.spec.ts') && result.status === 'passed' && result.assertionResults.length > 5 && result.assertionResults.every(test => test.status === 'passed'))) throw Error('Required real-PG projection coverage did not execute');
+  if (evidenceRoot.endsWith('rest-t2e-api-20261005') && ['http', 'all'].includes(mode) && !report.testResults.some(result => result.name.endsWith('client-followup-tasks.list.spec.ts') && result.status === 'passed' && result.assertionResults.length > 0 && result.assertionResults.every(test => test.status === 'passed'))) throw Error('Required list/assignee coverage did not execute');
   console.log(`${mode}: PASS ${report.numPassedTestSuites} suites / ${report.numPassedTests} tests; pending ${report.numPendingTests}`);
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });
