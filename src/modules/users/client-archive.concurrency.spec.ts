@@ -1,6 +1,11 @@
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient, Role } from '@prisma/client';
+import { Prisma, PrismaClient, Role } from '@prisma/client';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ChallengesService } from '../challenges/challenges.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { IdentityService } from '../identity/identity.service';
+import { IdentityProvider } from '../identity/identity-provider';
 import { Pool } from 'pg';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsersService } from './users.service';
@@ -19,17 +24,39 @@ suite('F005 archive PostgreSQL integration', () => {
   let pool: Pool;
   let prisma: PrismaClient;
   let service: UsersService;
+
+  function createService(database: PrismaClient) {
+    const db = database as PrismaService;
+    const denyExternal = (): never => {
+      throw new Error('External dependency called by archive fixture');
+    };
+    const provider = {
+      get: denyExternal,
+      create: denyExternal,
+      update: denyExternal,
+      revoke: denyExternal,
+      remove: denyExternal,
+    } satisfies IdentityProvider;
+    // No Nest lifecycle/cron. Fail closed even if a future path queues/sends FCM.
+    const notifications = new Proxy(new NotificationsService(db), {
+      get: () => denyExternal,
+    });
+    return new UsersService(
+      db,
+      new ChallengesService(db, undefined!, notifications),
+      notifications,
+      undefined!,
+      undefined!,
+      undefined,
+      new IdentityService(db, provider),
+    );
+  }
+
   beforeAll(async () => {
     pool = new Pool({ connectionString: url, application_name: prefix });
     await assertTestDatabase(pool);
     prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
-    service = new UsersService(
-      prisma as PrismaService,
-      undefined!,
-      undefined!,
-      undefined!,
-      undefined!,
-    );
+    service = createService(prisma);
     await prisma.user.createMany({
       data: ids.map((id, n) => ({
         id,
@@ -208,6 +235,191 @@ suite('F005 archive PostgreSQL integration', () => {
         (await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }))
           .is_archived,
       ).toBe(false);
+    },
+  );
+
+  it.each(['role', 'assignment'] as const)(
+    'rejects stale-coach archive behind the real production %s writer',
+    async (permission) => {
+      await prisma.user.update({
+        where: { id: ids[0] },
+        data: { is_archived: false },
+      });
+      const beforeClient = await prisma.user.findUniqueOrThrow({
+        where: { id: ids[0] },
+      });
+      const beforeMetrics = await prisma.bodyMetric.findMany({
+        where: { client_id: ids[0] },
+        orderBy: { id: 'asc' },
+      });
+      const beforeAssignment =
+        await prisma.adminClientAssignment.findFirstOrThrow({
+          where: { admin_id: ids[1], client_id: ids[0] },
+        });
+      const writerDatabase = new PrismaClient({ adapter: new PrismaPg(pool) });
+      let release!: () => void;
+      let signal!: (pid: number) => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const held = new Promise<number>((resolve) => {
+        signal = resolve;
+      });
+      // Instrument only the transaction boundary, not a business method/query.
+      // The entire original callback (including sync/guards) executes first.
+      const instrumented = new Proxy(writerDatabase, {
+        get(target, property) {
+          if (property !== '$transaction') {
+            const value: unknown = Reflect.get(target, property, target);
+            return value;
+          }
+          return async <T>(
+            callback: (tx: Prisma.TransactionClient) => Promise<T>,
+          ) =>
+            target.$transaction(
+              async (tx) => {
+                const result = await callback(tx);
+                expect(
+                  await tx.user.findUniqueOrThrow({ where: { id: ids[1] } }),
+                ).toMatchObject({
+                  role: permission === 'role' ? Role.CLIENT : Role.ADMIN,
+                });
+                expect(
+                  await tx.adminClientAssignment.findUniqueOrThrow({
+                    where: { id: beforeAssignment.id },
+                  }),
+                ).toMatchObject({ is_active: false });
+                const [row] = await tx.$queryRaw<
+                  { pid: number }[]
+                >`SELECT pg_backend_pid() AS pid`;
+                signal(row.pid);
+                await gate;
+                return result;
+              },
+              { timeout: 15000 },
+            );
+        },
+      });
+      const writerService = createService(instrumented);
+      const operation =
+        permission === 'role'
+          ? writerService.updateRole(ids[3], ids[1], { role: Role.CLIENT })
+          : writerService.updateClientAssignments(
+              ids[3],
+              Role.SUPER_ADMIN,
+              ids[0],
+              { admin_ids: [] },
+            );
+      // Attach rejection handlers before observing waits: no unhandled rejection.
+      const writing = operation.then(
+        (value: unknown) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
+      );
+      let archive: Promise<unknown> | undefined;
+      interface WaitProof {
+        pid: number;
+        blockers: number[];
+        wait_event_type: string;
+        query: string;
+      }
+      let proof: WaitProof | undefined;
+      try {
+        const writerPid = await Promise.race([
+          held,
+          writing.then(() => {
+            throw new Error('Writer ended before barrier');
+          }),
+        ]);
+        archive = service
+          .setClientArchived(ids[1], Role.ADMIN, ids[0], true)
+          .then(
+            () => 'accepted',
+            (error: unknown) => error,
+          );
+        const expectedRow =
+          permission === 'role' ? 'users' : 'admin_client_assignments';
+        for (let n = 0; n < 200 && !proof; n++) {
+          const observed = await pool.query<WaitProof>(
+            `SELECT pid, pg_blocking_pids(pid) AS blockers, wait_event_type, query
+             FROM pg_stat_activity
+             WHERE application_name=$1 AND $2=ANY(pg_blocking_pids(pid))
+               AND query LIKE $3`,
+            [prefix, writerPid, `%FROM ${expectedRow}%`],
+          );
+          proof = observed.rows[0];
+          if (!proof) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(proof).toBeDefined();
+        expect(proof?.pid).not.toBe(writerPid);
+        expect(proof?.blockers).toContain(writerPid);
+        expect(proof?.wait_event_type).toBe('Lock');
+        expect(proof?.query).toContain(
+          permission === 'role' ? 'FOR UPDATE' : 'FOR SHARE',
+        );
+        // Snapshot outside the writer still sees the committed active assignment.
+        expect(
+          await prisma.adminClientAssignment.findUniqueOrThrow({
+            where: { id: beforeAssignment.id },
+          }),
+        ).toEqual(beforeAssignment);
+        console.info('Production writer wait proof', {
+          permission,
+          writerPid,
+          archivePid: proof?.pid,
+          blockers: proof?.blockers,
+          row: expectedRow,
+          wait: proof?.wait_event_type,
+        });
+      } finally {
+        release();
+        await writing;
+        await archive;
+        await writerDatabase.$disconnect();
+      }
+      try {
+        const result = await writing;
+        expect(result.error).toBeUndefined();
+        if (permission === 'role')
+          expect(result.value).toEqual({
+            message: 'Rol actualizado exitosamente',
+          });
+        else
+          expect(result.value).toMatchObject({
+            client_id: ids[0],
+            active_admins: [],
+          });
+        expect(await archive).toBeInstanceOf(
+          permission === 'role' ? ForbiddenException : NotFoundException,
+        );
+        expect(
+          await prisma.user.findUniqueOrThrow({ where: { id: ids[1] } }),
+        ).toMatchObject({
+          role: permission === 'role' ? Role.CLIENT : Role.ADMIN,
+        });
+        expect(
+          await prisma.adminClientAssignment.findUniqueOrThrow({
+            where: { id: beforeAssignment.id },
+          }),
+        ).toEqual({ ...beforeAssignment, is_active: false });
+        expect(
+          await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }),
+        ).toEqual(beforeClient);
+        expect(
+          await prisma.bodyMetric.findMany({
+            where: { client_id: ids[0] },
+            orderBy: { id: 'asc' },
+          }),
+        ).toEqual(beforeMetrics);
+      } finally {
+        await prisma.user.update({
+          where: { id: ids[1] },
+          data: { role: Role.ADMIN },
+        });
+        await prisma.adminClientAssignment.update({
+          where: { id: beforeAssignment.id },
+          data: { is_active: true },
+        });
+      }
     },
   );
 
