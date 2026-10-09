@@ -4,6 +4,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { RecapStatus, Role } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'node:crypto';
+import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -12,6 +13,8 @@ import type { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import { RecapsController } from './recaps.controller';
 import { RecapsService } from './recaps.service';
+
+type AuthenticatedRequest = Request & { user?: AuthenticatedUser };
 
 const privateFields = [
   'admin_comments',
@@ -84,7 +87,7 @@ postgresSuite('REST-T3-PRIVACY-01 real recap HTTP/PG projection', () => {
       ],
     }).compile();
     app = moduleRef.createNestApplication<INestApplication<Server>>();
-    app.use((req: Request, _res: Response, next: NextFunction) => {
+    app.use((req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
       req.user = {
         id: callerId,
         role: callerRole,
@@ -273,7 +276,7 @@ describe('RecapsController', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.use((req: Request, _res: Response, next: NextFunction) => {
+    app.use((req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
       req.user = {
         id: 'admin-1',
         email: 'admin-1@exom.dev',

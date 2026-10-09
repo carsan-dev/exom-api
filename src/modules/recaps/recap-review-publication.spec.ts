@@ -7,12 +7,15 @@ import { Role, RecapStatus } from '@prisma/client';
 import type { Request, Response, NextFunction } from 'express';
 import request from 'supertest';
 import type { PoolClient } from 'pg';
+import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { RecapsController } from './recaps.controller';
 import { RecapsService } from './recaps.service';
+
+type AuthenticatedRequest = Request & { user?: AuthenticatedUser };
 
 const suite = process.env.FOLLOWUP_HTTP_PG === '1' ? describe : describe.skip;
 suite('REST-T3B review publication HTTP and coordinated PostgreSQL', () => {
@@ -76,7 +79,7 @@ suite('REST-T3B review publication HTTP and coordinated PostgreSQL', () => {
       ],
     }).compile();
     app = module.createNestApplication<INestApplication<Server>>();
-    app.use((req: Request, _res: Response, next: NextFunction) => {
+    app.use((req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
       req.user = {
         id: actorId,
         role: actorRole,

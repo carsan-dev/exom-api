@@ -2552,6 +2552,7 @@ suite('training progress bounded PostgreSQL read model', () => {
       's',
       { limit: 100 },
     );
+    if (!page) throw new Error('Expected session detail page');
     expect(page.page).toHaveLength(100);
     expect(page.page.map((set) => set.set_number)).toEqual(
       Array.from({ length: 100 }, (_, index) => index + 1),
@@ -2564,6 +2565,7 @@ suite('training progress bounded PostgreSQL read model', () => {
       's',
       { limit: 100, cursor: page.nextCursor! },
     );
+    if (!tail) throw new Error('Expected session detail tail');
     expect(tail.page.map((set) => set.set_number)).toEqual([101]);
     expect(tail.nextCursor).toBeNull();
   });
