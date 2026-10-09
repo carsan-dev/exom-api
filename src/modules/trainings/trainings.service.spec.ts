@@ -5,12 +5,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { TrainingsService } from './trainings.service';
 import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
-
+type TransactionOptions = Parameters<PrismaService['$transaction']>[1];
 describe('TrainingsService', () => {
   let service: TrainingsService;
   let prisma: {
     $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
-    $transaction: jest.Mock<Promise<unknown>, [unknown]>;
+    $transaction: jest.Mock<Promise<unknown>, [unknown, TransactionOptions?]>;
     training: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -36,7 +36,7 @@ describe('TrainingsService', () => {
         .fn<Promise<unknown>, [Prisma.Sql]>()
         .mockResolvedValue([]),
       $transaction: jest
-        .fn<Promise<unknown>, [unknown]>()
+        .fn<Promise<unknown>, [unknown, TransactionOptions?]>()
         .mockResolvedValue([]),
       training: {
         findMany: jest.fn(),
