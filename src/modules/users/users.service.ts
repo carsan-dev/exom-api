@@ -1328,6 +1328,14 @@ export class UsersService {
       (adminId) => !assignmentsByAdminId.has(adminId),
     );
 
+    if (adminIdsToCreate.length > 0) {
+      // New assignments take FK locks on users. Acquire those parents first,
+      // in archive's sorted user-before-assignment order, not after old-row DML.
+      await tx.$queryRaw`SELECT id FROM users
+        WHERE id IN (${Prisma.join([clientId, ...adminIdsToCreate])})
+        ORDER BY id FOR UPDATE`;
+    }
+
     await Promise.all([
       assignmentsToDeactivate.length > 0
         ? tx.adminClientAssignment.updateMany({
