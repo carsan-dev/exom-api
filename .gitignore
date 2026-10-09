@@ -137,3 +137,7 @@ Thumbs.db
 /docs/evidence/rest-t2c-20261005/independent-verification/snapshots/
 /docs/evidence/rest-t2c-20261005/independent-verification/final-status.txt
 /docs/evidence/rest-t2c-20261005/independent-verification/tracked.patch
+
+# REST-T3A: generated runs and source snapshots retained LOCAL ONLY.
+/docs/evidence/rest-t3a-20261005/run-*/
+/docs/evidence/rest-t3a-20261005/checkpoint/

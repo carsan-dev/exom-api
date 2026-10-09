@@ -1,7 +1,7 @@
 import type { NotificationsService } from '../notifications/notifications.service';
 import { expect } from '@jest/globals';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
-import { RecapStatus, Role } from '@prisma/client';
+import { Prisma, RecapStatus, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RecapsService } from './recaps.service';
 import {
@@ -27,7 +27,10 @@ describe('RecapsService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       create: jest.Mock;
-      update: jest.Mock<Promise<unknown>, [{ data: Record<string, unknown> }]>;
+      update: jest.Mock<
+        Promise<unknown>,
+        [{ data: Record<string, unknown>; select?: Record<string, boolean> }]
+      >;
     };
   };
 
@@ -52,7 +55,7 @@ describe('RecapsService', () => {
         create: jest.fn(),
         update: jest.fn<
           Promise<unknown>,
-          [{ data: Record<string, unknown> }]
+          [{ data: Record<string, unknown>; select?: Record<string, boolean> }]
         >(),
       },
     };
@@ -68,6 +71,61 @@ describe('RecapsService', () => {
       notificationsService as unknown as NotificationsService,
     );
   });
+
+  it.each(['create', 'overwrite', 'update', 'submit'])(
+    'keeps populated review drafts private in %s while preserving every legacy scalar',
+    async (operation) => {
+      const review = {
+        draft_coach_summary: 'private draft summary',
+        draft_changes: 'private draft changes',
+        draft_next_week_goals: 'private draft goals',
+        published_coach_summary: 'last published summary',
+        published_changes: 'last published changes',
+        published_next_week_goals: 'last published goals',
+        review_version: 7,
+      };
+      const model = Prisma.dmmf.datamodel.models.find(
+        (model) => model.name === 'WeeklyRecap',
+      );
+      if (!model) throw new Error('WeeklyRecap metadata missing');
+      const keys = model.fields
+        .filter((field) => field.kind !== 'object' && !(field.name in review))
+        .map((field) => field.name);
+      const legacy: Record<string, unknown> = Object.fromEntries(
+        keys.map((key) => [key, `legacy:${key}`]),
+      );
+      Object.assign(legacy, {
+        id: 'recap-1',
+        client_id: 'client-1',
+        status: RecapStatus.DRAFT,
+        archived_at: null,
+      });
+      const stored = { ...legacy, ...review };
+      const project = ({ select }: { select?: Record<string, boolean> }) =>
+        Promise.resolve(
+          select
+            ? Object.fromEntries(
+                Object.entries(stored).filter(([key]) => select[key]),
+              )
+            : stored,
+        );
+      prisma.weeklyRecap.findUnique.mockResolvedValue(
+        operation === 'create' ? null : stored,
+      );
+      prisma.weeklyRecap.create.mockImplementation(project);
+      prisma.weeklyRecap.update.mockImplementation(project);
+      const result =
+        operation === 'create' || operation === 'overwrite'
+          ? await service.create('client-1', createRecapDto)
+          : operation === 'update'
+            ? await service.update('client-1', 'recap-1', {
+                training_notes: 'updated',
+              })
+            : await service.submit('client-1', 'recap-1');
+      expect(result).toEqual(legacy);
+      expect(notificationsService.sendToUser).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects overwriting a reviewed recap from create', async () => {
     prisma.weeklyRecap.findUnique.mockResolvedValue({
@@ -120,6 +178,7 @@ describe('RecapsService', () => {
         client_id: 'client-1',
         average_daily_steps: 8500,
       }),
+      select: expect.objectContaining({ id: true, admin_comments: true }),
     });
   });
 
@@ -155,6 +214,7 @@ describe('RecapsService', () => {
         status: RecapStatus.SUBMITTED,
         submitted_at: expect.any(Date),
       }),
+      select: expect.objectContaining({ id: true, admin_comments: true }),
     });
   });
 
@@ -194,6 +254,7 @@ describe('RecapsService', () => {
     expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
       where: { id: 'recap-1' },
       data: { average_daily_steps: null },
+      select: expect.objectContaining({ id: true, admin_comments: true }),
     });
   });
 
