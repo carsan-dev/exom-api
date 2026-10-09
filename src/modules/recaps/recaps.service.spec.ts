@@ -73,7 +73,7 @@ describe('RecapsService', () => {
   });
 
   it.each(['create', 'overwrite', 'update', 'submit'])(
-    'keeps populated review drafts private in %s while preserving every legacy scalar',
+    'keeps populated notes and review drafts private in %s while preserving every shareable legacy scalar',
     async (operation) => {
       const review = {
         draft_coach_summary: 'private draft summary',
@@ -89,7 +89,12 @@ describe('RecapsService', () => {
       );
       if (!model) throw new Error('WeeklyRecap metadata missing');
       const keys = model.fields
-        .filter((field) => field.kind !== 'object' && !(field.name in review))
+        .filter(
+          (field) =>
+            field.kind !== 'object' &&
+            field.name !== 'admin_comments' &&
+            !(field.name in review),
+        )
         .map((field) => field.name);
       const legacy: Record<string, unknown> = Object.fromEntries(
         keys.map((key) => [key, `legacy:${key}`]),
@@ -100,7 +105,12 @@ describe('RecapsService', () => {
         status: RecapStatus.DRAFT,
         archived_at: null,
       });
-      const stored = { ...legacy, ...review };
+      expect(keys).toHaveLength(39);
+      const stored = {
+        ...legacy,
+        ...review,
+        admin_comments: '  Private coach note ñ\r\n  ',
+      };
       const project = ({ select }: { select?: Record<string, boolean> }) =>
         Promise.resolve(
           select
@@ -123,6 +133,14 @@ describe('RecapsService', () => {
               })
             : await service.submit('client-1', 'recap-1');
       expect(result).toEqual(legacy);
+      expect(stored.admin_comments).toBe('  Private coach note ñ\r\n  ');
+      prisma.weeklyRecap.findUnique.mockResolvedValue(stored);
+      const admin = await service.getAdminRecapById(
+        'admin-1',
+        Role.SUPER_ADMIN,
+        'recap-1',
+      );
+      expect(admin.admin_comments).toBe(stored.admin_comments);
       expect(notificationsService.sendToUser).not.toHaveBeenCalled();
     },
   );
@@ -178,7 +196,7 @@ describe('RecapsService', () => {
         client_id: 'client-1',
         average_daily_steps: 8500,
       }),
-      select: expect.objectContaining({ id: true, admin_comments: true }),
+      select: expect.objectContaining({ id: true, client_feedback_text: true }),
     });
   });
 
@@ -214,7 +232,7 @@ describe('RecapsService', () => {
         status: RecapStatus.SUBMITTED,
         submitted_at: expect.any(Date),
       }),
-      select: expect.objectContaining({ id: true, admin_comments: true }),
+      select: expect.objectContaining({ id: true, client_feedback_text: true }),
     });
   });
 
@@ -254,7 +272,7 @@ describe('RecapsService', () => {
     expect(prisma.weeklyRecap.update).toHaveBeenCalledWith({
       where: { id: 'recap-1' },
       data: { average_daily_steps: null },
-      select: expect.objectContaining({ id: true, admin_comments: true }),
+      select: expect.objectContaining({ id: true, client_feedback_text: true }),
     });
   });
 
