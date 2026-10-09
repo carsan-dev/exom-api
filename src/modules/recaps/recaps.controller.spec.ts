@@ -18,9 +18,6 @@ const privateFields = [
   'draft_coach_summary',
   'draft_changes',
   'draft_next_week_goals',
-  'published_coach_summary',
-  'published_changes',
-  'published_next_week_goals',
   'review_version',
 ];
 function expectClientProjection(body: unknown) {
@@ -145,6 +142,9 @@ postgresSuite('REST-T3-PRIVACY-01 real recap HTTP/PG projection', () => {
       expect(detail.body as unknown).toMatchObject({
         client_feedback_text: 'Shareable feedback',
         client_feedback_sent_at: '2026-01-12T01:02:03.456Z',
+        published_coach_summary: reviewStorage.published_coach_summary,
+        published_changes: reviewStorage.published_changes,
+        published_next_week_goals: reviewStorage.published_next_week_goals,
       });
       const list = await request(server).get('/recaps/my').expect(200);
       const page: unknown = list.body;
@@ -183,7 +183,13 @@ postgresSuite('REST-T3-PRIVACY-01 real recap HTTP/PG projection', () => {
   it.each(['create', 'update'])(
     'rejects internal notes/review storage in client %s DTOs',
     async (operation) => {
-      for (const field of [...privateFields, 'client_feedback_text']) {
+      for (const field of [
+        ...privateFields,
+        'published_coach_summary',
+        'published_changes',
+        'published_next_week_goals',
+        'client_feedback_text',
+      ]) {
         const response = request(app.getHttpServer());
         if (operation === 'create')
           await response
