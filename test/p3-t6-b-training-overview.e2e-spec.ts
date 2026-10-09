@@ -217,7 +217,7 @@ describe('P3-T6-B real HTTP training overview measurements', () => {
         imports: [AppModule],
       }).compile();
       app = module.createNestApplication<NestExpressApplication>();
-      prisma = app.get(PrismaService);
+      prisma = app.get<PrismaService>(PrismaService);
       // Only Firebase authentication is replaced; RolesGuard, controller,
       // authorization in the read service, transaction and PostgreSQL stay real.
       jest
@@ -581,7 +581,8 @@ describe('P3-T6-B real HTTP training overview measurements', () => {
   });
 
   it('pages 10,000 same-day exercises over HTTP within the full-window budget', async () => {
-    if (!app || !fixtureCommitted) throw Error('Fixture not committed');
+    if (!app || !prisma || !fixtureCommitted)
+      throw Error('Fixture not committed');
     const route = `/api/v1/progress/training-overview?from=${day}&to=${day}`;
     const orderedIds = [...wideIds].sort();
     let cursor: string | undefined;
@@ -665,7 +666,7 @@ describe('P3-T6-B real HTTP training overview measurements', () => {
   afterAll(async () => {
     try {
       if (prisma && fixtureCommitted) {
-        const ids = [...clients];
+        const ids: string[] = [...clients];
         // Cascade only exact owned identities; preserve all fixtures if any
         // unknown side effect or ownership inconsistency is observed.
         const owners = await prisma.user.findMany({

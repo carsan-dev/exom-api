@@ -152,10 +152,7 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
       }),
     ]);
 
-    const accepted = results.find(
-      (result): result is PromiseFulfilledResult<{ id: string }> =>
-        result.status === 'fulfilled',
-    );
+    const accepted = results.find((result) => result.status === 'fulfilled');
     const rejected = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );
@@ -265,10 +262,7 @@ describeWithDatabase('ProgressPhotosService PostgreSQL concurrency', () => {
       }),
     ]);
 
-    const accepted = results.find(
-      (result): result is PromiseFulfilledResult<{ id: string }> =>
-        result.status === 'fulfilled',
-    );
+    const accepted = results.find((result) => result.status === 'fulfilled');
     const rejected = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );

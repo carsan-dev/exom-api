@@ -237,13 +237,16 @@ suite('F004 deletion — real PostgreSQL, simulated Firebase/storage', () => {
     expect(removeIdentity).not.toHaveBeenCalled();
     expect(await prisma.user.findUnique({ where: { id: a.id } })).toBeNull();
     expect(await prisma.profile.count({ where: { user_id: a.id } })).toBe(0);
-    for (const model of [
-      prisma.rirProtectedDay,
-      prisma.rirCycleVersion,
-      prisma.rirDayTarget,
+    for (const count of [
+      (client_id: string) =>
+        prisma.rirProtectedDay.count({ where: { client_id } }),
+      (client_id: string) =>
+        prisma.rirCycleVersion.count({ where: { client_id } }),
+      (client_id: string) =>
+        prisma.rirDayTarget.count({ where: { client_id } }),
     ]) {
-      expect(await model.count({ where: { client_id: a.id } })).toBe(0);
-      expect(await model.count({ where: { client_id: b.id } })).toBe(1);
+      expect(await count(a.id)).toBe(0);
+      expect(await count(b.id)).toBe(1);
     }
     expect(
       await prisma.feedbackMedia.count({ where: { client_id: a.id } }),

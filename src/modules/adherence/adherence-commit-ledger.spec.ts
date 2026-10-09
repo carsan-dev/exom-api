@@ -3,7 +3,10 @@ import {
   validateStoredAdherenceCommitEvidence,
   type AdherenceCommitProof,
 } from './adherence-commit-ledger';
-import type { AdherenceCommitSessionProvider } from './adherence-commit-resolver';
+import type {
+  AdherenceCommitSessionProvider,
+  AdherenceCommitSql,
+} from './adherence-commit-resolver';
 
 const request = {
   epochId: 'epoch',
@@ -27,7 +30,8 @@ const fixture: AdherenceCommitProof = {
   microseconds: '1790899199999999',
 };
 function stored(value: unknown) {
-  const query = jest.fn(() => Promise.resolve([value]));
+  const query: jest.MockedFunction<AdherenceCommitSql['$queryRaw']> = jest.fn();
+  query.mockResolvedValue([value]);
   const provider: AdherenceCommitSessionProvider = {
     withSession: (work) =>
       work({

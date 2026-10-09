@@ -1,4 +1,6 @@
 import { assertTestDatabase } from '../../scripts/test-database.cjs';
+import { ConfigService } from '@nestjs/config';
+import { UploadsService } from '../modules/uploads/uploads.service';
 import { PrismaClient, Prisma, Role, Level, MealType } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -75,7 +77,10 @@ const date = new Date('2026-01-10T10:00:00Z');
         undefined as never,
       );
       ingredients = new IngredientsService(serviceDb);
-      exercises = new ExercisesService(serviceDb);
+      exercises = new ExercisesService(
+        serviceDb,
+        new UploadsService(new ConfigService({ NODE_ENV: 'test' }), serviceDb),
+      );
       diets = new DietsService(
         serviceDb,
         undefined as never,

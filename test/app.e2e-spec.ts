@@ -3,7 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import request from 'supertest';
 import type { Server } from 'node:http';
-import { Pool } from 'pg';
+import { Pool, type QueryConfig } from 'pg';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -13,7 +13,7 @@ describe('Application HTTP contracts and lifecycle (isolated PostgreSQL)', () =>
   let app: NestExpressApplication;
   let prisma: PrismaService;
   let scheduler: SchedulerRegistry;
-  const server = () => app.getHttpServer<Server>();
+  const server = (): Server => app.getHttpServer();
 
   beforeAll(async () => {
     const probe = new Pool({ connectionString: databaseUrl() });
@@ -74,9 +74,13 @@ describe('Application HTTP contracts and lifecycle (isolated PostgreSQL)', () =>
   });
 
   it('reports database failure as unready, keeps liveness, then recovers', async () => {
+    const pool: { query: (config: QueryConfig) => Promise<unknown> } =
+      prisma.postgresqlPool;
     const query = jest
-      .spyOn(prisma.postgresqlPool, 'query')
-      .mockRejectedValueOnce(new Error('synthetic database outage'));
+      .spyOn(pool, 'query')
+      .mockImplementationOnce(() =>
+        Promise.reject(new Error('synthetic database outage')),
+      );
     try {
       const result = await request(server())
         .get('/api/v1/health/ready')
