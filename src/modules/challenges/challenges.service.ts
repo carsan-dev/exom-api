@@ -1,8 +1,20 @@
-import { normalizeDate, evaluateAutomaticProgress } from './challenge-progress';
+import {
+  calculateStreak,
+  evaluateAutomaticProgress,
+  normalizeDate,
+} from './challenge-progress';
 import { AggregateRule } from '../../common/progress/aggregate-scope';
-import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
+import {
+  lockClientDayProgress,
+  lockClientsDayProgress,
+} from '../../common/progress/day-progress-lock';
+import type {
+  ChallengeEligibilityPeriod,
+  StreakProgress,
+} from './challenge-progress';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -32,6 +44,13 @@ import {
 import { type ChallengeRuleKey } from './challenges.constants';
 
 type PrismaClientLike = PrismaService | Prisma.TransactionClient;
+
+const ELIGIBILITY_PERIOD_SELECT = {
+  starts_on: true,
+  ends_on: true,
+  opened_at: true,
+  baseline_value: true,
+} as const;
 
 const ADMIN_CHALLENGE_SELECT = {
   id: true,
@@ -205,7 +224,7 @@ export class ChallengesService {
       !creator ||
       (creator.role !== Role.ADMIN && creator.role !== Role.SUPER_ADMIN)
     ) {
-      return this.getGlobalAssignmentClientIds(challenge.id, prisma);
+      return [];
     }
 
     return this.resolveVisibleClientIds(creator.id, creator.role, prisma);
@@ -562,6 +581,7 @@ export class ChallengesService {
     challengeId: string,
     creatorScopeClientIds: string[],
     prisma: PrismaClientLike = this.prisma,
+    lockedClientIds?: Set<string>,
   ) {
     const targetClientIds = [...new Set(creatorScopeClientIds)];
     const targetClientIdSet = new Set(targetClientIds);
@@ -573,8 +593,14 @@ export class ChallengesService {
       prisma.challengeClient.findMany({
         where: { challenge_id: challengeId },
         select: {
+          id: true,
           client_id: true,
           assignment_source: true,
+          assigned_at: true,
+          current_value: true,
+          eligibility_periods: {
+            select: ELIGIBILITY_PERIOD_SELECT,
+          },
         },
       }),
     ]);
@@ -584,14 +610,10 @@ export class ChallengesService {
     const clientIdsToCreate = targetClientIds.filter(
       (clientId) => !existingClientIdSet.has(clientId),
     );
-    const globalClientIdsToDelete = existingAssignments
-      .filter(
-        (assignment) =>
-          assignment.assignment_source === ChallengeAssignmentSource.GLOBAL &&
-          !targetClientIdSet.has(assignment.client_id),
-      )
-      .map((assignment) => assignment.client_id);
-
+    const clientIdsToLock = [...targetClientIds, ...existingClientIdSet];
+    if (lockedClientIds)
+      this.assertLockedClientScope(clientIdsToLock, lockedClientIds);
+    await lockClientsDayProgress(prisma, clientIdsToLock);
     if (clientIdsToCreate.length > 0) {
       await prisma.challengeClient.createMany({
         data: clientIdsToCreate.map((clientId) => ({
@@ -605,13 +627,137 @@ export class ChallengesService {
       });
     }
 
-    if (globalClientIdsToDelete.length > 0) {
-      await prisma.challengeClient.deleteMany({
-        where: {
-          challenge_id: challengeId,
-          client_id: { in: globalClientIdsToDelete },
-          assignment_source: ChallengeAssignmentSource.GLOBAL,
+    const globalAssignments = await prisma.challengeClient.findMany({
+      where: {
+        challenge_id: challengeId,
+        assignment_source: ChallengeAssignmentSource.GLOBAL,
+      },
+      select: {
+        id: true,
+        client_id: true,
+        assigned_at: true,
+        current_value: true,
+        eligibility_periods: { select: ELIGIBILITY_PERIOD_SELECT },
+      },
+    });
+    await this.syncGlobalEligibilityPeriods(
+      globalAssignments,
+      targetClientIdSet,
+      prisma,
+    );
+  }
+
+  private async syncGlobalEligibilityPeriods(
+    assignments: Array<{
+      id: string;
+      client_id: string;
+      assigned_at: Date;
+      current_value: number;
+      eligibility_periods: ChallengeEligibilityPeriod[];
+    }>,
+    eligibleClientIds: Set<string>,
+    prisma: PrismaClientLike,
+  ) {
+    if (assignments.length === 0) return;
+    const clientIds = [
+      ...new Set(assignments.map((assignment) => assignment.client_id)),
+    ].sort();
+    // Match scope-trigger ordering before re-reading both the scope and period baseline.
+    await prisma.$queryRaw(Prisma.sql`SELECT id FROM challenge_clients
+      WHERE client_id IN (${Prisma.join(clientIds)}) AND assignment_source = 'GLOBAL'
+      ORDER BY client_id, id FOR UPDATE`);
+    const currentAssignments = await prisma.challengeClient.findMany({
+      where: {
+        id: { in: assignments.map((assignment) => assignment.id) },
+        assignment_source: ChallengeAssignmentSource.GLOBAL,
+      },
+      select: {
+        id: true,
+        challenge_id: true,
+        client_id: true,
+        assigned_at: true,
+        current_value: true,
+        eligibility_periods: { select: ELIGIBILITY_PERIOD_SELECT },
+      },
+    });
+    const eligibleAssignmentIds = new Set<string>();
+    for (const clientId of clientIds) {
+      if (!eligibleClientIds.has(clientId)) continue;
+      const challengeIds = new Set(
+        await this.eligibleGlobalChallengeIds(clientId, prisma),
+      );
+      for (const assignment of currentAssignments) {
+        if (
+          assignment.client_id === clientId &&
+          challengeIds.has(assignment.challenge_id)
+        )
+          eligibleAssignmentIds.add(assignment.id);
+      }
+    }
+    assignments = currentAssignments;
+    const today = normalizeDate(new Date());
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const inactiveIds = assignments
+      .filter((assignment) => !eligibleAssignmentIds.has(assignment.id))
+      .map((assignment) => assignment.id);
+
+    const inactiveLegacyPeriods = assignments
+      .filter(
+        (assignment) =>
+          !eligibleAssignmentIds.has(assignment.id) &&
+          assignment.eligibility_periods.length === 0,
+      )
+      .map((assignment) => ({
+        challenge_client_id: assignment.id,
+        starts_on: today,
+        ends_on: today,
+        baseline_value: assignment.current_value,
+      }));
+    if (inactiveLegacyPeriods.length > 0) {
+      await prisma.challengeClientEligibilityPeriod.createMany({
+        data: inactiveLegacyPeriods,
+        skipDuplicates: true,
+      });
+    }
+
+    if (inactiveIds.length > 0) {
+      for (const assignment of assignments.filter((row) =>
+        inactiveIds.includes(row.id),
+      )) {
+        const open = assignment.eligibility_periods.find(
+          (period) => period.ends_on === null,
+        );
+        await prisma.challengeClientEligibilityPeriod.updateMany({
+          where: { challenge_client_id: assignment.id, ends_on: null },
+          data: {
+            ends_on: open && open.starts_on > today ? open.starts_on : today,
+          },
+        });
+      }
+    }
+
+    const periodsToOpen = assignments.flatMap((assignment) => {
+      if (
+        !eligibleAssignmentIds.has(assignment.id) ||
+        assignment.eligibility_periods.some((period) => period.ends_on === null)
+      )
+        return [];
+
+      // Date-only activity cannot distinguish a same-day re-entry from work
+      // performed while ineligible, so resume on the following UTC day.
+      return [
+        {
+          challenge_client_id: assignment.id,
+          starts_on: tomorrow,
+          baseline_value: assignment.current_value,
         },
+      ];
+    });
+    if (periodsToOpen.length > 0) {
+      await prisma.challengeClientEligibilityPeriod.createMany({
+        data: periodsToOpen,
+        skipDuplicates: true,
       });
     }
   }
@@ -629,11 +775,26 @@ export class ChallengesService {
         },
       },
       select: {
+        id: true,
+        client_id: true,
         assignment_source: true,
+        assigned_at: true,
+        current_value: true,
+        eligibility_periods: { select: ELIGIBILITY_PERIOD_SELECT },
       },
     });
 
     if (existingAssignment) {
+      if (
+        existingAssignment.assignment_source ===
+        ChallengeAssignmentSource.GLOBAL
+      ) {
+        await this.syncGlobalEligibilityPeriods(
+          [existingAssignment],
+          new Set([clientId]),
+          prisma,
+        );
+      }
       return existingAssignment;
     }
 
@@ -651,11 +812,21 @@ export class ChallengesService {
           is_completed: false,
         },
         select: {
+          id: true,
+          client_id: true,
           assignment_source: true,
+          assigned_at: true,
+          current_value: true,
+          eligibility_periods: { select: ELIGIBILITY_PERIOD_SELECT },
         },
       }),
     ]);
 
+    await this.syncGlobalEligibilityPeriods(
+      [createdAssignment],
+      new Set([clientId]),
+      prisma,
+    );
     return createdAssignment;
   }
 
@@ -917,8 +1088,21 @@ export class ChallengesService {
   }
 
   async findMyChallenges(clientId: string) {
+    const globalIds = await this.eligibleGlobalChallengeIds(
+      clientId,
+      this.prisma,
+    );
     return this.prisma.challengeClient.findMany({
-      where: { client_id: clientId },
+      where: {
+        client_id: clientId,
+        OR: [
+          { assignment_source: ChallengeAssignmentSource.MANUAL },
+          {
+            challenge_id: { in: globalIds },
+            eligibility_periods: { some: { ends_on: null } },
+          },
+        ],
+      },
       include: { challenge: true },
       orderBy: { assigned_at: 'desc' },
     });
@@ -985,23 +1169,69 @@ export class ChallengesService {
     dto: UpdateChallengeDto,
   ) {
     return this.prisma.$transaction(async (tx) => {
-      const challenge = await this.assertChallengeAccess(
+      let challenge = await this.assertChallengeAccess(
         id,
         adminId,
         adminRole,
         tx,
       );
+      const [scopeAssignments, creatorScope] = await Promise.all([
+        tx.challengeClient.findMany({
+          where: {
+            OR: [
+              { challenge_id: id },
+              {
+                assignment_source: ChallengeAssignmentSource.GLOBAL,
+                ...(challenge.created_by
+                  ? { challenge: { created_by: challenge.created_by } }
+                  : {}),
+              },
+            ],
+          },
+          select: { client_id: true },
+        }),
+        this.resolveChallengeCreatorScope(challenge, tx),
+      ]);
+      // The scope trigger takes assignment rows; acquire its entire daily lockset first.
+      const lockedClientIds = new Set([
+        ...scopeAssignments.map((assignment) => assignment.client_id),
+        ...creatorScope,
+      ]);
+      await lockClientsDayProgress(tx, lockedClientIds);
+      const currentChallenge = await this.assertChallengeAccess(
+        id,
+        adminId,
+        adminRole,
+        tx,
+      );
+      if (currentChallenge.created_by !== challenge.created_by)
+        throw new ConflictException(
+          'El ámbito del reto ha cambiado; vuelve a intentar la actualización',
+        );
+      challenge = currentChallenge;
       const updatedChallenge = await tx.challenge.update({
         where: { id },
         data: this.buildUpdateChallengeData(challenge, dto),
         select: ADMIN_CHALLENGE_SELECT,
       });
+      if (updatedChallenge.created_by !== challenge.created_by)
+        throw new ConflictException(
+          'El ámbito del reto ha cambiado; vuelve a intentar la actualización',
+        );
 
       const creatorScopeClientIds = updatedChallenge.is_global
         ? await this.resolveChallengeCreatorScope(updatedChallenge, tx)
         : [];
 
-      await this.syncGlobalAssignments(id, creatorScopeClientIds, tx);
+      await this.syncGlobalAssignments(
+        id,
+        creatorScopeClientIds,
+        tx,
+        lockedClientIds,
+      );
+
+      const assignedClientIds = await this.getAssignedClientIds(id, tx);
+      this.assertLockedClientScope(assignedClientIds, lockedClientIds);
 
       if (updatedChallenge.is_manual) {
         await this.refreshManualAssignments(
@@ -1009,22 +1239,19 @@ export class ChallengesService {
           updatedChallenge.target_value,
           tx,
         );
-        const assignedClientIds = await this.getAssignedClientIds(id, tx);
         await Promise.all(
           assignedClientIds.map((clientId) =>
             this.evaluateAchievementsForClient(clientId, tx),
           ),
         );
       } else {
-        const assignmentClientIds = await this.getAssignedClientIds(id, tx);
-
         await Promise.all(
-          assignmentClientIds.map((clientId) =>
+          assignedClientIds.map((clientId) =>
             this.recalculateAutomaticProgress(clientId, tx, [id]),
           ),
         );
         await Promise.all(
-          assignmentClientIds.map((clientId) =>
+          assignedClientIds.map((clientId) =>
             this.evaluateAchievementsForClient(clientId, tx),
           ),
         );
@@ -1032,6 +1259,16 @@ export class ChallengesService {
 
       return this.serializeChallengeWithCurrentCounts(updatedChallenge, tx);
     });
+  }
+
+  private assertLockedClientScope(
+    clientIds: string[],
+    lockedClientIds: Set<string>,
+  ) {
+    if (clientIds.some((clientId) => !lockedClientIds.has(clientId)))
+      throw new ConflictException(
+        'El ámbito del reto ha cambiado; vuelve a intentar la actualización',
+      );
   }
 
   async assignToClients(
@@ -1109,7 +1346,16 @@ export class ChallengesService {
     creatorId: string,
     clientId: string,
     prisma: PrismaClientLike = this.prisma,
-  ) {
+  ): Promise<void> {
+    if (prisma === this.prisma)
+      return this.prisma.$transaction(async (tx) => {
+        await lockClientDayProgress(tx, clientId);
+        return this.syncGlobalChallengesForCreatorClient(
+          creatorId,
+          clientId,
+          tx,
+        );
+      });
     const creator = await prisma.user.findUnique({
       where: { id: creatorId },
       select: { id: true, role: true },
@@ -1145,7 +1391,7 @@ export class ChallengesService {
     }
 
     if (!creatorScopeClientIdSet.has(clientId)) {
-      await prisma.challengeClient.deleteMany({
+      const assignments = await prisma.challengeClient.findMany({
         where: {
           client_id: clientId,
           assignment_source: ChallengeAssignmentSource.GLOBAL,
@@ -1153,7 +1399,15 @@ export class ChallengesService {
             in: globalChallenges.map((challenge) => challenge.id),
           },
         },
+        select: {
+          id: true,
+          client_id: true,
+          assigned_at: true,
+          current_value: true,
+          eligibility_periods: { select: ELIGIBILITY_PERIOD_SELECT },
+        },
       });
+      await this.syncGlobalEligibilityPeriods(assignments, new Set(), prisma);
 
       return;
     }
@@ -1219,9 +1473,21 @@ export class ChallengesService {
         { maxWait: 5000, timeout: 30000 },
       );
     }
+    const globalIds = await this.eligibleGlobalChallengeIds(
+      clientId,
+      prisma,
+      true,
+    );
     const assignments = await prisma.challengeClient.findMany({
       where: {
         client_id: clientId,
+        OR: [
+          { assignment_source: ChallengeAssignmentSource.MANUAL },
+          {
+            challenge_id: { in: globalIds },
+            eligibility_periods: { some: { ends_on: null } },
+          },
+        ],
         challenge: {
           is_manual: false,
           ...(rules && { rule_key: { in: rules } }),
@@ -1229,6 +1495,10 @@ export class ChallengesService {
         },
       },
       include: {
+        eligibility_periods: {
+          select: ELIGIBILITY_PERIOD_SELECT,
+          orderBy: { starts_on: 'asc' },
+        },
         challenge: {
           select: {
             id: true,
@@ -1267,51 +1537,118 @@ export class ChallengesService {
     }
 
     const needed = new Set(assignments.map((a) => a.challenge.rule_key));
-    const [dayProgress, bodyMetrics, streak] = await Promise.all([
-      needed.has('TRAINING_DAYS') || needed.has('MEAL_CHECKINS')
-        ? prisma.dayProgress.findMany({
-            where: {
-              client_id: clientId,
-              date: { gte: earliestAssignedAt },
-            },
-            select: {
-              date: true,
-              training_completed: true,
-              meals_completed: true,
-            },
-          })
-        : [],
-      needed.has('WEIGHT_LOGS')
-        ? prisma.bodyMetric.findMany({
-            where: {
-              client_id: clientId,
-              date: { gte: earliestAssignedAt },
-            },
-            select: {
-              date: true,
-              weight_kg: true,
-            },
-          })
-        : [],
-      needed.has('STREAK_DAYS')
-        ? prisma.streak.findUnique({
-            where: { client_id: clientId },
-            select: { current_days: true },
-          })
-        : null,
-    ]);
+    const needsProvenance = assignments.some(
+      (a) => a.assignment_source === ChallengeAssignmentSource.GLOBAL,
+    );
+    const [dayProgress, bodyMetrics, streak, streakAssignments] =
+      await Promise.all([
+        needed.has('TRAINING_DAYS') ||
+        needed.has('MEAL_CHECKINS') ||
+        needed.has('STREAK_DAYS')
+          ? needsProvenance
+            ? prisma.$queryRaw<StreakProgress[]>(Prisma.sql`
+              SELECT date, training_completed, exercises_completed, COALESCE(meals_completed, ARRAY[]::text[]) AS meals_completed, updated_at,
+                (challenge_activity->>'training')::timestamptz AS training_recorded_at,
+                (challenge_activity->>'exercise')::timestamptz AS exercise_recorded_at,
+                COALESCE(challenge_activity->'meals', '{}'::jsonb) AS meal_recorded_at
+              FROM day_progress WHERE client_id = ${clientId} AND date >= ${earliestAssignedAt}
+            `)
+            : prisma.dayProgress.findMany({
+                where: {
+                  client_id: clientId,
+                  date: { gte: earliestAssignedAt },
+                },
+                select: {
+                  date: true,
+                  training_completed: true,
+                  exercises_completed: true,
+                  meals_completed: true,
+                  updated_at: true,
+                },
+              })
+          : [],
+        needed.has('WEIGHT_LOGS')
+          ? needsProvenance
+            ? prisma.$queryRaw<
+                Array<{
+                  date: Date;
+                  weight_kg: number | null;
+                  recorded_at: Date | null;
+                }>
+              >(Prisma.sql`
+              SELECT date, weight_kg, challenge_activity_at AS recorded_at FROM body_metrics
+              WHERE client_id = ${clientId} AND date >= ${earliestAssignedAt}
+            `)
+            : prisma.bodyMetric.findMany({
+                where: {
+                  client_id: clientId,
+                  date: { gte: earliestAssignedAt },
+                },
+                select: {
+                  date: true,
+                  weight_kg: true,
+                },
+              })
+          : [],
+        needed.has('STREAK_DAYS')
+          ? prisma.streak.findUnique({
+              where: { client_id: clientId },
+              select: { current_days: true, tracking_started_at: true },
+            })
+          : null,
+        needed.has('STREAK_DAYS')
+          ? prisma.planAssignment.findMany({
+              where: {
+                client_id: clientId,
+                date: { gte: earliestAssignedAt, lte: normalizeDate(asOf) },
+                is_rest_day: false,
+                OR: [
+                  { trainings: { some: {} } },
+                  { training_id: { not: null } },
+                  { diet_id: { not: null } },
+                ],
+              },
+              select: { date: true },
+              orderBy: { date: 'asc' },
+            })
+          : [],
+      ]);
 
     await Promise.all(
       assignments.map(async (assignment) => {
-        const currentValue = evaluateAutomaticProgress(
+        const eligibilityPeriods =
+          assignment.assignment_source === ChallengeAssignmentSource.GLOBAL
+            ? assignment.eligibility_periods.filter(
+                (period) => period.ends_on === null,
+              )
+            : undefined;
+        const baselineValue = eligibilityPeriods?.[0]?.baseline_value ?? 0;
+        const assignmentStreak =
+          assignment.challenge.rule_key === 'STREAK_DAYS' && eligibilityPeriods
+            ? {
+                current_days: calculateStreak(
+                  streakAssignments,
+                  dayProgress,
+                  asOf,
+                  streak?.tracking_started_at,
+                  eligibilityPeriods,
+                ).currentDays,
+              }
+            : streak;
+        const contribution = evaluateAutomaticProgress(
           assignment.challenge.rule_key as ChallengeRuleKey | null,
           assignment.assigned_at,
           assignment.challenge.deadline,
           dayProgress,
           bodyMetrics,
-          streak,
+          assignmentStreak,
           asOf,
+          eligibilityPeriods,
         );
+        const currentValue =
+          assignment.challenge.rule_key === 'STREAK_DAYS'
+            ? Math.max(baselineValue, contribution)
+            : baselineValue + contribution;
         const isCompleted = currentValue >= assignment.challenge.target_value;
         if (
           assignment.current_value === currentValue &&
@@ -1346,44 +1683,80 @@ export class ChallengesService {
     challengeId: string,
     dto: UpdateProgressDto,
   ) {
-    const record = await this.prisma.challengeClient.findUnique({
-      where: {
-        challenge_id_client_id: {
-          challenge_id: challengeId,
-          client_id: clientId,
+    const updatedRecord = await this.prisma.$transaction(async (tx) => {
+      await lockClientDayProgress(tx, clientId);
+      const record = await tx.challengeClient.findUnique({
+        where: {
+          challenge_id_client_id: {
+            challenge_id: challengeId,
+            client_id: clientId,
+          },
         },
-      },
-      include: { challenge: true },
-    });
+        include: { challenge: true, eligibility_periods: true },
+      });
 
-    if (!record) {
-      throw new NotFoundException('Challenge assignment not found');
-    }
+      if (!record) {
+        throw new NotFoundException('Challenge assignment not found');
+      }
 
-    if (!record.challenge.is_manual) {
-      throw new ForbiddenException(
-        'Los retos automáticos se recalculan desde el backend',
-      );
-    }
+      if (!record.challenge.is_manual) {
+        throw new ForbiddenException(
+          'Los retos automáticos se recalculan desde el backend',
+        );
+      }
+      if (
+        record.assignment_source === ChallengeAssignmentSource.GLOBAL &&
+        (!record.eligibility_periods.some(
+          (period) => period.ends_on === null,
+        ) ||
+          !(await this.eligibleGlobalChallengeIds(clientId, tx, true)).includes(
+            challengeId,
+          ))
+      ) {
+        throw new ForbiddenException('El reto no está disponible actualmente');
+      }
 
-    const isCompleted = dto.current_value >= record.challenge.target_value;
-
-    const updatedRecord = await this.prisma.challengeClient.update({
-      where: {
-        challenge_id_client_id: {
-          challenge_id: challengeId,
-          client_id: clientId,
+      const isCompleted = dto.current_value >= record.challenge.target_value;
+      return tx.challengeClient.update({
+        where: {
+          challenge_id_client_id: {
+            challenge_id: challengeId,
+            client_id: clientId,
+          },
         },
-      },
-      data: {
-        current_value: dto.current_value,
-        is_completed: isCompleted,
-        completed_at: isCompleted ? (record.completed_at ?? new Date()) : null,
-      },
+        data: {
+          current_value: dto.current_value,
+          is_completed: isCompleted,
+          completed_at: isCompleted
+            ? (record.completed_at ?? new Date())
+            : null,
+        },
+      });
     });
 
     await this.evaluateAchievementsForClient(clientId);
 
     return updatedRecord;
+  }
+
+  private async eligibleGlobalChallengeIds(
+    clientId: string,
+    db: PrismaClientLike,
+    lock = false,
+  ) {
+    if (lock) {
+      // Scope triggers lock these rows after their scope write; never invert that order by locking scope here.
+      await db.$queryRaw(Prisma.sql`SELECT id FROM challenge_clients
+        WHERE client_id = ${clientId} AND assignment_source = 'GLOBAL' ORDER BY id FOR UPDATE`);
+    }
+    const rows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT c.id FROM challenges c JOIN challenge_clients cc ON cc.challenge_id = c.id
+      JOIN users client ON client.id = cc.client_id LEFT JOIN users creator ON creator.id = c.created_by
+      WHERE cc.client_id = ${clientId} AND cc.assignment_source = 'GLOBAL' AND c.is_global = true
+        AND client.role = 'CLIENT' AND (c.created_by IS NULL OR creator.role = 'SUPER_ADMIN' OR
+          (creator.role = 'ADMIN' AND EXISTS (SELECT 1 FROM admin_client_assignments aca
+            WHERE aca.admin_id = c.created_by AND aca.client_id = cc.client_id AND aca.is_active = true)))
+    `);
+    return rows.map((row) => row.id);
   }
 }

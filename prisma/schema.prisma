@@ -948,6 +948,7 @@ model RirDayTarget {
 }
 
 model DayProgress {
+  challenge_activity  Json      @default("{}") @ignore
   sync_revision       Int       @default(0)
   id                  String    @id @default(uuid())
   client_id           String
@@ -1026,6 +1027,7 @@ model ProgressPhoto {
 }
 
 model BodyMetric {
+  challenge_activity_at DateTime? @default(dbgenerated()) @db.Timestamptz(3) @ignore
   id               String   @id @default(uuid())
   client_id        String
   date             DateTime @default(now()) @db.Date
@@ -1207,11 +1209,28 @@ model ChallengeClient {
 
   challenge Challenge @relation(fields: [challenge_id], references: [id], onDelete: Cascade)
   client    User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  eligibility_periods ChallengeClientEligibilityPeriod[]
 
   @@unique([challenge_id, client_id])
   @@index([client_id, is_completed, assigned_at])
   @@index([challenge_id, assignment_source, client_id])
   @@map("challenge_clients")
+}
+
+// GLOBAL assignments keep their attained progress while scope eligibility is tracked separately.
+// Period boundaries are UTC calendar days because activity sources are date-based.
+model ChallengeClientEligibilityPeriod {
+  id                  String          @id @default(uuid())
+  challenge_client_id String
+  starts_on           DateTime        @db.Date
+  ends_on             DateTime?       @db.Date
+  opened_at           DateTime        @default(now()) @db.Timestamptz(3)
+  baseline_value      Float           @default(0)
+
+  challenge_client ChallengeClient @relation(fields: [challenge_client_id], references: [id], onDelete: Cascade)
+
+  @@index([challenge_client_id, starts_on])
+  @@map("challenge_client_eligibility_periods")
 }
 
 // ─── Achievements ─────────────────────────────────────────────────────────────

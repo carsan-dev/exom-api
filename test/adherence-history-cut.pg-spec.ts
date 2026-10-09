@@ -182,6 +182,8 @@ describe('actual complete immutable history cut on PG17', () => {
       '20261002040000_adherence_historical_prescription',
       '20261002050000_adherence_effective_prescription_lineage',
       '20261002060000_adherence_evaluation_revisions',
+      '20261005210000_add_weekly_recap_review_drafts_and_publication',
+      '20261009190000_p5fu05_global_challenge_eligibility_periods',
     ]);
     const databaseUrl = url.toString();
     execFileSync(

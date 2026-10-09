@@ -10,6 +10,7 @@ const { validateDatabaseUrl, assertTestDatabase } = require('./test-database.cjs
 
 const root = path.resolve(__dirname, '..');
 const fixture = 'src/modules/users/client-archive.concurrency.spec.ts';
+const eligibilityMigration = '20261009190000_p5fu05_global_challenge_eligibility_periods';
 const dataDir = '/var/lib/postgresql/exom-ci-data';
 const label = 'exom.archive.owner';
 const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -60,7 +61,7 @@ function selfCheck() {
   console.log('PASS: report acceptance + 7 negative reports + 3 unsafe URL rejections');
 }
 
-async function main() {
+async function main(legacyUpgrade = false) {
   const owner = `archive-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
   const container = `exom-${owner}`;
   const volume = `${container}-data`;
@@ -70,10 +71,13 @@ async function main() {
   const env = cleanEnv();
   const manifest = {
     owner, container, volume, output, startedUtc: new Date().toISOString(),
-    dataDir, database: 'exom_ci', user: 'exom_ci', status: 'IN_PROGRESS', commands: [],
+    dataDir, database: 'exom_ci', user: 'exom_ci', legacyUpgrade, status: 'IN_PROGRESS', commands: [],
     sourceHashes: Object.fromEntries([
       'scripts/run-client-archive-pg.cjs', fixture, 'scripts/test-database.cjs',
       'test/setup-database.ts', 'prisma.config.ts', 'package.json',
+      'prisma/schema.prisma', `prisma/migrations/${eligibilityMigration}/migration.sql`,
+      'src/modules/challenges/challenges.service.ts', 'src/modules/challenges/challenge-progress.ts',
+      'src/modules/streaks/streak-calculator.service.ts',
     ].map((file) => [file, hash(path.join(root, file))])),
   };
   const receipt = path.join(output, 'manifest.json');
@@ -169,7 +173,67 @@ globalThis.fetch = deny;
       PRISMA_HIDE_UPDATE_MESSAGE: '1',
     };
     save();
-    command(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], childEnv);
+    if (legacyUpgrade) {
+      const migrations = path.join(output, 'legacy-migrations');
+      fs.mkdirSync(migrations);
+      for (const entry of fs.readdirSync(path.join(root, 'prisma/migrations'))) {
+        if (entry !== eligibilityMigration) fs.cpSync(path.join(root, 'prisma/migrations', entry), path.join(migrations, entry), { recursive: true });
+      }
+      const schema = path.join(output, 'legacy.prisma');
+      fs.writeFileSync(schema, command('git', ['show', 'HEAD:prisma/schema.prisma']));
+      const config = path.join(output, 'legacy.config.cjs');
+      fs.writeFileSync(config, `module.exports = {schema: ${JSON.stringify(schema)}, migrations: {path: ${JSON.stringify(migrations)}}, datasource: {url: process.env.PRISMA_DATABASE_URL}};`);
+      command(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--config', config], childEnv);
+      const legacy = new Pool({ connectionString: url });
+      const migration = fs.readFileSync(path.join(root, 'prisma/migrations', eligibilityMigration, 'migration.sql'), 'utf8');
+      async function snapshot() {
+        const tables = await legacy.query(`SELECT tablename FROM pg_tables WHERE schemaname='public'
+          AND tablename NOT IN ('_prisma_migrations','challenge_client_eligibility_periods') ORDER BY tablename`);
+        const rows = {};
+        for (const { tablename } of tables.rows) {
+          assert(/^[a-z_]+$/.test(tablename), 'Unsafe snapshot identifier');
+          rows[tablename] = (await legacy.query(`SELECT (to_jsonb(t)-'challenge_activity'-'challenge_activity_at') AS value FROM "${tablename}" t ORDER BY (to_jsonb(t)-'challenge_activity'-'challenge_activity_at')::text`)).rows;
+        }
+        return crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+      }
+      try {
+        await assertTestDatabase(legacy, url);
+        const a = `${owner}-legacy-admin`, c = `${owner}-legacy-client`, i = `${owner}-legacy-inactive`;
+        await legacy.query(`INSERT INTO users(id,firebase_uid,email,role,updated_at) VALUES
+          ($1,$1,$1||'@example.test','ADMIN',now()),($2,$2,$2||'@example.test','CLIENT',now()),($3,$3,$3||'@example.test','CLIENT',now())`, [a,c,i]);
+        await legacy.query(`INSERT INTO admin_client_assignments(id,admin_id,client_id,is_active) VALUES ($1,$2,$3,true),($4,$2,$5,false)`, [`${owner}-aca`,a,c,`${owner}-aca-inactive`,i]);
+        await legacy.query(`INSERT INTO challenges(id,title,description,type,target_value,unit,is_manual,is_global,created_by,updated_at)
+          VALUES ($1,'legacy','own fixture','MAIN_GOAL',10,'days',true,true,$2,now()),($3,'manual','own fixture','MAIN_GOAL',10,'days',true,false,$2,now())`, [`${owner}-global`,a,`${owner}-manual`]);
+        await legacy.query(`INSERT INTO challenge_clients(id,challenge_id,client_id,assignment_source,current_value,is_completed,completed_at,assigned_at)
+          VALUES ($1,$2,$3,'GLOBAL',10,true,'2026-09-03','2026-09-02'),($4,$2,$5,'GLOBAL',7,false,NULL,'2026-09-02'),($6,$7,$3,'MANUAL',9,false,NULL,'2026-09-02')`,
+        [`${owner}-cc`,`${owner}-global`,c,`${owner}-cc-inactive`,i,`${owner}-cc-manual`,`${owner}-manual`]);
+        await legacy.query(`INSERT INTO body_metrics(id,client_id,date,weight_kg) VALUES($1,$2,'2026-09-02',70)`,[`${owner}-metric`,c]);
+        await legacy.query(`INSERT INTO day_progress(id,client_id,date,training_completed,meals_completed,updated_at) VALUES($1,$2,'2026-09-02',true,ARRAY['own-meal'],now())`,[`${owner}-progress`,c]);
+        await legacy.query(`INSERT INTO challenges(id,title,description,type,target_value,unit,is_manual,is_global,updated_at)
+          VALUES ($1,'non-client legacy','own fixture','MAIN_GOAL',10,'days',true,true,now())`, [`${owner}-non-client-global`]);
+        await legacy.query(`INSERT INTO challenge_clients(id,challenge_id,client_id,assignment_source,current_value,assigned_at)
+          VALUES ($1,$2,$3,'GLOBAL',6,'2026-09-02')`, [`${owner}-non-client-cc`,`${owner}-non-client-global`,a]);
+        manifest.legacyBeforeHash = await snapshot();
+        let rolledBack = false;
+        try { await legacy.query(migration.replace(/COMMIT;\s*$/, 'SELECT 1/0; COMMIT;')); }
+        catch (error) { assert(error.code === '22012', 'Unexpected rollback cause'); await legacy.query('ROLLBACK'); rolledBack = true; }
+        assert(rolledBack && await snapshot() === manifest.legacyBeforeHash, 'Failed migration changed protected legacy rows');
+        assert((await legacy.query(`SELECT to_regclass('public.challenge_client_eligibility_periods') AS value`)).rows[0].value === null, 'Failed migration retained new table');
+        manifest.legacyRollback = 'PASS';
+        command(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], childEnv);
+        manifest.legacyAfterHash = await snapshot();
+        assert(manifest.legacyAfterHash === manifest.legacyBeforeHash, 'Upgrade changed protected history');
+        const periods = (await legacy.query(`SELECT challenge_client_id,baseline_value,starts_on,
+          starts_on = (clock_timestamp() AT TIME ZONE 'UTC')::date + 1 AS conservative_start FROM challenge_client_eligibility_periods`)).rows;
+        assert(periods.length === 1 && periods[0].challenge_client_id === `${owner}-cc` && periods[0].baseline_value === 10 && periods[0].conservative_start, 'Wrong eligibility backfill');
+        const unknown = (await legacy.query(`SELECT bm.challenge_activity_at IS NULL AS metric_unknown, dp.challenge_activity = '{}'::jsonb AS progress_unknown
+          FROM body_metrics bm JOIN day_progress dp ON dp.client_id=bm.client_id WHERE bm.id=$1`,[`${owner}-metric`])).rows[0];
+        assert(unknown.metric_unknown && unknown.progress_unknown, 'Legacy provenance was fabricated');
+        command(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], childEnv);
+        assert(await snapshot() === manifest.legacyBeforeHash && (await legacy.query('SELECT count(*)::int AS n FROM challenge_client_eligibility_periods')).rows[0].n === 1, 'Migration replay was not idempotent');
+        manifest.legacyUpgrade = 'PASS';
+      } finally { await legacy.end(); }
+    } else command(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], childEnv);
     const reportPath = path.join(output, 'jest.json');
     command(process.execPath, ['node_modules/jest/bin/jest.js', '--runInBand', '--no-cache',
       '--runTestsByPath', fixture, '--detectOpenHandles', '--json', '--outputFile', reportPath,
@@ -183,6 +247,8 @@ globalThis.fetch = deny;
     manifest.skipped = report.numPendingTests;
     manifest.todo = report.numTodoTests;
     manifest.openHandles = report.openHandles.length;
+    manifest.finalSourceHashes = Object.fromEntries(Object.keys(manifest.sourceHashes).map((file) => [file, hash(path.join(root, file))]));
+    assert(JSON.stringify(manifest.finalSourceHashes) === JSON.stringify(manifest.sourceHashes), 'Sources changed during verification');
     manifest.status = 'PASS';
   } catch (error) {
     manifest.status = 'FAIL';
@@ -198,4 +264,5 @@ globalThis.fetch = deny;
 
 if (process.argv.length === 3 && process.argv[2] === '--self-check') selfCheck();
 else if (process.argv.length === 2) main().catch(() => { console.error('Launcher failed'); process.exitCode = 1; });
-else { console.error('Usage: node scripts/run-client-archive-pg.cjs [--self-check]'); process.exitCode = 1; }
+else if (process.argv.length === 3 && process.argv[2] === '--legacy-upgrade') main(true).catch(() => { console.error('Launcher failed'); process.exitCode = 1; });
+else { console.error('Usage: node scripts/run-client-archive-pg.cjs [--self-check|--legacy-upgrade]'); process.exitCode = 1; }
