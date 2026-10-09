@@ -13,7 +13,7 @@ import { ProgressPhotosService } from './progress-photos.service';
 
 describe('ProgressPhotosController HTTP contracts', () => {
   let app: INestApplication<Server>;
-  let role = Role.CLIENT;
+  let role: Role = Role.CLIENT;
   const service = {
     getHistory: jest.fn(),
     getSession: jest.fn(),
