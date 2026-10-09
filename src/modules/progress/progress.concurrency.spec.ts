@@ -16,6 +16,7 @@ const describeWithDatabase = testDatabaseUrl ? describe : describe.skip;
 
 interface CompletedExercise {
   training_exercise_id?: string;
+  training_session_id?: string;
   exercise_id: string;
   completed_at: string;
   sets?: Array<{ set_number: number; reps?: number; rir?: number }>;
@@ -471,6 +472,11 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
           sessionOne,
         ),
     );
+    if ('message' in unmarked) {
+      throw new Error(
+        'Expected persisted progress after unmarking the session',
+      );
+    }
     expect(completedExercises(unmarked.exercises_completed)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -959,6 +965,9 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
       rpe: 3,
       session_note: 'Second',
     };
+    if (typeof first.operation_revision !== 'number') {
+      throw new Error('Expected a numeric revision for the first command');
+    }
     const second = await runProgressCommand(
       'rpe-second-' + suffix,
       String(first.operation_revision),
@@ -983,6 +992,9 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
       }),
     ).toBe(2);
 
+    if (typeof second.operation_revision !== 'number') {
+      throw new Error('Expected a numeric revision for the second command');
+    }
     await runProgressCommand(
       'rpe-unmark-' + suffix,
       String(second.operation_revision),
