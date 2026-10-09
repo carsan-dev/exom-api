@@ -2,12 +2,58 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import { expect } from '@jest/globals';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma, RecapStatus, Role } from '@prisma/client';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RecapsService } from './recaps.service';
 import {
   ADMIN_RECAP_STATUSES,
   AdminRecapQueryDto,
 } from './dto/admin-recap-query.dto';
+
+const publicationPayload = {
+  id: 'recap-1',
+  client_id: 'client-1',
+  week_start_date: '2026-10-05T00:00:00.000Z',
+  week_end_date: '2026-10-11T00:00:00.000Z',
+  submitted_at: '2026-10-08T09:00:00.000Z',
+  created_at: '2026-10-05T09:15:30.123Z',
+  updated_at: '2026-10-09T11:00:00.000Z',
+  reviewed_at: '2026-10-08T10:20:30.456Z',
+  archived_at: null,
+  status: 'REVIEWED' as const,
+  client_feedback_sent_at: '2026-10-08T10:21:30.000Z',
+  client_feedback_read_at: '2026-10-08T10:22:30.000Z',
+  client_feedback_text: 'Legacy feedback',
+  training_sessions: 3,
+  general_notes: 'Client notes',
+  hydration_enabled: false,
+  stress_enabled: false,
+  muscle_pain_zones: [],
+  improvement_areas: [],
+  training_effort: null,
+  average_daily_steps: null,
+  training_progress: null,
+  training_notes: null,
+  nutrition_quality: null,
+  hydration_level: null,
+  food_quality: null,
+  nutrition_notes: null,
+  sleep_hours_range: null,
+  fatigue_level: null,
+  pain_intensity: null,
+  recovery_notes: null,
+  mood: null,
+  stress_level: null,
+  hunger_level: null,
+  energy_level: null,
+  digestion_level: null,
+  improvement_app_rating: null,
+  improvement_service_rating: null,
+  improvement_feedback_text: null,
+  published_coach_summary: 'Resumen ñ',
+  published_changes: 'Cambios',
+  published_next_week_goals: 'Objetivos',
+};
 
 describe('RecapsService', () => {
   let service: RecapsService;
@@ -158,6 +204,70 @@ describe('RecapsService', () => {
         'recap-1',
       );
       expect(admin.admin_comments).toBe(stored.admin_comments);
+      expect(notificationsService.sendToUser).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['full', ['Resumen ñ', 'Cambios', 'Objetivos']],
+    ['partial', ['Resumen ñ', null, 'Objetivos']],
+    ['null', [null, null, null]],
+    ['absent legacy', [null, null, null]],
+  ])(
+    'serializes the common %s publication without the newer private draft',
+    async (variant, values) => {
+      const payload: Record<string, unknown> = { ...publicationPayload };
+      const keys = [
+        'published_coach_summary',
+        'published_changes',
+        'published_next_week_goals',
+      ];
+      keys.forEach((key, index) => {
+        if (variant === 'absent legacy') delete payload[key];
+        else payload[key] = values[index];
+      });
+      const stored = {
+        ...payload,
+        week_start_date: new Date(publicationPayload.week_start_date),
+        week_end_date: new Date(publicationPayload.week_end_date),
+        submitted_at: new Date(publicationPayload.submitted_at),
+        created_at: new Date(publicationPayload.created_at),
+        updated_at: new Date(publicationPayload.updated_at),
+        reviewed_at: new Date(publicationPayload.reviewed_at),
+        client_feedback_sent_at: new Date(
+          publicationPayload.client_feedback_sent_at,
+        ),
+        client_feedback_read_at: new Date(
+          publicationPayload.client_feedback_read_at,
+        ),
+
+        admin_comments: 'PRIVATE_INTERNAL_SENTINEL',
+        draft_coach_summary: 'PRIVATE_NEW_SUMMARY_SENTINEL',
+        draft_changes: 'PRIVATE_NEW_CHANGES_SENTINEL',
+        draft_next_week_goals: 'PRIVATE_NEW_GOALS_SENTINEL',
+        review_version: 9,
+      };
+      const project = ({ select }: { select: Record<string, boolean> }) =>
+        Object.fromEntries(
+          Object.entries(stored).filter(([key]) => select[key]),
+        );
+      prisma.weeklyRecap.findUnique.mockImplementation(
+        (args: { select: Record<string, boolean> }) =>
+          Promise.resolve(project(args)),
+      );
+      prisma.weeklyRecap.findMany.mockImplementation(
+        (args: { select: Record<string, boolean> }) =>
+          Promise.resolve([project(args)]),
+      );
+      prisma.weeklyRecap.count.mockResolvedValue(1);
+      const detail = await service.getMyRecapById('client-1', 'recap-1');
+      const list = await service.findMyRecaps('client-1', new PaginationDto());
+      for (const result of [detail, list.data[0]]) {
+        const serialized = JSON.stringify(result);
+        expect(JSON.parse(serialized)).toEqual(payload);
+        expect(serialized).not.toMatch(/PRIVATE_|draft_|review_version/);
+      }
+      expect(stored.draft_coach_summary).toBe('PRIVATE_NEW_SUMMARY_SENTINEL');
       expect(notificationsService.sendToUser).not.toHaveBeenCalled();
     },
   );
