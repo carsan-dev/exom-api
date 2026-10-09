@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { childEnvironment, assertOwnedContainer, assertTracking, validateSelection, checkedChild, legacyPrefix, PG_SUITES, onJestConfig, cleanOwnedCache } = require('./run-adherence-integration.cjs');
+const { childEnvironment, prepareOffEnvironment, assertOwnedContainer, assertTracking, validateSelection, checkedChild, legacyPrefix, PG_SUITES, onJestConfig, cleanOwnedCache } = require('./run-adherence-integration.cjs');
 const url = 'postgresql://exom_ci:synthetic@127.0.0.1:5432/exom_ci';
 test('child aliases are identical and unrelated credentials cannot leak', () => {
   const env = childEnvironment(url, '/owned/empty', { PATH: 'bin', DATABASE_URL: 'production', DIRECT_URL: 'production', SECRET: 'private', EXOM_RESOLVER_TRACKING: 'on' });
@@ -69,4 +69,38 @@ test('legacy fixture is exactly the committed 84-prefix before baseline', () => 
   assert.equal(prefix.length, 84);
   assert.equal(names[84], '20261001040000_adherence_history_baseline');
   assert.throws(() => legacyPrefix(names.slice(1)));
+});
+
+test('OFF generates required suite flags only after isolated preparation', async () => {
+  const env = childEnvironment(url, '/owned/empty', { FOLLOWUP_HTTP_PG: '1', FOLLOWUP_SERVICE_PG: '1', EXOM_RESOLVER_TRACKING: 'on' });
+  assert.equal(env.FOLLOWUP_HTTP_PG, undefined);
+  assert.equal(env.FOLLOWUP_SERVICE_PG, undefined);
+  env.EXOM_RESOLVER_TRACKING = 'off';
+  let prepared = false;
+  await prepareOffEnvironment(env, async actual => {
+    assert.equal(actual, env);
+    assert.equal(actual.FOLLOWUP_HTTP_PG, undefined);
+    assert.equal(actual.FOLLOWUP_SERVICE_PG, undefined);
+    prepared = true;
+  });
+  assert.equal(prepared, true);
+  assert.equal(env.FOLLOWUP_HTTP_PG, '1');
+  assert.equal(env.FOLLOWUP_SERVICE_PG, '1');
+  assert.equal(env.EXOM_RESOLVER_TRACKING, 'off');
+  assert.equal(env.EXOM_LEDGER_OWNED_RUN, undefined);
+  assert.equal(PG_SUITES.length, 5);
+});
+test('failed isolated preparation cannot activate OFF suites', async () => {
+  const env = { ...childEnvironment(url, '/owned/empty', {}), EXOM_RESOLVER_TRACKING: 'off' };
+  await assert.rejects(prepareOffEnvironment(env, async () => { throw Error('identity or legacy guard failed'); }), /identity or legacy guard failed/);
+  assert.equal(env.FOLLOWUP_HTTP_PG, undefined);
+  assert.equal(env.FOLLOWUP_SERVICE_PG, undefined);
+});
+test('ON cannot use OFF suite activation or call its preparation', async () => {
+  const env = { ...childEnvironment(url, '/owned/empty', {}), EXOM_RESOLVER_TRACKING: 'on' };
+  let called = false;
+  await assert.rejects(prepareOffEnvironment(env, async () => { called = true; }), /Unexpected commit timestamp tracking/);
+  assert.equal(called, false);
+  assert.equal(env.FOLLOWUP_HTTP_PG, undefined);
+  assert.equal(env.FOLLOWUP_SERVICE_PG, undefined);
 });
