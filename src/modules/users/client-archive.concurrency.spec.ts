@@ -1,4 +1,13 @@
 import { randomUUID } from 'node:crypto';
+import { Test } from '@nestjs/testing';
+import {
+  ClientDeletionService,
+  DeletionIdentityService,
+} from '../client-deletion/client-deletion.service';
+import { UploadsService } from '../uploads/uploads.service';
+import { EmailService } from '../email/email.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { CalendarService } from '../calendar/calendar.service';
 import { ClientFollowUpTasksService } from '../client-followup-tasks/client-followup-tasks.service';
 import { ClientFollowUpTaskType } from '@prisma/client';
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
@@ -1022,6 +1031,347 @@ suite('F005 archive PostgreSQL integration', () => {
       }
     },
   );
+
+  it('rechaza la solicitud real de borrado tras esperar el commit de una revocación real de rol', async () => {
+    const clientId = `${prefix}-fu01-cliente`;
+    const requesterId = `${prefix}-fu01-solicitante`;
+    // No se añaden a ids: este caso conserva sus filas propias, incluso al fallar.
+    await prisma.user.createMany({
+      data: [
+        {
+          id: clientId,
+          firebase_uid: clientId,
+          email: `${clientId}@example.test`,
+          role: Role.CLIENT,
+        },
+        {
+          id: requesterId,
+          firebase_uid: requesterId,
+          email: `${requesterId}@example.test`,
+          role: Role.SUPER_ADMIN,
+        },
+      ],
+    });
+    await prisma.bodyMetric.create({
+      data: {
+        client_id: clientId,
+        date: new Date('2026-10-09'),
+        weight_kg: 81,
+      },
+    });
+    await prisma.clientFollowUpTask.create({
+      data: {
+        client_id: clientId,
+        created_by_id: requesterId,
+        type: ClientFollowUpTaskType.REVIEW,
+        title: 'Histórico propio FU01',
+        due_date: new Date('2026-10-09'),
+      },
+    });
+    await prisma.notification.create({
+      data: {
+        sender_id: requesterId,
+        recipient_id: clientId,
+        title: 'Histórico propio FU01',
+        body: 'Conservar íntegro',
+        data: { client_id: clientId },
+      },
+    });
+    // Fotografía completa de todas las tablas públicas, no solo recuentos.
+    // users se compara aparte porque el writer sí cambia el rol del solicitante.
+    const tables = await pool.query<{ tablename: string }>(
+      `SELECT tablename FROM pg_tables WHERE schemaname='public'
+       AND tablename NOT IN ('users', '_prisma_migrations') ORDER BY tablename`,
+    );
+    async function history() {
+      const snapshot: Record<string, string> = {};
+      for (const { tablename } of tables.rows) {
+        const identifier = `"${tablename.replaceAll('"', '""')}"`;
+        const result = await pool.query<{ contents: string }>(
+          `SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb)::text AS contents FROM public.${identifier} t`,
+        );
+        snapshot[tablename] = result.rows[0].contents;
+      }
+      return snapshot;
+    }
+    const beforeClient = await prisma.user.findUniqueOrThrow({
+      where: { id: clientId },
+    });
+    const beforeUsers = await prisma.user.findMany({ orderBy: { id: 'asc' } });
+    const beforeRequester = beforeUsers.find((user) => user.id === requesterId);
+    if (!beforeRequester) throw new Error('Falta el solicitante inicial FU01');
+    const beforeHistory = await history();
+    const beforeJobs = await prisma.clientDeletion.count();
+    const beforeWork = await prisma.durableWork.count();
+    const external = jest.fn((): never => {
+      throw new Error('Proveedor externo prohibido en FU01');
+    });
+    function deniedProvider(prototype: object) {
+      const methods: Record<string, typeof external> = {};
+      for (const [name, descriptor] of Object.entries(
+        Object.getOwnPropertyDescriptors(prototype),
+      )) {
+        if (name !== 'constructor' && typeof descriptor.value === 'function')
+          methods[name] = external;
+      }
+      return methods;
+    }
+    const identity = {
+      credentialLifetimeMs: external,
+      isAbsent: external,
+      remove: external,
+    } satisfies Pick<
+      DeletionIdentityService,
+      'credentialLifetimeMs' | 'isAbsent' | 'remove'
+    >;
+    const uploads = {
+      ...deniedProvider(UploadsService.prototype),
+      extractManagedFileKey: external,
+      credentialLifetimeMs: external,
+    } satisfies Pick<
+      UploadsService,
+      'extractManagedFileKey' | 'credentialLifetimeMs'
+    >;
+    const destructive = jest.fn((): never => {
+      throw new Error('Borde destructivo prohibido en FU01');
+    });
+    let release: () => void = () => {
+      throw new Error('Barrera no inicializada');
+    };
+    let signal: (pid: number) => void = () => {
+      throw new Error('Señal no inicializada');
+    };
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = new Promise<number>((resolve) => {
+      signal = resolve;
+    });
+    const writerDatabase = new PrismaClient({ adapter: new PrismaPg(pool) });
+    const requestDatabase = new PrismaClient({ adapter: new PrismaPg(pool) });
+    let observedRole: Role | undefined;
+    const writer = new Proxy(writerDatabase, {
+      get(target, property) {
+        if (property !== '$transaction') {
+          const value: unknown = Reflect.get(target, property, target);
+          return value;
+        }
+        return <T>(
+          callback: (tx: Prisma.TransactionClient) => Promise<T>,
+          options?: Parameters<PrismaClient['$transaction']>[1],
+        ) =>
+          target.$transaction(async (tx) => {
+            const result = await callback(tx);
+            expect(
+              await tx.user.findUniqueOrThrow({ where: { id: requesterId } }),
+            ).toMatchObject({ role: Role.CLIENT });
+            const [row] = await tx.$queryRaw<
+              { pid: number }[]
+            >`SELECT pg_backend_pid() AS pid`;
+            signal(row.pid);
+            await gate;
+            return result;
+          }, options);
+      },
+    });
+    const request = new Proxy(requestDatabase, {
+      get(target, property) {
+        if (property !== '$transaction') {
+          const value: unknown = Reflect.get(target, property, target);
+          return value;
+        }
+        return <T>(
+          callback: (tx: Prisma.TransactionClient) => Promise<T>,
+          options?: Parameters<PrismaClient['$transaction']>[1],
+        ) =>
+          target.$transaction((tx) => {
+            // Instalado ANTES del callback: impide delegates delete/deleteMany y
+            // SQL destructivo (request solo usa executeRaw para DELETE notifications).
+            const guarded = new Proxy(tx, {
+              get(transaction, member) {
+                if (member === '$executeRaw' || member === '$executeRawUnsafe')
+                  return destructive;
+                const value: unknown = Reflect.get(
+                  transaction,
+                  member,
+                  transaction,
+                );
+                if (typeof value !== 'object' || value === null) return value;
+                return new Proxy(value, {
+                  get(delegate, method) {
+                    if (method === 'delete' || method === 'deleteMany')
+                      return destructive;
+                    if (member === 'user' && method === 'findUnique') {
+                      return async (args: Prisma.UserFindUniqueArgs) => {
+                        const result = await transaction.user.findUnique(args);
+                        if (args.where.id === requesterId)
+                          observedRole = result?.role;
+                        return result;
+                      };
+                    }
+                    const original: unknown = Reflect.get(
+                      delegate,
+                      method,
+                      delegate,
+                    );
+                    return original;
+                  },
+                });
+              },
+            });
+            return callback(guarded);
+          }, options);
+      },
+    });
+    // compile únicamente; sin imports, AppModule, init, scheduler ni lifecycle.
+    const writerModule = await Test.createTestingModule({
+      providers: [
+        UsersService,
+        { provide: PrismaService, useValue: writer },
+        ...[
+          ChallengesService,
+          NotificationsService,
+          MetricsService,
+          CalendarService,
+          EmailService,
+          IdentityService,
+        ].map((provide) => ({
+          provide,
+          useValue: deniedProvider(provide.prototype),
+        })),
+      ],
+    }).compile();
+    const requestModule = await Test.createTestingModule({
+      providers: [
+        ClientDeletionService,
+        { provide: PrismaService, useValue: request },
+        { provide: UploadsService, useValue: uploads },
+        { provide: DeletionIdentityService, useValue: identity },
+      ],
+    }).compile();
+    const observe = <T>(operation: Promise<T>) =>
+      operation.then(
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
+      );
+    const roleWriteStartedAt = Date.now();
+    const writing = observe(
+      writerModule
+        .get(UsersService)
+        .updateRole(ids[3], requesterId, { role: Role.CLIENT }),
+    );
+    let requesting:
+      | ReturnType<
+          typeof observe<Awaited<ReturnType<ClientDeletionService['request']>>>
+        >
+      | undefined;
+    interface WaitProof {
+      pid: number;
+      blockers: number[];
+      wait_event_type: string;
+      query: string;
+    }
+    let proof: WaitProof | undefined;
+    try {
+      const writerPid = await Promise.race([
+        held,
+        writing.then(() => {
+          throw new Error('Writer finalizó antes de la barrera FU01');
+        }),
+      ]);
+      expect(
+        await prisma.user.findUniqueOrThrow({ where: { id: requesterId } }),
+      ).toMatchObject({ role: Role.SUPER_ADMIN });
+      requesting = observe(
+        requestModule.get(ClientDeletionService).request(clientId, requesterId),
+      );
+      for (let n = 0; n < 200 && !proof; n++) {
+        const result = await pool.query<WaitProof>(
+          `SELECT pid, pg_blocking_pids(pid) AS blockers, wait_event_type, query
+           FROM pg_stat_activity WHERE application_name=$1 AND $2=ANY(pg_blocking_pids(pid))
+           AND query LIKE '%FROM users%'`,
+          [prefix, writerPid],
+        );
+        proof = result.rows[0];
+        if (!proof) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(proof).toBeDefined();
+      expect(proof?.pid).not.toBe(writerPid);
+      expect(proof?.blockers).toContain(writerPid);
+      expect(proof?.wait_event_type).toBe('Lock');
+      expect(proof?.query).toContain('ORDER BY id FOR UPDATE');
+      expect(observedRole).toBeUndefined();
+      console.info('Grafo FU01 antes del commit del writer', {
+        writerPid,
+        ...proof,
+      });
+    } finally {
+      release();
+      await writing;
+      await requesting;
+      await writerDatabase.$disconnect();
+      await requestDatabase.$disconnect();
+    }
+    const transactionsSettledAt = Date.now();
+    const afterUsers = await prisma.user.findMany({ orderBy: { id: 'asc' } });
+    const afterRequester = afterUsers.find((user) => user.id === requesterId);
+    if (!afterRequester) throw new Error('Falta el solicitante final FU01');
+    // updateRole: users.service.ts:374 solo escribe role; schema.prisma:192
+    // declara User.updated_at @updatedAt, generado con el reloj local de Prisma.
+    const changedAt = afterRequester.updated_at.getTime();
+    expect(afterRequester.updated_at).toBeInstanceOf(Date);
+    expect(transactionsSettledAt).toBeGreaterThanOrEqual(roleWriteStartedAt);
+    expect(changedAt).toBeGreaterThanOrEqual(
+      beforeRequester.updated_at.getTime(),
+    );
+    expect(changedAt).toBeGreaterThanOrEqual(roleWriteStartedAt);
+    expect(changedAt).toBeLessThanOrEqual(transactionsSettledAt);
+    expect(afterUsers).toHaveLength(beforeUsers.length);
+    expect(afterUsers.map((user) => user.id)).toEqual(
+      beforeUsers.map((user) => user.id),
+    );
+    expect(afterUsers).toEqual(
+      beforeUsers.map((user) =>
+        user.id === requesterId
+          ? {
+              ...user,
+              role: Role.CLIENT,
+              updated_at: afterRequester.updated_at,
+            }
+          : user,
+      ),
+    );
+    expect((await writing).error).toBeUndefined();
+    expect((await writing).value).toEqual({
+      message: 'Rol actualizado exitosamente',
+    });
+    expect((await requesting)?.error).toBeInstanceOf(ForbiddenException);
+    expect(observedRole).toBe(Role.CLIENT);
+    expect(destructive).not.toHaveBeenCalled();
+    expect(external).not.toHaveBeenCalled();
+    expect(
+      await prisma.user.findUniqueOrThrow({ where: { id: requesterId } }),
+    ).toMatchObject({ role: Role.CLIENT });
+    expect(
+      await prisma.user.findUniqueOrThrow({ where: { id: clientId } }),
+    ).toEqual(beforeClient);
+    expect(await history()).toEqual(beforeHistory);
+    expect(await prisma.clientDeletion.count()).toBe(beforeJobs);
+    expect(await prisma.durableWork.count()).toBe(beforeWork);
+    console.info('Relectura y persistencia FU01', {
+      observedRole,
+      usersBefore: beforeUsers.length,
+      usersAfter: afterUsers.length,
+      roleWriteStartedAt,
+      changedAt,
+      transactionsSettledAt,
+      tables: tables.rows.length,
+      deletionJobs: beforeJobs,
+      durableWork: beforeWork,
+      destructiveCalls: destructive.mock.calls.length,
+      externalCalls: external.mock.calls.length,
+    });
+  });
 
   it('applies opposite states and a delayed replay according to last committed write', async () => {
     await service.setClientArchived(ids[3], Role.SUPER_ADMIN, ids[0], true);
