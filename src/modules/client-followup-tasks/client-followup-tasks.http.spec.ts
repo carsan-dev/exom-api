@@ -358,6 +358,7 @@ suite('REST-T2C manual task HTTP with real guards and PostgreSQL', () => {
       where: { id: body.id },
     });
     expect(stored.version).toBe(2);
+    expect(responseData(winner).version).toBe(stored.version);
     expect(stored.title).toBe(responseData(winner).title);
   });
   it.each([
