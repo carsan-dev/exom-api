@@ -6,7 +6,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import type { StreakCalculatorService } from '../streaks/streak-calculator.service';
 import { ProgressService } from './progress.service';
 import type { UploadsService } from '../uploads/uploads.service';
-import { FeedbackKind, MediaType } from '@prisma/client';
+import { FeedbackKind, MediaType, type Prisma } from '@prisma/client';
 import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 describe('ProgressService', () => {
   let service: ProgressService;
@@ -19,10 +19,7 @@ describe('ProgressService', () => {
     dayProgress: {
       findUnique: jest.Mock;
       findMany: jest.Mock;
-      upsert: jest.Mock<
-        Promise<unknown>,
-        [{ update: { exercises_completed?: unknown } }]
-      >;
+      upsert: jest.Mock<Promise<unknown>, [Prisma.DayProgressUpsertArgs]>;
     };
     streak: {
       findUnique: jest.Mock;
@@ -58,10 +55,7 @@ describe('ProgressService', () => {
       dayProgress: {
         findUnique: jest.fn(),
         findMany: jest.fn(),
-        upsert: jest.fn<
-          Promise<unknown>,
-          [{ update: { exercises_completed?: unknown } }]
-        >(),
+        upsert: jest.fn<Promise<unknown>, [Prisma.DayProgressUpsertArgs]>(),
       },
       streak: {
         findUnique: jest.fn(),
