@@ -10,6 +10,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -25,10 +26,28 @@ import {
   UpdateClientFollowUpTaskDto,
 } from './dto/client-followup-task.dto';
 
+import {
+  ClientFollowUpTaskListDto,
+  FollowUpPageDto,
+} from './dto/client-followup-task-list.dto';
+
 @Injectable()
 class RejectTaskPrototypeFields implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler<unknown>) {
-    const { body } = context.switchToHttp().getRequest<{ body?: unknown }>();
+    const { body, query } = context.switchToHttp().getRequest<{
+      body?: unknown;
+      query?: Record<string, unknown>;
+    }>();
+    if (
+      ['list', 'assignees'].includes(context.getHandler().name) &&
+      query &&
+      (['__proto__', 'constructor', 'prototype'].some((key) =>
+        Object.hasOwn(query, key),
+      ) ||
+        Object.values(query).some((value) => typeof value !== 'string'))
+    ) {
+      throw new BadRequestException('Invalid task query');
+    }
     // ValidationPipe/class-transformer strips these keys before whitelist checks.
     // Reject the raw request instead of silently accepting malicious extras.
     if (
@@ -62,6 +81,31 @@ export class ClientFollowUpTasksController {
   ) {
     // No body/query clock or owner input: route and server clock are authoritative.
     return this.tasks.summary(clientId, actor);
+  }
+
+  @Get()
+  @ApiOperation({
+    summary: 'List internal tasks; defaults to active, never assignee-only',
+  })
+  list(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('clientId') clientId: string,
+    @Query() query: ClientFollowUpTaskListDto,
+  ) {
+    return this.tasks.list(clientId, actor, query);
+  }
+
+  @Get('assignees')
+  @ApiOperation({
+    summary:
+      'List eligible task assignees for this client, not assignment-management access',
+  })
+  assignees(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('clientId') clientId: string,
+    @Query() query: FollowUpPageDto,
+  ) {
+    return this.tasks.assignees(clientId, actor, query);
   }
 
   @Get(':taskId')
