@@ -1027,28 +1027,28 @@ model ProgressPhoto {
 }
 
 model BodyMetric {
-  challenge_activity_at DateTime? @default(dbgenerated()) @db.Timestamptz(3) @ignore
-  id               String   @id @default(uuid())
-  client_id        String
-  date             DateTime @default(now()) @db.Date
-  weight_kg        Float?
-  muscle_mass_kg   Float?
-  height_cm        Float?
-  sleep_hours      Float?
-  neck_cm          Float?
-  shoulders_cm     Float?
-  chest_cm         Float?
-  arm_left_cm      Float?
-  arm_right_cm     Float?
-  forearm_left_cm  Float?
-  forearm_right_cm Float?
-  waist_cm         Float?
-  hips_cm          Float?
-  thigh_left_cm    Float?
-  thigh_right_cm   Float?
-  calf_left_cm     Float?
-  calf_right_cm    Float?
-  created_at       DateTime @default(now())
+  challenge_activity_at DateTime? @default(dbgenerated()) @ignore @db.Timestamptz(3)
+  id                    String    @id @default(uuid())
+  client_id             String
+  date                  DateTime  @default(now()) @db.Date
+  weight_kg             Float?
+  muscle_mass_kg        Float?
+  height_cm             Float?
+  sleep_hours           Float?
+  neck_cm               Float?
+  shoulders_cm          Float?
+  chest_cm              Float?
+  arm_left_cm           Float?
+  arm_right_cm          Float?
+  forearm_left_cm       Float?
+  forearm_right_cm      Float?
+  waist_cm              Float?
+  hips_cm               Float?
+  thigh_left_cm         Float?
+  thigh_right_cm        Float?
+  calf_left_cm          Float?
+  calf_right_cm         Float?
+  created_at            DateTime  @default(now())
 
   client User @relation(fields: [client_id], references: [id], onDelete: Cascade)
 
@@ -1153,12 +1153,12 @@ model WeeklyRecap {
   // Coach review storage: only explicit publication replaces the visible version.
   // Legacy feedback and lifecycle fields remain independent; no backfill.
   draft_coach_summary       String? @db.Text
-  draft_changes            String? @db.Text
+  draft_changes             String? @db.Text
   draft_next_week_goals     String? @db.Text
   published_coach_summary   String? @db.Text
-  published_changes        String? @db.Text
+  published_changes         String? @db.Text
   published_next_week_goals String? @db.Text
-  review_version           Int     @default(0)
+  review_version            Int     @default(0)
 
   status      RecapStatus @default(DRAFT)
   reviewed_at DateTime?
@@ -1207,8 +1207,8 @@ model ChallengeClient {
   completed_at      DateTime?
   assigned_at       DateTime                  @default(now())
 
-  challenge Challenge @relation(fields: [challenge_id], references: [id], onDelete: Cascade)
-  client    User      @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  challenge           Challenge                          @relation(fields: [challenge_id], references: [id], onDelete: Cascade)
+  client              User                               @relation(fields: [client_id], references: [id], onDelete: Cascade)
   eligibility_periods ChallengeClientEligibilityPeriod[]
 
   @@unique([challenge_id, client_id])
@@ -1220,12 +1220,12 @@ model ChallengeClient {
 // GLOBAL assignments keep their attained progress while scope eligibility is tracked separately.
 // Period boundaries are UTC calendar days because activity sources are date-based.
 model ChallengeClientEligibilityPeriod {
-  id                  String          @id @default(uuid())
+  id                  String    @id @default(uuid())
   challenge_client_id String
-  starts_on           DateTime        @db.Date
-  ends_on             DateTime?       @db.Date
-  opened_at           DateTime        @default(now()) @db.Timestamptz(3)
-  baseline_value      Float           @default(0)
+  starts_on           DateTime  @db.Date
+  ends_on             DateTime? @db.Date
+  opened_at           DateTime  @default(now()) @db.Timestamptz(3)
+  baseline_value      Float     @default(0)
 
   challenge_client ChallengeClient @relation(fields: [challenge_client_id], references: [id], onDelete: Cascade)
 
