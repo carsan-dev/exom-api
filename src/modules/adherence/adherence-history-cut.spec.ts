@@ -21,7 +21,22 @@ function fixture() {
     epochId: 'epoch',
     activatingFullXid: '100',
     origin: 'origin',
-    withSession,
+    withSession<T>(
+      work: (session: AdherenceCommitSession) => Promise<T>,
+    ): Promise<T> {
+      let callbackResult: Promise<T> | undefined;
+      const completion = withSession((session) => {
+        callbackResult = work(session);
+        return callbackResult;
+      });
+      const result = callbackResult;
+      return completion.then(() => {
+        if (result === undefined) {
+          throw new Error('Session callback was not invoked');
+        }
+        return result;
+      });
+    },
     close: () => Promise.resolve(),
   };
   return { sql, query, verifyOrigin, withSession, origin };
