@@ -29,7 +29,13 @@ describe('RecapsService', () => {
       create: jest.Mock;
       update: jest.Mock<
         Promise<unknown>,
-        [{ data: Record<string, unknown>; select?: Record<string, boolean> }]
+        [
+          {
+            where: Prisma.WeeklyRecapUpdateArgs['where'];
+            data: Record<string, unknown>;
+            select?: Record<string, boolean>;
+          },
+        ]
       >;
     };
   };
@@ -55,7 +61,13 @@ describe('RecapsService', () => {
         create: jest.fn(),
         update: jest.fn<
           Promise<unknown>,
-          [{ data: Record<string, unknown>; select?: Record<string, boolean> }]
+          [
+            {
+              where: Prisma.WeeklyRecapUpdateArgs['where'];
+              data: Record<string, unknown>;
+              select?: Record<string, boolean>;
+            },
+          ]
         >(),
       },
     };

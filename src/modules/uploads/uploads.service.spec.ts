@@ -49,7 +49,9 @@ describe('UploadsService', () => {
   };
   let service: UploadsService;
 
-  const session = (status = ManagedUploadStatus.VERIFIED) => ({
+  const session = (
+    status: ManagedUploadStatus = ManagedUploadStatus.VERIFIED,
+  ) => ({
     id: 'upload-1',
     owner_id: 'client-1',
     approval_request_id: null,
