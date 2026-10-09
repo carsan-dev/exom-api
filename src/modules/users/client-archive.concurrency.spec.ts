@@ -25,7 +25,10 @@ suite('F005 archive PostgreSQL integration', () => {
   let prisma: PrismaClient;
   let service: UsersService;
 
-  function createService(database: PrismaClient) {
+  function createService(
+    database: PrismaClient,
+    queueTemplate?: NotificationsService['queueTemplate'],
+  ) {
     const db = database as PrismaService;
     const denyExternal = (): never => {
       throw new Error('External dependency called by archive fixture');
@@ -39,7 +42,10 @@ suite('F005 archive PostgreSQL integration', () => {
     } satisfies IdentityProvider;
     // No Nest lifecycle/cron. Fail closed even if a future path queues/sends FCM.
     const notifications = new Proxy(new NotificationsService(db), {
-      get: () => denyExternal,
+      get: (_target, property) =>
+        property === 'queueTemplate' && queueTemplate
+          ? queueTemplate
+          : denyExternal,
     });
     return new UsersService(
       db,
@@ -422,6 +428,242 @@ suite('F005 archive PostgreSQL integration', () => {
       }
     },
   );
+
+  it('finishes a real A-to-new-B replacement racing stale-coach archive without a database error', async () => {
+    const adminB = `${prefix}-replacement-admin`;
+    ids.push(adminB);
+    await prisma.user.create({
+      data: {
+        id: adminB,
+        firebase_uid: adminB,
+        email: `${adminB}@example.test`,
+        role: Role.ADMIN,
+      },
+    });
+    await prisma.user.update({
+      where: { id: ids[0] },
+      data: { is_archived: false },
+    });
+    expect(
+      await prisma.adminClientAssignment.count({
+        where: { admin_id: adminB, client_id: ids[0] },
+      }),
+    ).toBe(0);
+    const beforeClient = await prisma.user.findUniqueOrThrow({
+      where: { id: ids[0] },
+    });
+    const beforeMetrics = await prisma.bodyMetric.findMany({
+      where: { client_id: ids[0] },
+      orderBy: { id: 'asc' },
+    });
+    const oldAssignment = await prisma.adminClientAssignment.findFirstOrThrow({
+      where: { admin_id: ids[1], client_id: ids[0], is_active: true },
+    });
+    const queueTemplate = jest.fn<
+      ReturnType<NotificationsService['queueTemplate']>,
+      Parameters<NotificationsService['queueTemplate']>
+    >(() => Promise.resolve(undefined));
+    const writerDatabase = new PrismaClient({ adapter: new PrismaPg(pool) });
+    let release!: () => void;
+    let signal!: (pid: number) => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = new Promise<number>((resolve) => {
+      signal = resolve;
+    });
+    let deactivated = false;
+    let createStarted = false;
+    // Await original delegate execution, not merely PrismaPromise construction.
+    // No SQL/business substitute or extra business lock; preserve the default 5s timeout.
+    const instrumented = new Proxy(writerDatabase, {
+      get(target, property) {
+        if (property !== '$transaction') {
+          const value: unknown = Reflect.get(target, property, target);
+          return value;
+        }
+        return <T>(callback: (tx: Prisma.TransactionClient) => Promise<T>) =>
+          target.$transaction(async (tx) => {
+            const delegate = new Proxy(tx.adminClientAssignment, {
+              get(original, method) {
+                if (method === 'updateMany') {
+                  return async (
+                    args: Prisma.AdminClientAssignmentUpdateManyArgs,
+                  ) => {
+                    const result = await original.updateMany(args);
+                    expect(result.count).toBe(1);
+                    expect(
+                      await original.findUniqueOrThrow({
+                        where: { id: oldAssignment.id },
+                      }),
+                    ).toEqual({ ...oldAssignment, is_active: false });
+                    const [row] = await tx.$queryRaw<
+                      { pid: number }[]
+                    >`SELECT pg_backend_pid() AS pid`;
+                    deactivated = true;
+                    signal(row.pid);
+                    return result;
+                  };
+                }
+                if (method === 'createMany') {
+                  return async (
+                    args: Prisma.AdminClientAssignmentCreateManyArgs,
+                  ) => {
+                    await gate;
+                    expect(deactivated).toBe(true);
+                    createStarted = true;
+                    return original.createMany(args);
+                  };
+                }
+                const value: unknown = Reflect.get(original, method, original);
+                return value;
+              },
+            });
+            return callback(
+              new Proxy(tx, {
+                get(original, key) {
+                  const value: unknown =
+                    key === 'adminClientAssignment'
+                      ? delegate
+                      : Reflect.get(original, key, original);
+                  return value;
+                },
+              }),
+            );
+          });
+      },
+    });
+    const writing = createService(instrumented, queueTemplate)
+      .updateClientAssignments(ids[3], Role.SUPER_ADMIN, ids[0], {
+        admin_ids: [adminB],
+      })
+      .then(
+        (value) => ({ value, error: undefined }),
+        (error: unknown) => ({ value: undefined, error }),
+      );
+    interface WaitProof {
+      pid: number;
+      blockers: number[];
+      wait_event_type: string;
+      query: string;
+    }
+    let archive: Promise<unknown> | undefined;
+    let forward: WaitProof | undefined;
+    let reverse: WaitProof | undefined;
+    try {
+      const writerPid = await Promise.race([
+        held,
+        writing.then(() => {
+          throw new Error('Replacement ended before real deactivation barrier');
+        }),
+      ]);
+      expect(createStarted).toBe(false);
+      archive = service
+        .setClientArchived(ids[1], Role.ADMIN, ids[0], true)
+        .then(
+          () => 'accepted',
+          (error: unknown) => error,
+        );
+      for (let n = 0; n < 100 && !forward; n++) {
+        const result = await pool.query<WaitProof>(
+          `SELECT pid, pg_blocking_pids(pid) AS blockers, wait_event_type, query
+           FROM pg_stat_activity WHERE application_name=$1 AND $2=ANY(pg_blocking_pids(pid))`,
+          [prefix, writerPid],
+        );
+        forward = result.rows[0];
+        if (!forward) await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(forward).toBeDefined();
+      expect(forward?.wait_event_type).toBe('Lock');
+      expect(forward?.query).toMatch(/FROM (users|admin_client_assignments)/);
+      expect(forward?.query).toMatch(/FOR (UPDATE|SHARE)/);
+      console.info('Replacement forward wait', { writerPid, ...forward });
+      release();
+      // Observe the actual INSERT/FK wait, if present, before PG chooses a victim.
+      for (let n = 0; n < 100 && !reverse; n++) {
+        const result = await pool.query<WaitProof>(
+          `SELECT pid, pg_blocking_pids(pid) AS blockers, wait_event_type, query
+           FROM pg_stat_activity WHERE pid=$1 AND $2=ANY(pg_blocking_pids(pid))`,
+          [writerPid, forward?.pid],
+        );
+        reverse = result.rows[0];
+        if (!reverse) {
+          const ended = await Promise.race([
+            writing.then(() => true),
+            new Promise<boolean>((resolve) =>
+              setTimeout(() => resolve(false), 5),
+            ),
+          ]);
+          if (ended) break;
+        }
+      }
+      if (forward?.query.includes('admin_client_assignments')) {
+        expect(reverse?.wait_event_type).toBe('Lock');
+        expect(reverse?.query).toMatch(
+          /INSERT INTO .*admin_client_assignments/,
+        );
+      } else expect(reverse).toBeUndefined();
+      console.info(
+        'Replacement reverse wait',
+        reverse ?? 'none: canonical user wait',
+      );
+    } finally {
+      release();
+      await writing;
+      await archive;
+      await writerDatabase.$disconnect();
+    }
+    try {
+      const result = await writing;
+      // Owned fixture only; Prisma includes the PostgreSQL error code/message here.
+      console.info('Replacement domain outcomes', {
+        writerError: result.error,
+        archive: await archive,
+      });
+      expect(result.error).toBeUndefined();
+      expect(createStarted).toBe(true);
+      expect(result.value).toMatchObject({
+        client_id: ids[0],
+        active_admins: [{ id: adminB }],
+      });
+      expect(await archive).toBeInstanceOf(NotFoundException);
+      expect(
+        await prisma.adminClientAssignment.findUniqueOrThrow({
+          where: { id: oldAssignment.id },
+        }),
+      ).toEqual({ ...oldAssignment, is_active: false });
+      expect(
+        await prisma.adminClientAssignment.findFirstOrThrow({
+          where: { admin_id: adminB, client_id: ids[0] },
+        }),
+      ).toMatchObject({ is_active: true });
+      expect(
+        await prisma.user.findUniqueOrThrow({ where: { id: ids[0] } }),
+      ).toEqual(beforeClient);
+      expect(
+        await prisma.bodyMetric.findMany({
+          where: { client_id: ids[0] },
+          orderBy: { id: 'asc' },
+        }),
+      ).toEqual(beforeMetrics);
+      expect(queueTemplate).toHaveBeenCalledTimes(1);
+      expect(queueTemplate.mock.calls[0].slice(1, 4)).toEqual([
+        ids[3],
+        [adminB],
+        'admin_client_assigned',
+      ]);
+    } finally {
+      // Restore owned state even on RED; do not contaminate the original replay case.
+      await prisma.adminClientAssignment.update({
+        where: { id: oldAssignment.id },
+        data: { is_active: true },
+      });
+      await prisma.adminClientAssignment.updateMany({
+        where: { admin_id: adminB, client_id: ids[0] },
+        data: { is_active: false },
+      });
+    }
+  });
 
   it('applies opposite states and a delayed replay according to last committed write', async () => {
     await service.setClientArchived(ids[3], Role.SUPER_ADMIN, ids[0], true);

@@ -7,6 +7,11 @@ describe('AppModule scheduler registration', () => {
     EXOM_SMOKE_DISABLE_SCHEDULERS: process.env.EXOM_SMOKE_DISABLE_SCHEDULERS,
   };
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.dontMock('@nestjs/config');
+  });
+
   afterAll(() => {
     for (const [key, value] of Object.entries(originalEnvironment)) {
       if (value === undefined) {
@@ -63,6 +68,17 @@ describe('AppModule scheduler registration', () => {
     }
 
     jest.isolateModules(() => {
+      // Scheduler metadata is independent of dotenv loading, including production.
+      jest.doMock('@nestjs/config', () => {
+        const config =
+          jest.requireActual<typeof import('@nestjs/config')>('@nestjs/config');
+        jest
+          .spyOn(config.ConfigModule, 'forRoot')
+          .mockImplementation((): Promise<DynamicModule> => {
+            return Promise.resolve({ module: config.ConfigModule });
+          });
+        return config;
+      });
       const { AppModule } =
         jest.requireActual<typeof import('./app.module')>('./app.module');
       const imports = Reflect.getMetadata('imports', AppModule) as unknown[];
