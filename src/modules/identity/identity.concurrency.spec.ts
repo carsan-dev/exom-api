@@ -62,6 +62,7 @@ class FakeIdentity extends IdentityProvider {
       });
     const updated = {
       ...user,
+      toJSON: () => user.toJSON(),
       email: input.email ?? user.email,
       disabled: input.disabled ?? user.disabled,
     };

@@ -89,6 +89,11 @@ async function prepareLegacy(env) {
     }
   } finally { await pool.end(); }
 }
+async function prepareOffEnvironment(env, prepare = prepareLegacy) {
+  assertTracking('off', env.EXOM_RESOLVER_TRACKING);
+  await prepare(env); // Database identity, observed OFF tracking and legacy fixture must pass first.
+  Object.assign(env, { FOLLOWUP_HTTP_PG: '1', FOLLOWUP_SERVICE_PG: '1' });
+}
 function onJestConfig() {
   const base = require('../package.json').jest;
   return { ...base, rootDir: ROOT, testRegex: '.*(?:\\.pg-spec|\\.concurrency\\.spec)\\.ts$',
@@ -181,7 +186,7 @@ async function main(mode = process.argv[2]) {
     if (mode === 'on') { await ownedOn(directory, empty); return; }
     const env = childEnvironment(process.env.TEST_DATABASE_URL, empty);
     Object.assign(env, { EXOM_RESOLVER_TRACKING: 'off', P4_HISTORY_NONCE: '7f814563-7e91-42ac-a869-4e9470a32d81', P4_HISTORY_LEGACY_DATABASE: LEGACY });
-    await prepareLegacy(env);
+    await prepareOffEnvironment(env);
     jestRun(env, directory, 'unit', [], undefined);
     jestRun(env, directory, 'concurrency', ['--testPathPatterns=concurrency'], undefined);
   } finally {
@@ -190,7 +195,7 @@ async function main(mode = process.argv[2]) {
     rmdirSync(directory);
   }
 }
-module.exports = { childEnvironment, assertOwnedContainer, assertTracking, validateSelection, checkedChild, legacyPrefix, PG_SUITES, onJestConfig, cleanOwnedCache };
+module.exports = { childEnvironment, prepareOffEnvironment, assertOwnedContainer, assertTracking, validateSelection, checkedChild, legacyPrefix, PG_SUITES, onJestConfig, cleanOwnedCache };
 if (require.main === module) {
   let complete = false;
   process.on('beforeExit', () => { if (!complete) { console.error('Adherence integration did not complete'); process.exitCode = 1; } });

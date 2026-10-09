@@ -373,14 +373,14 @@ export class ProgressService {
     };
   }
 
-  private async withLockedDayProgress<T>(
+  private async withLockedDayProgress<T extends object>(
     clientId: string,
     date: Date,
     operation: (
       tx: TransactionClient,
       assignment: AssignmentContext,
     ) => Promise<T>,
-  ): Promise<T> {
+  ): Promise<T & { operation_revision?: Prisma.JsonValue }> {
     await this.autoAssignmentMaterializer.reconcile(clientId, {
       start: date,
       end: date,
@@ -417,7 +417,7 @@ export class ProgressService {
               : null;
           return Object.assign({}, current ?? saved, {
             operation_revision: revision,
-          }) as T;
+          }) as T & { operation_revision?: Prisma.JsonValue };
         }
         const current = await tx.dayProgress.findUnique({
           where: { client_id_date: { client_id: clientId, date } },

@@ -1,7 +1,7 @@
 import { validate } from 'class-validator';
 import { CreateRecapDto } from './create-recap.dto';
 
-function recapDto(averageDailySteps?: number) {
+function recapDto(averageDailySteps?: number): CreateRecapDto {
   return Object.assign(new CreateRecapDto(), {
     week_start_date: '2026-08-24',
     week_end_date: '2026-08-30',

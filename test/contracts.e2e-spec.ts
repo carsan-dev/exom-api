@@ -28,6 +28,8 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
   const exercise = randomUUID();
   const otherClient = randomUUID();
   const trainings: string[] = [];
+  const recap = randomUUID();
+  const task = randomUUID();
   const config = {
     version: 1,
     unit: 'MINUTES',
@@ -152,6 +154,12 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
   afterAll(async () => {
     try {
       if (prisma) {
+        await prisma.clientFollowUpTask.deleteMany({
+          where: { id: task, client_id: client },
+        });
+        await prisma.weeklyRecap.deleteMany({
+          where: { id: recap, client_id: client },
+        });
         await prisma.user.deleteMany({
           where: { id: { in: [owner, admin, client, otherClient] } },
         });
@@ -396,6 +404,192 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
       .set('x-contract-owner', owner)
       .send(invalid)
       .expect(400);
+  });
+  it('validates restored recap review envelopes and the client public projection', async () => {
+    await prisma.weeklyRecap.create({
+      data: {
+        id: recap,
+        client_id: client,
+        week_start_date: new Date('2099-04-06'),
+        week_end_date: new Date('2099-04-12'),
+        status: 'SUBMITTED',
+        submitted_at: new Date(),
+        admin_comments: 'Internal contract note',
+      },
+    });
+    const draftRoute = '/api/v1/recaps/{id}/review-draft';
+    const publishRoute = '/api/v1/recaps/{id}/review-publish';
+    const draftInput = {
+      expected_version: 0,
+      coach_summary: null,
+      changes: 'Contract changes',
+    };
+    validate({ $ref: '#/components/schemas/ReviewDraftDto' }, draftInput);
+    for (const actor of [client, admin]) {
+      await request(server())
+        .put(`/api/v1/recaps/${recap}/review-draft`)
+        .set('x-contract-owner', actor)
+        .send(draftInput)
+        .expect(403);
+    }
+    const invalidDraft = await request(server())
+      .put(`/api/v1/recaps/${recap}/review-draft`)
+      .set('x-contract-owner', owner)
+      .send({ coach_summary: null })
+      .expect(400);
+    validate(responseSchema(draftRoute, 'put', 400), invalidDraft.body);
+    const draft = await request(server())
+      .put(`/api/v1/recaps/${recap}/review-draft`)
+      .set('x-contract-owner', owner)
+      .send(draftInput)
+      .expect(200);
+    validate(responseSchema(draftRoute, 'put', 200), draft.body);
+    expect(responseData(draft)).toMatchObject({
+      review_version: 1,
+      draft_coach_summary: null,
+      draft_changes: 'Contract changes',
+      published_changes: null,
+    });
+    const version = responseData(draft).review_version;
+    if (typeof version !== 'number') throw Error('Expected review version');
+    const publicRead = async (publishedChanges: string | null) => {
+      const result = await request(server())
+        .get(`/api/v1/recaps/my/${recap}`)
+        .set('x-contract-owner', client)
+        .expect(200);
+      validate(
+        responseSchema('/api/v1/recaps/my/{id}', 'get', 200),
+        result.body,
+      );
+      const data = responseData(result);
+      expect(data).toMatchObject({
+        published_coach_summary: null,
+        published_changes: publishedChanges,
+      });
+      for (const field of [
+        'admin_comments',
+        'draft_coach_summary',
+        'draft_changes',
+        'draft_next_week_goals',
+        'review_version',
+      ])
+        expect(data).not.toHaveProperty(field);
+    };
+    await publicRead(null);
+    for (const input of [
+      { confirm: true },
+      { expected_version: version, confirm: false },
+    ]) {
+      const invalid = await request(server())
+        .post(`/api/v1/recaps/${recap}/review-publish`)
+        .set('x-contract-owner', owner)
+        .send(input)
+        .expect(400);
+      validate(responseSchema(publishRoute, 'post', 400), invalid.body);
+    }
+    const publishInput = { expected_version: version, confirm: true };
+    validate({ $ref: '#/components/schemas/ReviewPublishDto' }, publishInput);
+    const published = await request(server())
+      .post(`/api/v1/recaps/${recap}/review-publish`)
+      .set('x-contract-owner', owner)
+      .send(publishInput)
+      .expect(200);
+    validate(responseSchema(publishRoute, 'post', 200), published.body);
+    expect(responseData(published)).toMatchObject({
+      review_version: version + 1,
+      status: 'REVIEWED',
+      published_coach_summary: null,
+      published_changes: 'Contract changes',
+    });
+    await publicRead('Contract changes');
+  });
+  it('validates all six restored follow-up envelopes and required command fields', async () => {
+    const route = '/api/v1/admin/clients/{clientId}/follow-up-tasks';
+    const url = `/api/v1/admin/clients/${client}/follow-up-tasks`;
+    for (const actor of [client, admin]) {
+      await request(server())
+        .get(`${url}/summary`)
+        .set('x-contract-owner', actor)
+        .expect(403);
+    }
+    const empty = await request(server())
+      .get(`${url}/summary`)
+      .set('x-contract-owner', owner)
+      .expect(200);
+    validate(responseSchema(`${route}/summary`, 'get', 200), empty.body);
+    expect(responseData(empty)).toMatchObject({
+      next_task: null,
+      next_review: null,
+    });
+    const input = {
+      id: task,
+      type: 'REVIEW',
+      title: 'Contract follow-up',
+      due_date: '2099-04-13',
+      description: null,
+    };
+    validate(
+      { $ref: '#/components/schemas/CreateClientFollowUpTaskDto' },
+      input,
+    );
+    for (const field of ['id', 'type', 'title', 'due_date']) {
+      const invalid = await request(server())
+        .post(url)
+        .set('x-contract-owner', owner)
+        .send({ ...input, [field]: undefined })
+        .expect(400);
+      validate(responseSchema(route, 'post', 400), invalid.body);
+    }
+    const created = await request(server())
+      .post(url)
+      .set('x-contract-owner', owner)
+      .send(input)
+      .expect(201);
+    validate(responseSchema(route, 'post', 201), created.body);
+    expect(responseData(created)).toMatchObject({
+      id: task,
+      version: 1,
+      description: null,
+    });
+    for (const suffix of ['', '/assignees', `/${task}`, '/summary']) {
+      const schemaSuffix = suffix === `/${task}` ? '/{taskId}' : suffix;
+      const result = await request(server())
+        .get(`${url}${suffix}`)
+        .set('x-contract-owner', owner)
+        .expect(200);
+      validate(
+        responseSchema(`${route}${schemaSuffix}`, 'get', 200),
+        result.body,
+      );
+    }
+    const invalidUpdate = await request(server())
+      .put(`${url}/${task}`)
+      .set('x-contract-owner', owner)
+      .send({ title: 'Updated contract follow-up' })
+      .expect(400);
+    validate(
+      responseSchema(`${route}/{taskId}`, 'put', 400),
+      invalidUpdate.body,
+    );
+    const updateInput = {
+      expected_version: 1,
+      title: 'Updated contract follow-up',
+    };
+    validate(
+      { $ref: '#/components/schemas/UpdateClientFollowUpTaskDto' },
+      updateInput,
+    );
+    const updated = await request(server())
+      .put(`${url}/${task}`)
+      .set('x-contract-owner', owner)
+      .send(updateInput)
+      .expect(200);
+    validate(responseSchema(`${route}/{taskId}`, 'put', 200), updated.body);
+    expect(responseData(updated)).toMatchObject({
+      id: task,
+      version: 2,
+      title: updateInput.title,
+    });
   });
   it('serializes liveness through the documented envelope', async () => {
     const res = await request(server()).get('/api/v1/health/live').expect(200);

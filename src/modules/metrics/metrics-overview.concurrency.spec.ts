@@ -314,7 +314,7 @@ suite(
       await db.adminClientAssignment.create({
         data: { admin_id: coach, client_id: id, is_active: true },
       });
-      const server = app.getHttpServer<Server>();
+      const server: Server = app.getHttpServer();
       for (const actor of [coach, superadmin])
         await request(server)
           .get(`/admin/clients/${id}/metrics/overview`)

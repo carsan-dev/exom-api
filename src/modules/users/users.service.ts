@@ -24,6 +24,7 @@ import {
   flattenHistoricalMeals,
   loadDietHistory,
 } from '../../common/progress/diet-history';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import { ChallengesService } from '../challenges/challenges.service';
 import { STREAK_PUBLIC_SELECT } from '../streaks/streak-public';
 import { EmailService } from '../email/email.service';
@@ -760,6 +761,7 @@ export class UsersService {
     await this.assertAdminUsersExist(desiredAdminIds);
 
     const result = await this.prisma.$transaction(async (tx) => {
+      await lockClientDayProgress(tx, clientId);
       const currentActiveAssignments = await tx.adminClientAssignment.findMany({
         where: { client_id: clientId, is_active: true },
         select: { admin_id: true },
@@ -1327,6 +1329,14 @@ export class UsersService {
     const adminIdsToCreate = desiredAdminIds.filter(
       (adminId) => !assignmentsByAdminId.has(adminId),
     );
+
+    if (adminIdsToCreate.length > 0) {
+      // New assignments take FK locks on users. Acquire those parents first,
+      // in archive's sorted user-before-assignment order, not after old-row DML.
+      await tx.$queryRaw`SELECT id FROM users
+        WHERE id IN (${Prisma.join([clientId, ...adminIdsToCreate])})
+        ORDER BY id FOR UPDATE`;
+    }
 
     await Promise.all([
       assignmentsToDeactivate.length > 0

@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17-bookworm
+        image: public.ecr.aws/docker/library/postgres:17-bookworm@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df
         env:
           POSTGRES_USER: exom_ci
           POSTGRES_PASSWORD: exom_ci_disposable
