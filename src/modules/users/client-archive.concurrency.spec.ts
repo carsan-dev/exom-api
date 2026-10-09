@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { ClientFollowUpTasksService } from '../client-followup-tasks/client-followup-tasks.service';
+import { ClientFollowUpTaskType } from '@prisma/client';
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient, Role } from '@prisma/client';
@@ -664,6 +667,361 @@ suite('F005 archive PostgreSQL integration', () => {
       });
     }
   });
+
+  it.each([false, true])(
+    'conserva la intención bulk multifila opuesta y las tareas con rollback=%s',
+    async (rollback) => {
+      const clientId = `${prefix}-bulk-${rollback}`;
+      const admins = ['a', 'b', 'c', 'd', 'e', 'f'].map(
+        (name) => `${clientId}-${name}`,
+      );
+      ids.push(clientId, ...admins);
+      await prisma.user.createMany({
+        data: [clientId, ...admins].map((id) => ({
+          id,
+          firebase_uid: id,
+          email: `${id}@example.test`,
+          role: id === clientId ? Role.CLIENT : Role.ADMIN,
+        })),
+      });
+      await prisma.adminClientAssignment.createMany({
+        data: admins.map((admin_id, index) => ({
+          admin_id,
+          client_id: clientId,
+          is_active: [0, 1, 4].includes(index),
+        })),
+      });
+      const metric = await prisma.bodyMetric.create({
+        data: {
+          client_id: clientId,
+          date: new Date('2026-10-09'),
+          weight_kg: 81,
+        },
+      });
+      const tasks = new ClientFollowUpTasksService(prisma as PrismaService);
+      const actor = { id: admins[0], role: Role.ADMIN };
+      const task = await tasks.create(
+        clientId,
+        {
+          id: randomUUID(),
+          title: 'Revisión preservada',
+          type: ClientFollowUpTaskType.REVIEW,
+          due_date: '2026-10-12',
+          assigned_to_id: admins[1],
+        },
+        actor,
+      );
+      const beforeAssignments = await prisma.adminClientAssignment.findMany({
+        where: { client_id: clientId },
+        orderBy: { admin_id: 'asc' },
+      });
+      const expectedResponse = (selected: string[]) => ({
+        client_id: clientId,
+        active_admins: [...beforeAssignments]
+          .sort(
+            (a, b) =>
+              a.created_at.getTime() - b.created_at.getTime() ||
+              a.id.localeCompare(b.id),
+          )
+          .filter((assignment) => selected.includes(assignment.admin_id))
+          .map((assignment) => ({
+            id: assignment.admin_id,
+            email: `${assignment.admin_id}@example.test`,
+            profile: null,
+            assigned_at: assignment.created_at,
+          })),
+      });
+      const payload = { admin_ids: [admins[5], admins[3], admins[2]] };
+      const opposite = { admin_ids: [admins[1], admins[0]] };
+      const rollbackError = new Error('Rollback deliberado del bulk propio');
+      // Solo fronteras de transacción: todos los delegates y callbacks originales.
+      function barrier(database: PrismaClient, abort = false) {
+        let release!: () => void;
+        let signal!: (pid: number) => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const held = new Promise<number>((resolve) => {
+          signal = resolve;
+        });
+        const instrumented = new Proxy(database, {
+          get(target, property) {
+            if (property !== '$transaction') {
+              const value: unknown = Reflect.get(target, property, target);
+              return value;
+            }
+            return <T>(
+              callback: (tx: Prisma.TransactionClient) => Promise<T>,
+              options?: Parameters<PrismaClient['$transaction']>[1],
+            ) =>
+              target.$transaction(async (tx) => {
+                const result = await callback(tx);
+                const [row] = await tx.$queryRaw<{ pid: number }[]>`
+                SELECT pg_backend_pid() AS pid`;
+                signal(row.pid);
+                await gate;
+                if (abort) throw rollbackError;
+                return result;
+              }, options);
+          },
+        });
+        return { instrumented, held, release };
+      }
+      interface WaitProof {
+        pid: number;
+        blockers: number[];
+        wait_event_type: string;
+        query: string;
+      }
+      async function waitFor(blocker: number): Promise<WaitProof> {
+        for (let n = 0; n < 200; n++) {
+          const result = await pool.query<WaitProof>(
+            `SELECT pid, pg_blocking_pids(pid) AS blockers, wait_event_type, query
+             FROM pg_stat_activity WHERE application_name=$1
+             AND $2=ANY(pg_blocking_pids(pid))`,
+            [prefix, blocker],
+          );
+          const proof = result.rows[0];
+          if (proof) {
+            expect(proof.wait_event_type).toBe('Lock');
+            expect(proof.blockers).toContain(blocker);
+            expect(proof.query).toBe(
+              'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS "locked"',
+            );
+            console.info('Grafo bulk retenido antes de liberar', {
+              rollback,
+              blocker,
+              ...proof,
+            });
+            return proof;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        throw new Error('No se observó el bloqueo bulk previsto');
+      }
+      const taskDatabase = new PrismaClient({ adapter: new PrismaPg(pool) });
+      const writerDatabase = new PrismaClient({ adapter: new PrismaPg(pool) });
+      const taskBarrier = barrier(taskDatabase);
+      const writerBarrier = barrier(writerDatabase, rollback);
+      const notifications = new NotificationsService(prisma as PrismaService);
+      const queue: NotificationsService['queueTemplate'] = (...args) =>
+        notifications.queueTemplate(...args);
+      const observe = <T>(operation: Promise<T>) =>
+        operation.then(
+          (value) => ({ value, error: undefined }),
+          (error: unknown) => ({ value: undefined, error }),
+        );
+      const editing = observe(
+        new ClientFollowUpTasksService(
+          taskBarrier.instrumented as PrismaService,
+        ).update(
+          clientId,
+          task.id,
+          {
+            expected_version: 1,
+            title: 'Revisión editada antes del bulk',
+            assigned_to_id: admins[1],
+          },
+          actor,
+        ),
+      );
+      let first:
+        | ReturnType<
+            typeof observe<
+              Awaited<ReturnType<UsersService['updateClientAssignments']>>
+            >
+          >
+        | undefined;
+      let second: typeof first;
+      let firstProof: WaitProof | undefined;
+      let secondProof: WaitProof | undefined;
+      try {
+        const taskPid = await Promise.race([
+          taskBarrier.held,
+          editing.then(() => {
+            throw new Error('Tarea terminó antes de barrera');
+          }),
+        ]);
+        first = observe(
+          createService(
+            writerBarrier.instrumented,
+            queue,
+          ).updateClientAssignments(
+            ids[3],
+            Role.SUPER_ADMIN,
+            clientId,
+            payload,
+          ),
+        );
+        firstProof = await waitFor(taskPid);
+        taskBarrier.release();
+        const firstPid = await Promise.race([
+          writerBarrier.held,
+          first.then(() => {
+            throw new Error('Bulk terminó antes de barrera');
+          }),
+        ]);
+        expect(firstPid).toBe(firstProof.pid);
+        // El bulk opuesto espera el mismo advisory ANTES de leer asignaciones;
+        // solo calcula su intención después del commit/rollback del primero.
+        second = observe(
+          createService(prisma, queue).updateClientAssignments(
+            ids[3],
+            Role.SUPER_ADMIN,
+            clientId,
+            opposite,
+          ),
+        );
+        secondProof = await waitFor(firstPid);
+        expect(secondProof.pid).not.toBe(taskPid);
+        expect(secondProof.pid).not.toBe(firstPid);
+        expect(
+          await prisma.adminClientAssignment.findMany({
+            where: { client_id: clientId },
+            orderBy: { admin_id: 'asc' },
+          }),
+        ).toEqual(beforeAssignments);
+      } finally {
+        taskBarrier.release();
+        writerBarrier.release();
+        await editing;
+        await first;
+        await second;
+        await taskDatabase.$disconnect();
+        await writerDatabase.$disconnect();
+      }
+      const edited = await editing;
+      const firstResult = await first;
+      const secondResult = await second;
+      const assignments = await prisma.adminClientAssignment.findMany({
+        where: { client_id: clientId },
+        orderBy: { admin_id: 'asc' },
+      });
+      const messages = await prisma.notification.findMany({
+        where: { recipient_id: { in: admins } },
+        orderBy: { recipient_id: 'asc' },
+      });
+      console.info(
+        'Resultados completos bulk opuestos',
+        JSON.stringify({
+          rollback,
+          firstResult,
+          secondResult,
+          assignments,
+          messages,
+        }),
+      );
+      expect(firstProof).toBeDefined();
+      expect(secondProof).toBeDefined();
+      expect(edited.error).toBeUndefined();
+      if (!edited.value) throw new Error('Falta el resultado de la tarea');
+      expect(edited.value.updated_at).toBeInstanceOf(Date);
+      expect(edited.value).toEqual({
+        ...task,
+        title: 'Revisión editada antes del bulk',
+        version: 2,
+        updated_at: edited.value.updated_at,
+      });
+      expect(
+        await prisma.clientFollowUpTask.findUniqueOrThrow({
+          where: { id: task.id },
+        }),
+      ).toEqual(edited.value);
+      expect(
+        await prisma.bodyMetric.findUniqueOrThrow({
+          where: { id: metric.id },
+        }),
+      ).toEqual(metric);
+      expect(firstResult?.error).toBe(rollback ? rollbackError : undefined);
+      expect(secondResult?.error).toBeUndefined();
+      if (!rollback) {
+        expect(
+          firstResult?.value?.active_admins.map((admin) => admin.id).sort(),
+        ).toEqual([...payload.admin_ids].sort());
+        expect(firstResult?.value).toEqual(expectedResponse(payload.admin_ids));
+      }
+      expect(
+        messages.map((message) => ({
+          sender: message.sender_id,
+          recipient: message.recipient_id,
+          status: message.status,
+        })),
+      ).toEqual(
+        rollback
+          ? []
+          : [...payload.admin_ids, ...opposite.admin_ids]
+              .sort()
+              .map((recipient) => ({
+                sender: ids[3],
+                recipient,
+                status: 'PENDING',
+              })),
+      );
+      // Contrato: una respuesta exitosa debe reflejar la intención completa del
+      // bulk opuesto; no basta con que ambas transacciones eviten un deadlock.
+      expect(
+        secondResult?.value?.active_admins.map((admin) => admin.id).sort(),
+      ).toEqual([...opposite.admin_ids].sort());
+      expect(secondResult?.value).toEqual(expectedResponse(opposite.admin_ids));
+      expect(assignments).toEqual(
+        beforeAssignments.map((assignment) => ({
+          ...assignment,
+          is_active: opposite.admin_ids.includes(assignment.admin_id),
+        })),
+      );
+      await expect(tasks.get(clientId, task.id, actor)).resolves.toEqual(
+        edited.value,
+      );
+      if (rollback) {
+        const retry = await createService(
+          prisma,
+          queue,
+        ).updateClientAssignments(ids[3], Role.SUPER_ADMIN, clientId, payload);
+        expect(retry.active_admins.map((admin) => admin.id).sort()).toEqual(
+          [...payload.admin_ids].sort(),
+        );
+        expect(retry).toEqual(expectedResponse(payload.admin_ids));
+        expect(
+          await prisma.adminClientAssignment.findMany({
+            where: { client_id: clientId },
+            orderBy: { admin_id: 'asc' },
+          }),
+        ).toEqual(
+          beforeAssignments.map((assignment) => ({
+            ...assignment,
+            is_active: payload.admin_ids.includes(assignment.admin_id),
+          })),
+        );
+        await expect(
+          tasks.get(clientId, task.id, actor),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(
+          await tasks.get(clientId, task.id, {
+            id: ids[3],
+            role: Role.SUPER_ADMIN,
+          }),
+        ).toEqual(edited.value);
+        expect(
+          await prisma.notification.findMany({
+            where: { recipient_id: { in: admins } },
+            orderBy: { recipient_id: 'asc' },
+            select: { sender_id: true, recipient_id: true, status: true },
+          }),
+        ).toEqual(
+          [...payload.admin_ids].sort().map((recipient_id) => ({
+            sender_id: ids[3],
+            recipient_id,
+            status: 'PENDING',
+          })),
+        );
+        expect(
+          await prisma.bodyMetric.findUniqueOrThrow({
+            where: { id: metric.id },
+          }),
+        ).toEqual(metric);
+      }
+    },
+  );
 
   it('applies opposite states and a delayed replay according to last committed write', async () => {
     await service.setClientArchived(ids[3], Role.SUPER_ADMIN, ids[0], true);

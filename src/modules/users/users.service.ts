@@ -24,6 +24,7 @@ import {
   flattenHistoricalMeals,
   loadDietHistory,
 } from '../../common/progress/diet-history';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import { ChallengesService } from '../challenges/challenges.service';
 import { STREAK_PUBLIC_SELECT } from '../streaks/streak-public';
 import { EmailService } from '../email/email.service';
@@ -760,6 +761,7 @@ export class UsersService {
     await this.assertAdminUsersExist(desiredAdminIds);
 
     const result = await this.prisma.$transaction(async (tx) => {
+      await lockClientDayProgress(tx, clientId);
       const currentActiveAssignments = await tx.adminClientAssignment.findMany({
         where: { client_id: clientId, is_active: true },
         select: { admin_id: true },
