@@ -3,7 +3,92 @@ import {
   evaluateAutomaticProgress,
 } from './challenge-progress';
 
+interface ExerciseIdentity {
+  exercise_id: string;
+  training_exercise_id?: string;
+  training_session_id?: string;
+}
+
+interface ExerciseEvent extends ExerciseIdentity {
+  recorded_at: string;
+}
+
 describe('challenge eligibility periods', () => {
+  it.each<[string, ExerciseIdentity[], ExerciseEvent[], number]>([
+    [
+      'inactive retained after partial undo',
+      [{ exercise_id: 'a' }],
+      [{ exercise_id: 'a', recorded_at: '2026-10-04T12:00:00Z' }],
+      0,
+    ],
+    [
+      'eligible retained after inactive undo',
+      [{ exercise_id: 'a' }],
+      [{ exercise_id: 'a', recorded_at: '2026-10-05T12:00:00Z' }],
+      1,
+    ],
+    ['unknown legacy', [{ exercise_id: 'a' }], [], 0],
+    [
+      'new eligible occurrence',
+      [
+        {
+          exercise_id: 'a',
+          training_session_id: 's',
+          training_exercise_id: 't',
+        },
+      ],
+      [
+        {
+          exercise_id: 'a',
+          training_session_id: 's',
+          training_exercise_id: 't',
+          recorded_at: '2026-10-05T12:00:00Z',
+        },
+      ],
+      1,
+    ],
+    [
+      'removed eligible occurrence',
+      [{ exercise_id: 'a', training_session_id: 'other' }],
+      [
+        {
+          exercise_id: 'a',
+          training_session_id: 's',
+          recorded_at: '2026-10-05T12:00:00Z',
+        },
+      ],
+      0,
+    ],
+  ])(
+    'uses individual exercise provenance: %s',
+    (_label, completed, provenance, expected) => {
+      const date = new Date('2026-10-05');
+      const progress = {
+        date,
+        training_completed: false,
+        meals_completed: [],
+        exercises_completed: completed,
+        exercise_recorded_at: new Date('2026-10-05T12:00:00Z'),
+        exercise_activity: provenance.map((entry) => ({
+          identity: [
+            entry.exercise_id,
+            entry.training_exercise_id ?? null,
+            entry.training_session_id ?? null,
+          ],
+          recorded_at: entry.recorded_at,
+        })),
+      };
+      expect(
+        calculateStreak(
+          [{ date }],
+          [progress],
+          new Date('2026-10-06'),
+          undefined,
+          [{ starts_on: date, ends_on: null }],
+        ).currentDays,
+      ).toBe(expected);
+    },
+  );
   const assignedAt = new Date('2026-10-01T00:00:00.000Z');
   const asOf = new Date('2026-10-06T12:00:00.000Z');
   const periods = [

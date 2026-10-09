@@ -23,6 +23,11 @@ DECLARE
   previous JSONB := '{}';
   meal TEXT;
   meals JSONB := '{}';
+  exercise JSONB;
+  identity JSONB;
+  retained JSONB;
+  matches INTEGER;
+  exercises JSONB := '[]';
 BEGIN
   IF TG_OP = 'UPDATE' AND NEW.date = OLD.date THEN previous := OLD.challenge_activity; END IF;
   NEW.challenge_activity := previous;
@@ -31,12 +36,37 @@ BEGIN
       NEW.challenge_activity := jsonb_set(NEW.challenge_activity, '{training}', to_jsonb(stamp));
     END IF;
   ELSE NEW.challenge_activity := NEW.challenge_activity - 'training'; END IF;
-  IF jsonb_typeof(NEW.exercises_completed) = 'array' AND jsonb_array_length(NEW.exercises_completed) > 0 THEN
-    IF TG_OP = 'INSERT' OR NEW.exercises_completed IS DISTINCT FROM OLD.exercises_completed
-        OR NEW.date IS DISTINCT FROM OLD.date THEN
-      NEW.challenge_activity := jsonb_set(NEW.challenge_activity, '{exercise}', to_jsonb(stamp));
-    END IF;
-  ELSE NEW.challenge_activity := NEW.challenge_activity - 'exercise'; END IF;
+  IF jsonb_typeof(NEW.exercises_completed) = 'array' THEN
+    FOR exercise IN SELECT value FROM jsonb_array_elements(NEW.exercises_completed) LOOP
+      IF jsonb_typeof(exercise->'exercise_id') IS DISTINCT FROM 'string' THEN CONTINUE; END IF;
+      identity := jsonb_build_array(exercise->>'exercise_id', exercise->>'training_exercise_id', exercise->>'training_session_id');
+      matches := 0;
+      IF TG_OP = 'UPDATE' AND NEW.date = OLD.date AND jsonb_typeof(OLD.exercises_completed) = 'array' THEN
+        SELECT count(DISTINCT jsonb_build_array(value->>'exercise_id', value->>'training_exercise_id', value->>'training_session_id')),
+          jsonb_agg(jsonb_build_array(value->>'exercise_id', value->>'training_exercise_id', value->>'training_session_id')
+            ORDER BY jsonb_build_array(value->>'exercise_id', value->>'training_exercise_id', value->>'training_session_id') = identity DESC)->0
+          INTO matches, retained FROM jsonb_array_elements(OLD.exercises_completed)
+          WHERE jsonb_build_array(value->>'exercise_id', value->>'training_exercise_id', value->>'training_session_id') = identity
+            OR (value->>'exercise_id' = exercise->>'exercise_id' AND value->>'training_exercise_id' IS NULL
+              AND value->>'training_session_id' IS NOT DISTINCT FROM exercise->>'training_session_id');
+        IF retained = identity THEN matches := 1; END IF;
+      END IF;
+      -- Undo, reorder and set edits retain each event; ambiguous legacy time stays unknown.
+      IF matches = 0 THEN
+        exercises := exercises || jsonb_build_array(jsonb_build_object('identity', identity, 'recorded_at', stamp));
+      ELSIF matches = 1 THEN
+        SELECT value->'recorded_at' INTO retained FROM jsonb_array_elements(COALESCE(previous->'exercises', '[]'))
+          WHERE value->'identity' = retained LIMIT 1;
+        IF retained IS NOT NULL THEN
+          exercises := exercises || jsonb_build_array(jsonb_build_object('identity', identity, 'recorded_at', retained));
+        END IF;
+      END IF;
+    END LOOP;
+  END IF;
+  NEW.challenge_activity := NEW.challenge_activity - 'exercise';
+  IF jsonb_array_length(exercises) > 0 OR previous ? 'exercises' OR (TG_OP = 'UPDATE' AND CASE WHEN jsonb_typeof(OLD.exercises_completed) = 'array' THEN jsonb_array_length(OLD.exercises_completed) ELSE 0 END > 0) THEN
+    NEW.challenge_activity := jsonb_set(NEW.challenge_activity, '{exercises}', exercises);
+  END IF;
   FOREACH meal IN ARRAY COALESCE(NEW.meals_completed, ARRAY[]::TEXT[]) LOOP
     IF TG_OP = 'UPDATE' AND NEW.date = OLD.date AND meal = ANY(OLD.meals_completed) THEN
       IF previous->'meals' ? meal THEN meals := meals || jsonb_build_object(meal, previous->'meals'->meal); END IF;

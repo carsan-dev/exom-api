@@ -18,7 +18,7 @@ export interface StreakProgress {
   meals_completed: string[];
   updated_at?: Date;
   training_recorded_at?: Date | null;
-  exercise_recorded_at?: Date | null;
+  exercise_activity?: unknown;
   meal_recorded_at?: Record<string, string>;
 }
 
@@ -94,12 +94,42 @@ function hasStreakActivity(
         periods,
       )) ||
     (Array.isArray(progress.exercises_completed) &&
-      progress.exercises_completed.length > 0 &&
-      isEligibleActivity(
-        progress.date,
-        progress.exercise_recorded_at,
-        periods,
-      )) ||
+      progress.exercises_completed.some((exercise: unknown) => {
+        if (!periods) return true;
+        if (
+          !exercise ||
+          typeof exercise !== 'object' ||
+          !('exercise_id' in exercise) ||
+          typeof exercise.exercise_id !== 'string'
+        )
+          return false;
+        const identity = [
+          exercise.exercise_id,
+          'training_exercise_id' in exercise
+            ? (exercise.training_exercise_id ?? null)
+            : null,
+          'training_session_id' in exercise
+            ? (exercise.training_session_id ?? null)
+            : null,
+        ];
+        return (
+          Array.isArray(progress.exercise_activity) &&
+          progress.exercise_activity.some(
+            (activity: unknown) =>
+              activity !== null &&
+              typeof activity === 'object' &&
+              'identity' in activity &&
+              Array.isArray(activity.identity) &&
+              activity.identity.length === identity.length &&
+              activity.identity.every(
+                (id: unknown, index: number) => id === identity[index],
+              ) &&
+              'recorded_at' in activity &&
+              typeof activity.recorded_at === 'string' &&
+              isEligibleActivity(progress.date, activity.recorded_at, periods),
+          )
+        );
+      })) ||
     progress.meals_completed.some((id) =>
       isEligibleActivity(
         progress.date,

@@ -1549,7 +1549,7 @@ export class ChallengesService {
             ? prisma.$queryRaw<StreakProgress[]>(Prisma.sql`
               SELECT date, training_completed, exercises_completed, COALESCE(meals_completed, ARRAY[]::text[]) AS meals_completed, updated_at,
                 (challenge_activity->>'training')::timestamptz AS training_recorded_at,
-                (challenge_activity->>'exercise')::timestamptz AS exercise_recorded_at,
+                COALESCE(challenge_activity->'exercises', '[]'::jsonb) AS exercise_activity,
                 COALESCE(challenge_activity->'meals', '{}'::jsonb) AS meal_recorded_at
               FROM day_progress WHERE client_id = ${clientId} AND date >= ${earliestAssignedAt}
             `)

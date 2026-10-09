@@ -101,6 +101,190 @@ suite('F005 archive PostgreSQL integration', () => {
     await prisma?.$disconnect();
     await pool?.end();
   });
+  it.each([
+    ['inactive partial undo', 'inactive', 0],
+    ['remove only eligible', 'inactive', 0],
+    ['remove inactive', 'eligible', 1],
+    ['reorder and edit sets', 'reorder', 1],
+    ['unknown legacy retention', 'unknown', 0],
+    ['eligible new occurrence', 'new', 1],
+    ['date move is a new event', 'date', 1],
+    ['legacy identity promotion retains its event', 'legacy', 0],
+    ['canonical event survives legacy duplicate removal', 'canonical', 1],
+  ])(
+    'preserves individual exercise events: %s',
+    async (_name, action, expected) => {
+      const clientId = `${prefix}-exercise-${action}-${expected}-${randomUUID()}`;
+      await prisma.user.create({
+        data: {
+          id: clientId,
+          firebase_uid: clientId,
+          email: `${clientId}@example.test`,
+          role: Role.CLIENT,
+        },
+      });
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+      const challenge = await prisma.challenge.create({
+        data: {
+          title: clientId,
+          description: 'Exercise provenance fixture',
+          type: 'MAIN_GOAL',
+          target_value: 100,
+          unit: 'days',
+          is_global: true,
+          is_manual: false,
+          rule_key: 'STREAK_DAYS',
+        },
+      });
+      const row = await prisma.challengeClient.create({
+        data: {
+          challenge_id: challenge.id,
+          client_id: clientId,
+          assignment_source: 'GLOBAL',
+          assigned_at: today,
+        },
+      });
+      const training = await prisma.training.create({
+        data: { name: clientId, type: 'strength', tags: [] },
+      });
+      await prisma.planAssignment.create({
+        data: { client_id: clientId, date: tomorrow, training_id: training.id },
+      });
+      const inactive = {
+        exercise_id: 'a',
+        training_exercise_id: 'ta',
+        training_session_id: 's',
+        sets: [{ set_number: 1, reps: 5 }],
+      };
+      const other = {
+        exercise_id: 'b',
+        training_exercise_id: 'tb',
+        training_session_id: 's',
+      };
+      const progress = await prisma.dayProgress.create({
+        data: {
+          client_id: clientId,
+          date: action === 'date' ? today : tomorrow,
+          exercises_completed:
+            action === 'legacy'
+              ? [{ exercise_id: 'a', training_session_id: 's' }, other]
+              : [inactive, other],
+        },
+      });
+      if (action === 'unknown')
+        await pool.query(
+          "UPDATE day_progress SET challenge_activity='{}'::jsonb WHERE id=$1",
+          [progress.id],
+        );
+      const before = (
+        await pool.query<{ challenge_activity: unknown }>(
+          'SELECT challenge_activity FROM day_progress WHERE id=$1',
+          [progress.id],
+        )
+      ).rows[0].challenge_activity;
+      await prisma.challengeClientEligibilityPeriod.create({
+        data: { challenge_client_id: row.id, starts_on: today },
+      });
+      const ordering = await pool.query<{ before: boolean }>(
+        `SELECT COALESCE((challenge_activity->>'exercise')::timestamptz,
+          (challenge_activity->'exercises'->0->>'recorded_at')::timestamptz) < p.opened_at AS before
+          FROM day_progress d JOIN challenge_client_eligibility_periods p ON p.challenge_client_id=$2 WHERE d.id=$1`,
+        [progress.id, row.id],
+      );
+      if (action !== 'unknown') expect(ordering.rows[0].before).toBe(true);
+      await pool.query('SELECT pg_sleep(0.01)');
+      const eligible = {
+        exercise_id: 'a',
+        training_exercise_id: action === 'new' ? 'ta-new' : 'ta',
+        training_session_id: action === 'new' ? 's' : 'new-session',
+      };
+      if (
+        ['eligible', 'new', 'reorder', 'canonical'].includes(action) ||
+        _name === 'remove only eligible'
+      ) {
+        await prisma.dayProgress.update({
+          where: { id: progress.id },
+          data: { exercises_completed: [inactive, other, eligible] },
+        });
+      }
+      if (action === 'canonical') {
+        await prisma.dayProgress.update({
+          where: { id: progress.id },
+          data: {
+            exercises_completed: [
+              inactive,
+              other,
+              eligible,
+              { exercise_id: 'a', training_session_id: 'new-session' },
+              eligible,
+            ],
+          },
+        });
+      }
+      const retained =
+        action === 'eligible' || action === 'new' || action === 'canonical'
+          ? [eligible]
+          : action === 'reorder'
+            ? [
+                eligible,
+                other,
+                { ...inactive, sets: [{ set_number: 1, reps: 8 }] },
+              ]
+            : [inactive];
+      await prisma.dayProgress.update({
+        where: { id: progress.id },
+        data: {
+          exercises_completed: retained,
+          ...(action === 'date' ? { date: tomorrow } : {}),
+        },
+      });
+      if (action === 'inactive' || action === 'reorder') {
+        const retainedEvent = await pool.query<{ unchanged: boolean }>(
+          `SELECT challenge_activity->'exercises' @> ($2::jsonb->'exercises') AS unchanged FROM day_progress WHERE id=$1`,
+          [progress.id, JSON.stringify(before)],
+        );
+        if (action === 'reorder')
+          expect(retainedEvent.rows[0].unchanged).toBe(true);
+      }
+      const challenges = new ChallengesService(
+        prisma as PrismaService,
+        undefined!,
+        undefined!,
+      );
+      await challenges.recalculateAutomaticProgress(
+        clientId,
+        undefined,
+        [challenge.id],
+        undefined,
+        tomorrow,
+      );
+      expect(
+        (
+          await prisma.challengeClient.findUniqueOrThrow({
+            where: { id: row.id },
+          })
+        ).current_value,
+      ).toBe(expected);
+      if (action === 'unknown') {
+        const after = (
+          await pool.query<{ challenge_activity: unknown }>(
+            'SELECT challenge_activity FROM day_progress WHERE id=$1',
+            [progress.id],
+          )
+        ).rows[0].challenge_activity;
+        expect(after).toEqual({ exercises: [], meals: {} });
+      }
+      expect(
+        JSON.stringify(
+          await prisma.dayProgress.findUnique({ where: { id: progress.id } }),
+        ),
+      ).not.toContain('challenge_activity');
+      expect(before).toBeDefined();
+    },
+  );
   it.each(['insert', 'update'])(
     'preserves SQL NULL meals on %s without creating challenge activity',
     async (operation) => {
