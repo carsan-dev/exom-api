@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 const { assertTestDatabase } = require('./test-database.cjs');
 const ROOT = resolve(__dirname, '..');
 const evidenceRoot = process.env.FOLLOWUP_EVIDENCE_ROOT ?? (process.argv[2] === 'http' ? 'docs/evidence/rest-t2c-20261005' : 'docs/evidence/rest-t2b-20261005');
-if (!['docs/evidence/rest-t2b-20261005', 'docs/evidence/rest-t2c-20261005'].includes(evidenceRoot)) throw Error('Unapproved evidence root');
+if (!['docs/evidence/rest-t2b-20261005', 'docs/evidence/rest-t2c-20261005', 'docs/evidence/rest-t2d-20261005'].includes(evidenceRoot)) throw Error('Unapproved evidence root');
 const BASE = join(ROOT, evidenceRoot);
 const targets = ['src/modules/client-followup-tasks/client-followup-tasks.service.ts', 'src/modules/client-followup-tasks/client-followup-tasks.service.spec.ts', 'scripts/probe-client-deletion-lock-order.cjs'];
 function preserveNoncompilableSnapshots() {
@@ -50,7 +50,7 @@ function checkpoint(label) {
   fs.mkdirSync(dir, { recursive: true });
   const hashes = {};
   const snapshot_paths = {};
-  const httpSources = evidenceRoot.endsWith('rest-t2c-20261005') ? ['.gitignore', 'src/app.module.ts', 'src/modules/client-followup-tasks/client-followup-tasks.controller.ts', 'src/modules/client-followup-tasks/client-followup-tasks.module.ts', 'src/modules/client-followup-tasks/client-followup-tasks.http.spec.ts', 'src/modules/client-followup-tasks/dto/client-followup-task.dto.ts'] : [];
+  const httpSources = !evidenceRoot.endsWith('rest-t2b-20261005') ? ['src/modules/client-followup-tasks/client-followup-tasks.queries.ts', 'src/modules/client-followup-tasks/client-followup-tasks.projection.spec.ts', '.gitignore', 'src/app.module.ts', 'src/modules/client-followup-tasks/client-followup-tasks.controller.ts', 'src/modules/client-followup-tasks/client-followup-tasks.module.ts', 'src/modules/client-followup-tasks/client-followup-tasks.http.spec.ts', 'src/modules/client-followup-tasks/dto/client-followup-task.dto.ts'] : [];
   const selected = [...targets, 'scripts/run-followup-tasks-integration.cjs', 'src/modules/client-followup-tasks/client-followup-tasks.pg.spec.ts', ...httpSources].filter(path => fs.existsSync(join(ROOT, path)));
   for (const path of selected) {
     const bytes = fs.readFileSync(join(ROOT, path));
@@ -86,7 +86,7 @@ function inspect(owned, env) {
   if (rows.length !== 1 || row.Id !== owned.id || row.Name !== '/' + owned.name || !row.State.Running || row.Config.Labels?.['exom.scope'] !== owned.name || !row.Config.Env.includes('PGDATA=/var/lib/postgresql/exom-ci-data') || row.HostConfig.Binds?.length || row.Mounts.some(m => m.Type !== 'tmpfs') || !row.HostConfig.Tmpfs?.['/var/lib/postgresql/exom-ci-data'] || ports?.length !== 1 || ports[0].HostIp !== '127.0.0.1' || ports[0].HostPort !== owned.port) throw Error('Owned disposable resource identity mismatch');
 }
 async function database(directory, env, mode) {
-  const name = (evidenceRoot.endsWith('rest-t2c-20261005') ? 'exom-rest-t2c-' : 'exom-rest-t2b-') + randomUUID();
+  const name = 'exom-' + evidenceRoot.split('/').at(-1).replace('-20261005', '-') + randomUUID();
   const password = randomUUID();
   const id = run('docker', ['run', '--detach', '--name', name, '--label', `exom.scope=${name}`, '--publish', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/exom-ci-data:rw', '--tmpfs', '/var/lib/postgresql/data:rw', '--env', 'POSTGRES_USER=exom_ci', '--env', `POSTGRES_PASSWORD=${password}`, '--env', 'POSTGRES_DB=exom_ci', '--env', 'PGDATA=/var/lib/postgresql/exom-ci-data', 'postgres:17-bookworm', 'postgres', '-c', `track_commit_timestamp=${mode === 'all' ? 'off' : 'on'}`], env).trim();
   if (!/^[a-f0-9]{64}$/.test(id)) throw Error('Missing owned container ID');
@@ -140,8 +140,8 @@ async function main() {
   else Object.assign(env, { DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/exom_ci', PRISMA_DATABASE_URL: 'postgresql://unused:unused@127.0.0.1:1/exom_ci' });
   const config = { ...require('../package.json').jest, rootDir: join(ROOT, 'src'), cacheDirectory: join(directory, 'cache') };
   const args = [require.resolve('jest/bin/jest'), '--config', JSON.stringify(config), '--runInBand', '--json', '--outputFile', join(directory, 'jest.json')];
-  if (mode === 'unit') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.service.spec.ts');
-  if (mode === 'pg') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.pg.spec.ts');
+  if (mode === 'unit') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.service.spec.ts', 'src/modules/client-followup-tasks/client-followup-tasks.projection.spec.ts');
+  if (mode === 'pg') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.pg.spec.ts', 'src/modules/client-followup-tasks/client-followup-tasks.projection.spec.ts');
   if (mode === 'http') args.push('--runTestsByPath', 'src/modules/client-followup-tasks/client-followup-tasks.http.spec.ts');
   try { run(process.execPath, args, env, join(directory, 'jest.log')); }
   finally {
@@ -159,6 +159,7 @@ async function main() {
   const report = JSON.parse(fs.readFileSync(join(directory, 'jest.json'), 'utf8'));
   if (!report.success || report.numPendingTests) throw Error('Incomplete test receipt');
   if (mode === 'all' && !report.testResults.some(result => result.name.endsWith('client-followup-tasks.http.spec.ts') && result.status === 'passed' && result.assertionResults.length > 0 && result.assertionResults.every(test => test.status === 'passed'))) throw Error('Full suite did not execute HTTP coverage');
+  if (['pg', 'all'].includes(mode) && !report.testResults.some(result => result.name.endsWith('client-followup-tasks.projection.spec.ts') && result.status === 'passed' && result.assertionResults.length > 5 && result.assertionResults.every(test => test.status === 'passed'))) throw Error('Required real-PG projection coverage did not execute');
   console.log(`${mode}: PASS ${report.numPassedTestSuites} suites / ${report.numPassedTests} tests; pending ${report.numPendingTests}`);
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

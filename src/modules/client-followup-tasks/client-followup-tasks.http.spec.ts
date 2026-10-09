@@ -146,6 +146,34 @@ suite('REST-T2C manual task HTTP with real guards and PostgreSQL', () => {
       await prisma.postgresqlPool.end();
     jest.restoreAllMocks(); // Fixtures retained; no live Firebase or cleanup.
   });
+  it('returns empty canonical summary on the static route, not taskId', async () => {
+    const result = await get('summary', admin, other).expect(403);
+    expect(result.status).toBe(403);
+    const empty = await get('summary', superId, other).expect(200);
+    expect(responseData(empty)).toEqual({
+      as_of_date: new Date().toISOString().slice(0, 10),
+      next_task: null,
+      next_review: null,
+    });
+  });
+  it('protects summary staff/client/owner scope and ignores forged clocks', async () => {
+    await request(app.getHttpServer()).get(path(client, 'summary')).expect(401);
+    await get('summary', client).expect(403);
+    await get('summary', outsider).expect(403);
+    await get('summary', superId, prefix + '-missing').expect(404);
+    const summary = await request(app.getHttpServer())
+      .get(
+        path(other, 'summary') + '?as_of_date=1900-01-01&client_id=' + client,
+      )
+      .set('Authorization', `Bearer ${superId}`)
+      .send({ as_of_date: '1900-01-01' })
+      .expect(200);
+    expect(responseData(summary)).toEqual({
+      as_of_date: new Date().toISOString().slice(0, 10),
+      next_task: null,
+      next_review: null,
+    });
+  });
   it('enforces authentication and staff role before service writes', async () => {
     const body = input();
     await request(app.getHttpServer()).post(path()).send(body).expect(401);
@@ -414,6 +442,52 @@ suite('REST-T2C manual task HTTP with real guards and PostgreSQL', () => {
         where: { id: body.id },
       }),
     ).toEqual(before);
+  });
+  it('serializes populated summary and preserves tasks and metric history over HTTP', async () => {
+    const call = { ...input(), due_date: '0001-01-01' };
+    const review = { ...input(), type: 'REVIEW', due_date: '0001-01-02' };
+    await post(call, admin).expect(201);
+    await post(review, admin).expect(201);
+    await prisma.bodyMetric.create({
+      data: { client_id: client, date: new Date('2026-10-01'), weight_kg: 80 },
+    });
+    const snapshot = async () => ({
+      tasks: await prisma.clientFollowUpTask.findMany({
+        where: { client_id: client },
+        orderBy: { id: 'asc' },
+      }),
+      metrics: await prisma.bodyMetric.findMany({
+        where: { client_id: client },
+      }),
+    });
+    const before = await snapshot();
+    const summary = responseData(await get('summary', admin).expect(200));
+    expect(summary.next_task).toEqual({
+      id: call.id,
+      type: 'CALL',
+      title: 'Call',
+      due_date: '0001-01-01',
+      priority: 'MEDIUM',
+      assigned_to_id: admin,
+      version: 1,
+      overdue: true,
+    });
+    expect(summary.next_review).toEqual({
+      id: review.id,
+      type: 'REVIEW',
+      title: 'Call',
+      due_date: '0001-01-02',
+      priority: 'MEDIUM',
+      assigned_to_id: admin,
+      version: 1,
+      overdue: true,
+    });
+    expect(await snapshot()).toEqual(before);
+    await prisma.user.update({
+      where: { id: outsider },
+      data: { is_active: false },
+    });
+    await get('summary', outsider).expect(401); // Existing guard: inactive account.
   });
   it('requires create fields and returns scoped missing task/client results', async () => {
     for (const key of ['id', 'title', 'type', 'due_date']) {
