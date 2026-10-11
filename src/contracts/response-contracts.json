@@ -2402,7 +2402,7 @@
     },
     "UsersController_replyToTrainingNote": {
       "schema": {
-        "$ref": "#/components/schemas/Wire499"
+        "$ref": "#/components/schemas/Wire500"
       },
       "dataOptional": false,
       "parameters": [
@@ -2498,7 +2498,7 @@
     },
     "UsersController_getClientWeightHistory": {
       "schema": {
-        "$ref": "#/components/schemas/Wire500"
+        "$ref": "#/components/schemas/Wire501"
       },
       "dataOptional": false,
       "parameters": [
@@ -2511,7 +2511,7 @@
     },
     "UsersController_getClientBodyHistory": {
       "schema": {
-        "$ref": "#/components/schemas/Wire502"
+        "$ref": "#/components/schemas/Wire503"
       },
       "dataOptional": false,
       "parameters": [
@@ -4870,6 +4870,12 @@
             true
           ]
         },
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
         "deactivated_at": {
           "$ref": "#/components/schemas/Wire9"
         },
@@ -4885,6 +4891,7 @@
         "starts_on",
         "ends_on",
         "is_active",
+        "training_completion_mode",
         "deactivated_at",
         "days"
       ]
@@ -5061,6 +5068,12 @@
             true
           ]
         },
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
         "training_ids": {
           "$ref": "#/components/schemas/Wire40"
         },
@@ -5079,6 +5092,7 @@
         "client_id",
         "date",
         "is_rest_day",
+        "training_completion_mode",
         "training_ids",
         "trainings",
         "training",
@@ -5212,6 +5226,12 @@
             true
           ]
         },
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
         "training": {
           "enum": [
             null
@@ -5242,6 +5262,7 @@
         "client_id",
         "date",
         "is_rest_day",
+        "training_completion_mode",
         "training",
         "trainings",
         "training_ids",
@@ -5279,6 +5300,12 @@
             true
           ]
         },
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
         "training_ids": {
           "$ref": "#/components/schemas/Wire40"
         },
@@ -5298,6 +5325,7 @@
         "client_id",
         "date",
         "is_rest_day",
+        "training_completion_mode",
         "training_ids",
         "trainings",
         "training",
@@ -5632,6 +5660,18 @@
             false,
             true
           ]
+        },
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
+        "trainings_assigned": {
+          "type": "number"
+        },
+        "trainings_done": {
+          "type": "number"
         }
       },
       "required": [
@@ -5640,7 +5680,10 @@
         "has_diet",
         "is_rest_day",
         "training_completed",
-        "diet_completed"
+        "diet_completed",
+        "training_completion_mode",
+        "trainings_assigned",
+        "trainings_done"
       ]
     },
     "Wire138": {
@@ -5653,6 +5696,12 @@
           "type": "number"
         },
         "trainings_completed": {
+          "type": "number"
+        },
+        "training_days_assigned": {
+          "type": "number"
+        },
+        "training_days_completed": {
           "type": "number"
         },
         "total_meals": {
@@ -5672,6 +5721,8 @@
         "week_start",
         "trainings_assigned",
         "trainings_completed",
+        "training_days_assigned",
+        "training_days_completed",
         "total_meals",
         "meals_completed",
         "diet_days_assigned",
@@ -5783,10 +5834,10 @@
         "unit": {
           "type": "string"
         },
-        "rule_config": {},
         "target_value": {
           "type": "number"
         },
+        "rule_config": {},
         "is_manual": {
           "enum": [
             false,
@@ -5818,8 +5869,8 @@
         "updated_at",
         "created_by",
         "unit",
-        "rule_config",
         "target_value",
+        "rule_config",
         "is_manual",
         "is_global",
         "deadline",
@@ -5914,10 +5965,10 @@
         "unit": {
           "type": "string"
         },
-        "rule_config": {},
         "target_value": {
           "type": "number"
         },
+        "rule_config": {},
         "is_manual": {
           "enum": [
             false,
@@ -5946,8 +5997,8 @@
         "updated_at",
         "created_by",
         "unit",
-        "rule_config",
         "target_value",
+        "rule_config",
         "is_manual",
         "is_global",
         "deadline",
@@ -5998,10 +6049,10 @@
         "unit": {
           "type": "string"
         },
-        "rule_config": {},
         "target_value": {
           "type": "number"
         },
+        "rule_config": {},
         "is_manual": {
           "enum": [
             false,
@@ -6034,8 +6085,8 @@
         "updated_at",
         "created_by",
         "unit",
-        "rule_config",
         "target_value",
+        "rule_config",
         "is_manual",
         "is_global",
         "deadline",
@@ -13231,9 +13282,6 @@
         "training_id": {
           "type": "string"
         },
-        "target_value": {
-          "$ref": "#/components/schemas/Wire31"
-        },
         "timed_config": {
           "$ref": "#/components/schemas/Wire409"
         },
@@ -13254,6 +13302,9 @@
         },
         "measure_type": {
           "$ref": "#/components/schemas/Wire413"
+        },
+        "target_value": {
+          "$ref": "#/components/schemas/Wire31"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire31"
@@ -13281,7 +13332,6 @@
         "exercise_id",
         "order",
         "training_id",
-        "target_value",
         "timed_config",
         "rir_override",
         "block_id",
@@ -13289,6 +13339,7 @@
         "sets",
         "reps_or_duration",
         "measure_type",
+        "target_value",
         "target_value_min",
         "target_value_max",
         "target_rir",
@@ -13618,9 +13669,6 @@
         "training_id": {
           "type": "string"
         },
-        "target_value": {
-          "$ref": "#/components/schemas/Wire31"
-        },
         "timed_config": {
           "$ref": "#/components/schemas/Wire409"
         },
@@ -13641,6 +13689,9 @@
         },
         "measure_type": {
           "$ref": "#/components/schemas/Wire413"
+        },
+        "target_value": {
+          "$ref": "#/components/schemas/Wire31"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire31"
@@ -13667,7 +13718,6 @@
         "exercise_id",
         "order",
         "training_id",
-        "target_value",
         "timed_config",
         "rir_override",
         "block_id",
@@ -13675,6 +13725,7 @@
         "sets",
         "reps_or_duration",
         "measure_type",
+        "target_value",
         "target_value_min",
         "target_value_max",
         "target_rir",
@@ -14019,9 +14070,6 @@
         "training_id": {
           "type": "string"
         },
-        "target_value": {
-          "$ref": "#/components/schemas/Wire31"
-        },
         "timed_config": {},
         "rir_override": {},
         "block_id": {
@@ -14038,6 +14086,9 @@
         },
         "measure_type": {
           "$ref": "#/components/schemas/Wire413"
+        },
+        "target_value": {
+          "$ref": "#/components/schemas/Wire31"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire31"
@@ -14067,7 +14118,6 @@
         "exercise_id",
         "order",
         "training_id",
-        "target_value",
         "timed_config",
         "rir_override",
         "block_id",
@@ -14075,6 +14125,7 @@
         "sets",
         "reps_or_duration",
         "measure_type",
+        "target_value",
         "target_value_min",
         "target_value_max",
         "target_rir",
@@ -14165,9 +14216,6 @@
         "training_id": {
           "type": "string"
         },
-        "target_value": {
-          "$ref": "#/components/schemas/Wire31"
-        },
         "timed_config": {},
         "rir_override": {},
         "block_id": {
@@ -14184,6 +14232,9 @@
         },
         "measure_type": {
           "$ref": "#/components/schemas/Wire413"
+        },
+        "target_value": {
+          "$ref": "#/components/schemas/Wire31"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire31"
@@ -14210,7 +14261,6 @@
         "exercise_id",
         "order",
         "training_id",
-        "target_value",
         "timed_config",
         "rir_override",
         "block_id",
@@ -14218,6 +14268,7 @@
         "sets",
         "reps_or_duration",
         "measure_type",
+        "target_value",
         "target_value_min",
         "target_value_max",
         "target_rir",
@@ -14238,6 +14289,12 @@
             true
           ]
         },
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
         "trainings": {
           "$ref": "#/components/schemas/Wire436"
         }
@@ -14245,6 +14302,7 @@
       "required": [
         "date",
         "training_completed",
+        "training_completion_mode",
         "trainings"
       ]
     },
@@ -14541,9 +14599,6 @@
         "training_id": {
           "type": "string"
         },
-        "target_value": {
-          "$ref": "#/components/schemas/Wire31"
-        },
         "timed_config": {},
         "rir_override": {},
         "block_id": {
@@ -14560,6 +14615,9 @@
         },
         "measure_type": {
           "$ref": "#/components/schemas/Wire413"
+        },
+        "target_value": {
+          "$ref": "#/components/schemas/Wire31"
         },
         "target_value_min": {
           "$ref": "#/components/schemas/Wire31"
@@ -14589,7 +14647,6 @@
         "exercise_id",
         "order",
         "training_id",
-        "target_value",
         "timed_config",
         "rir_override",
         "block_id",
@@ -14597,6 +14654,7 @@
         "sets",
         "reps_or_duration",
         "measure_type",
+        "target_value",
         "target_value_min",
         "target_value_max",
         "target_rir",
@@ -15647,7 +15705,7 @@
           "$ref": "#/components/schemas/Wire490"
         },
         {
-          "$ref": "#/components/schemas/Wire494"
+          "$ref": "#/components/schemas/Wire495"
         }
       ]
     },
@@ -15672,6 +15730,9 @@
             false,
             true
           ]
+        },
+        "training_summary": {
+          "$ref": "#/components/schemas/Wire491"
         },
         "trainings_completed": {
           "$ref": "#/components/schemas/Wire121"
@@ -15704,7 +15765,7 @@
           "nullable": true
         },
         "diet_history": {
-          "$ref": "#/components/schemas/Wire491"
+          "$ref": "#/components/schemas/Wire492"
         }
       },
       "required": [
@@ -15712,6 +15773,7 @@
         "client_id",
         "date",
         "training_completed",
+        "training_summary",
         "trainings_completed",
         "exercises_completed",
         "meals_completed",
@@ -15723,12 +15785,42 @@
       ]
     },
     "Wire491": {
-      "type": "array",
-      "items": {
-        "$ref": "#/components/schemas/Wire492"
-      }
+      "type": "object",
+      "properties": {
+        "training_completion_mode": {
+          "enum": [
+            "ALL",
+            "ANY"
+          ]
+        },
+        "assigned_count": {
+          "type": "number"
+        },
+        "completed_count": {
+          "type": "number"
+        },
+        "assigned_training_ids": {
+          "$ref": "#/components/schemas/Wire40"
+        },
+        "completed_training_ids": {
+          "$ref": "#/components/schemas/Wire40"
+        }
+      },
+      "required": [
+        "training_completion_mode",
+        "assigned_count",
+        "completed_count",
+        "assigned_training_ids",
+        "completed_training_ids"
+      ]
     },
     "Wire492": {
+      "type": "array",
+      "items": {
+        "$ref": "#/components/schemas/Wire493"
+      }
+    },
+    "Wire493": {
       "type": "object",
       "properties": {
         "client_id": {
@@ -15755,7 +15847,7 @@
           "format": "date-time"
         },
         "diet": {
-          "$ref": "#/components/schemas/Wire493"
+          "$ref": "#/components/schemas/Wire494"
         }
       },
       "required": [
@@ -15768,7 +15860,7 @@
         "diet"
       ]
     },
-    "Wire493": {
+    "Wire494": {
       "type": "object",
       "properties": {
         "group": {
@@ -15834,17 +15926,20 @@
         "group_id"
       ]
     },
-    "Wire494": {
+    "Wire495": {
       "type": "object",
       "properties": {
-        "diet_history": {
+        "training_summary": {
           "$ref": "#/components/schemas/Wire491"
         },
+        "diet_history": {
+          "$ref": "#/components/schemas/Wire492"
+        },
         "exercises_completed": {
-          "$ref": "#/components/schemas/Wire495"
+          "$ref": "#/components/schemas/Wire496"
         },
         "meals_completed_details": {
-          "$ref": "#/components/schemas/Wire497"
+          "$ref": "#/components/schemas/Wire498"
         },
         "created_at": {
           "type": "string",
@@ -15891,6 +15986,7 @@
         }
       },
       "required": [
+        "training_summary",
         "diet_history",
         "exercises_completed",
         "meals_completed_details",
@@ -15909,13 +16005,13 @@
         "admin_reply_sent_at"
       ]
     },
-    "Wire495": {
+    "Wire496": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire496"
+        "$ref": "#/components/schemas/Wire497"
       }
     },
-    "Wire496": {
+    "Wire497": {
       "type": "object",
       "properties": {
         "exercise_name": {
@@ -15930,13 +16026,13 @@
         "exercise_id"
       ]
     },
-    "Wire497": {
+    "Wire498": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire498"
+        "$ref": "#/components/schemas/Wire499"
       }
     },
-    "Wire498": {
+    "Wire499": {
       "type": "object",
       "properties": {
         "meal_id": {
@@ -15951,7 +16047,7 @@
         "meal_name"
       ]
     },
-    "Wire499": {
+    "Wire500": {
       "type": "object",
       "properties": {
         "created_at": {
@@ -16016,13 +16112,13 @@
         "admin_reply_sent_at"
       ]
     },
-    "Wire500": {
+    "Wire501": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire501"
+        "$ref": "#/components/schemas/Wire502"
       }
     },
-    "Wire501": {
+    "Wire502": {
       "type": "object",
       "properties": {
         "date": {
@@ -16037,13 +16133,13 @@
         "value"
       ]
     },
-    "Wire502": {
+    "Wire503": {
       "type": "array",
       "items": {
-        "$ref": "#/components/schemas/Wire503"
+        "$ref": "#/components/schemas/Wire504"
       }
     },
-    "Wire503": {
+    "Wire504": {
       "type": "object",
       "properties": {
         "date": {

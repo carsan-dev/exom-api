@@ -352,6 +352,24 @@
               }
             ]
           },
+          "training_completion_mode": {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TrainingCompletionMode"
+                  }
+                ],
+                "description": "ALL: every assigned training must be completed. ANY: completing one assigned training completes the day. Omitted on update keeps the stored value; omitted on create means ALL."
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "training_id": {
             "anyOf": [
               {
@@ -446,6 +464,24 @@
               {
                 "default": false,
                 "type": "boolean"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "training_completion_mode": {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TrainingCompletionMode"
+                  }
+                ],
+                "description": "ALL: every assigned training must be completed. ANY: completing one assigned training completes the day. Omitted on update keeps the stored value; omitted on create means ALL."
               },
               {
                 "enum": [
@@ -1268,6 +1304,24 @@
           "starts_on": {
             "description": "ISO date string YYYY-MM-DD",
             "type": "string"
+          },
+          "training_completion_mode": {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TrainingCompletionMode"
+                  }
+                ],
+                "description": "ALL: every assigned training must be completed. ANY: completing one assigned training completes the day. Omitted on update keeps the stored value; omitted on create means ALL."
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
           }
         },
         "required": [
@@ -4797,6 +4851,14 @@
         ],
         "type": "object"
       },
+      "TrainingCompletionMode": {
+        "description": "ALL: every assigned training must be completed. ANY: completing one assigned training completes the day. Omitted on update keeps the stored value; omitted on create means ALL.",
+        "enum": [
+          "ALL",
+          "ANY"
+        ],
+        "type": "string"
+      },
       "TrainingExerciseDto": {
         "additionalProperties": false,
         "properties": {
@@ -6134,6 +6196,24 @@
               {
                 "default": false,
                 "type": "boolean"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "training_completion_mode": {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TrainingCompletionMode"
+                  }
+                ],
+                "description": "ALL: every assigned training must be completed. ANY: completing one assigned training completes the day. Omitted on update keeps the stored value; omitted on create means ALL."
               },
               {
                 "enum": [
@@ -9197,6 +9277,12 @@
           },
           "starts_on": {
             "type": "string"
+          },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
           }
         },
         "required": [
@@ -9207,6 +9293,7 @@
           "starts_on",
           "ends_on",
           "is_active",
+          "training_completion_mode",
           "deactivated_at",
           "days"
         ],
@@ -9424,6 +9511,12 @@
           "training": {
             "$ref": "#/components/schemas/Wire116"
           },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
+          },
           "training_ids": {
             "$ref": "#/components/schemas/Wire40"
           },
@@ -9436,6 +9529,7 @@
           "client_id",
           "date",
           "is_rest_day",
+          "training_completion_mode",
           "training_ids",
           "trainings",
           "training",
@@ -9629,6 +9723,12 @@
             ],
             "nullable": true
           },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
+          },
           "training_ids": {
             "$ref": "#/components/schemas/Wire121"
           },
@@ -9641,6 +9741,7 @@
           "client_id",
           "date",
           "is_rest_day",
+          "training_completion_mode",
           "training",
           "trainings",
           "training_ids",
@@ -9684,6 +9785,12 @@
           "training": {
             "$ref": "#/components/schemas/Wire116"
           },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
+          },
           "training_ids": {
             "$ref": "#/components/schemas/Wire40"
           },
@@ -9697,6 +9804,7 @@
           "client_id",
           "date",
           "is_rest_day",
+          "training_completion_mode",
           "training_ids",
           "trainings",
           "training",
@@ -10037,6 +10145,18 @@
               false,
               true
             ]
+          },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
+          },
+          "trainings_assigned": {
+            "type": "number"
+          },
+          "trainings_done": {
+            "type": "number"
           }
         },
         "required": [
@@ -10045,7 +10165,10 @@
           "has_diet",
           "is_rest_day",
           "training_completed",
-          "diet_completed"
+          "diet_completed",
+          "training_completion_mode",
+          "trainings_assigned",
+          "trainings_done"
         ],
         "type": "object"
       },
@@ -10063,6 +10186,12 @@
           "total_meals": {
             "type": "number"
           },
+          "training_days_assigned": {
+            "type": "number"
+          },
+          "training_days_completed": {
+            "type": "number"
+          },
           "trainings_assigned": {
             "type": "number"
           },
@@ -10077,6 +10206,8 @@
           "week_start",
           "trainings_assigned",
           "trainings_completed",
+          "training_days_assigned",
+          "training_days_completed",
           "total_meals",
           "meals_completed",
           "diet_days_assigned",
@@ -10246,8 +10377,8 @@
           "updated_at",
           "created_by",
           "unit",
-          "rule_config",
           "target_value",
+          "rule_config",
           "is_manual",
           "is_global",
           "deadline",
@@ -10374,8 +10505,8 @@
           "updated_at",
           "created_by",
           "unit",
-          "rule_config",
           "target_value",
+          "rule_config",
           "is_manual",
           "is_global",
           "deadline",
@@ -10462,8 +10593,8 @@
           "updated_at",
           "created_by",
           "unit",
-          "rule_config",
           "target_value",
+          "rule_config",
           "is_manual",
           "is_global",
           "deadline",
@@ -18471,7 +18602,6 @@
           "exercise_id",
           "order",
           "training_id",
-          "target_value",
           "timed_config",
           "rir_override",
           "block_id",
@@ -18479,6 +18609,7 @@
           "sets",
           "reps_or_duration",
           "measure_type",
+          "target_value",
           "target_value_min",
           "target_value_max",
           "target_rir",
@@ -18899,7 +19030,6 @@
           "exercise_id",
           "order",
           "training_id",
-          "target_value",
           "timed_config",
           "rir_override",
           "block_id",
@@ -18907,6 +19037,7 @@
           "sets",
           "reps_or_duration",
           "measure_type",
+          "target_value",
           "target_value_min",
           "target_value_max",
           "target_rir",
@@ -19334,7 +19465,6 @@
           "exercise_id",
           "order",
           "training_id",
-          "target_value",
           "timed_config",
           "rir_override",
           "block_id",
@@ -19342,6 +19472,7 @@
           "sets",
           "reps_or_duration",
           "measure_type",
+          "target_value",
           "target_value_min",
           "target_value_max",
           "target_rir",
@@ -19478,7 +19609,6 @@
           "exercise_id",
           "order",
           "training_id",
-          "target_value",
           "timed_config",
           "rir_override",
           "block_id",
@@ -19486,6 +19616,7 @@
           "sets",
           "reps_or_duration",
           "measure_type",
+          "target_value",
           "target_value_min",
           "target_value_max",
           "target_rir",
@@ -19505,6 +19636,12 @@
               true
             ]
           },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
+          },
           "trainings": {
             "$ref": "#/components/schemas/Wire436"
           }
@@ -19512,6 +19649,7 @@
         "required": [
           "date",
           "training_completed",
+          "training_completion_mode",
           "trainings"
         ],
         "type": "object"
@@ -19886,7 +20024,6 @@
           "exercise_id",
           "order",
           "training_id",
-          "target_value",
           "timed_config",
           "rir_override",
           "block_id",
@@ -19894,6 +20031,7 @@
           "sets",
           "reps_or_duration",
           "measure_type",
+          "target_value",
           "target_value_min",
           "target_value_max",
           "target_rir",
@@ -20998,7 +21136,7 @@
             "$ref": "#/components/schemas/Wire490"
           },
           {
-            "$ref": "#/components/schemas/Wire494"
+            "$ref": "#/components/schemas/Wire495"
           }
         ]
       },
@@ -21051,7 +21189,7 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire491"
+            "$ref": "#/components/schemas/Wire492"
           },
           "exercises_completed": {
             "$ref": "#/components/schemas/Wire121"
@@ -21080,6 +21218,9 @@
               true
             ]
           },
+          "training_summary": {
+            "$ref": "#/components/schemas/Wire491"
+          },
           "trainings_completed": {
             "$ref": "#/components/schemas/Wire121"
           }
@@ -21089,6 +21230,7 @@
           "client_id",
           "date",
           "training_completed",
+          "training_summary",
           "trainings_completed",
           "exercises_completed",
           "meals_completed",
@@ -21101,12 +21243,42 @@
         "type": "object"
       },
       "Wire491": {
+        "properties": {
+          "assigned_count": {
+            "type": "number"
+          },
+          "assigned_training_ids": {
+            "$ref": "#/components/schemas/Wire40"
+          },
+          "completed_count": {
+            "type": "number"
+          },
+          "completed_training_ids": {
+            "$ref": "#/components/schemas/Wire40"
+          },
+          "training_completion_mode": {
+            "enum": [
+              "ALL",
+              "ANY"
+            ]
+          }
+        },
+        "required": [
+          "training_completion_mode",
+          "assigned_count",
+          "completed_count",
+          "assigned_training_ids",
+          "completed_training_ids"
+        ],
+        "type": "object"
+      },
+      "Wire492": {
         "items": {
-          "$ref": "#/components/schemas/Wire492"
+          "$ref": "#/components/schemas/Wire493"
         },
         "type": "array"
       },
-      "Wire492": {
+      "Wire493": {
         "properties": {
           "captured_at": {
             "format": "date-time",
@@ -21120,7 +21292,7 @@
             "type": "string"
           },
           "diet": {
-            "$ref": "#/components/schemas/Wire493"
+            "$ref": "#/components/schemas/Wire494"
           },
           "diet_id": {
             "type": "string"
@@ -21146,7 +21318,7 @@
         ],
         "type": "object"
       },
-      "Wire493": {
+      "Wire494": {
         "properties": {
           "created_at": {
             "type": "string"
@@ -21212,7 +21384,7 @@
         ],
         "type": "object"
       },
-      "Wire494": {
+      "Wire495": {
         "properties": {
           "admin_reply_sent_at": {
             "$ref": "#/components/schemas/Wire67"
@@ -21232,10 +21404,10 @@
             "type": "string"
           },
           "diet_history": {
-            "$ref": "#/components/schemas/Wire491"
+            "$ref": "#/components/schemas/Wire492"
           },
           "exercises_completed": {
-            "$ref": "#/components/schemas/Wire495"
+            "$ref": "#/components/schemas/Wire496"
           },
           "id": {
             "type": "string"
@@ -21244,7 +21416,7 @@
             "$ref": "#/components/schemas/Wire40"
           },
           "meals_completed_details": {
-            "$ref": "#/components/schemas/Wire497"
+            "$ref": "#/components/schemas/Wire498"
           },
           "notes": {
             "$ref": "#/components/schemas/Wire9"
@@ -21259,6 +21431,9 @@
             ]
           },
           "training_sessions": {},
+          "training_summary": {
+            "$ref": "#/components/schemas/Wire491"
+          },
           "trainings_completed": {
             "$ref": "#/components/schemas/Wire40"
           },
@@ -21268,6 +21443,7 @@
           }
         },
         "required": [
+          "training_summary",
           "diet_history",
           "exercises_completed",
           "meals_completed_details",
@@ -21287,13 +21463,13 @@
         ],
         "type": "object"
       },
-      "Wire495": {
+      "Wire496": {
         "items": {
-          "$ref": "#/components/schemas/Wire496"
+          "$ref": "#/components/schemas/Wire497"
         },
         "type": "array"
       },
-      "Wire496": {
+      "Wire497": {
         "properties": {
           "exercise_id": {
             "type": "string"
@@ -21308,13 +21484,13 @@
         ],
         "type": "object"
       },
-      "Wire497": {
+      "Wire498": {
         "items": {
-          "$ref": "#/components/schemas/Wire498"
+          "$ref": "#/components/schemas/Wire499"
         },
         "type": "array"
       },
-      "Wire498": {
+      "Wire499": {
         "properties": {
           "meal_id": {
             "type": "string"
@@ -21329,7 +21505,35 @@
         ],
         "type": "object"
       },
-      "Wire499": {
+      "Wire5": {
+        "additionalProperties": {
+          "type": "number"
+        },
+        "properties": {},
+        "type": "object"
+      },
+      "Wire50": {
+        "properties": {
+          "status": {
+            "enum": [
+              "insufficient",
+              "not_applicable",
+              "met",
+              "below",
+              "above"
+            ]
+          },
+          "threshold": {
+            "$ref": "#/components/schemas/Wire31"
+          }
+        },
+        "required": [
+          "threshold",
+          "status"
+        ],
+        "type": "object"
+      },
+      "Wire500": {
         "properties": {
           "admin_reply_sent_at": {
             "$ref": "#/components/schemas/Wire67"
@@ -21394,41 +21598,13 @@
         ],
         "type": "object"
       },
-      "Wire5": {
-        "additionalProperties": {
-          "type": "number"
-        },
-        "properties": {},
-        "type": "object"
-      },
-      "Wire50": {
-        "properties": {
-          "status": {
-            "enum": [
-              "insufficient",
-              "not_applicable",
-              "met",
-              "below",
-              "above"
-            ]
-          },
-          "threshold": {
-            "$ref": "#/components/schemas/Wire31"
-          }
-        },
-        "required": [
-          "threshold",
-          "status"
-        ],
-        "type": "object"
-      },
-      "Wire500": {
+      "Wire501": {
         "items": {
-          "$ref": "#/components/schemas/Wire501"
+          "$ref": "#/components/schemas/Wire502"
         },
         "type": "array"
       },
-      "Wire501": {
+      "Wire502": {
         "properties": {
           "date": {
             "type": "string"
@@ -21443,13 +21619,13 @@
         ],
         "type": "object"
       },
-      "Wire502": {
+      "Wire503": {
         "items": {
-          "$ref": "#/components/schemas/Wire503"
+          "$ref": "#/components/schemas/Wire504"
         },
         "type": "array"
       },
-      "Wire503": {
+      "Wire504": {
         "properties": {
           "date": {
             "type": "string"
@@ -25946,7 +26122,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire502"
+                      "$ref": "#/components/schemas/Wire503"
                     },
                     "success": {
                       "enum": [
@@ -26106,7 +26282,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire500"
+                      "$ref": "#/components/schemas/Wire501"
                     },
                     "success": {
                       "enum": [
@@ -26689,7 +26865,7 @@
                 "schema": {
                   "properties": {
                     "data": {
-                      "$ref": "#/components/schemas/Wire499"
+                      "$ref": "#/components/schemas/Wire500"
                     },
                     "success": {
                       "enum": [
