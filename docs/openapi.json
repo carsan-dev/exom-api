@@ -10051,6 +10051,12 @@
       },
       "Wire138": {
         "properties": {
+          "diet_days_assigned": {
+            "type": "number"
+          },
+          "diet_days_completed": {
+            "type": "number"
+          },
           "meals_completed": {
             "type": "number"
           },
@@ -10072,7 +10078,9 @@
           "trainings_assigned",
           "trainings_completed",
           "total_meals",
-          "meals_completed"
+          "meals_completed",
+          "diet_days_assigned",
+          "diet_days_completed"
         ],
         "type": "object"
       },
