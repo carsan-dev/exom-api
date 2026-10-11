@@ -73,8 +73,8 @@ describe('recent closed service collection', () => {
     'keeps public days bounded while collecting original history for %s..%s',
     async (start, end, count) => {
       const read = jest
-        .spyOn(AdherencePrescriptionService.prototype, 'read')
-        .mockResolvedValue({ status: 'unknown', reason: 'missing_original' });
+        .spyOn(AdherencePrescriptionService.prototype, 'readMany')
+        .mockResolvedValue(new Map());
       const current = jest.fn().mockResolvedValue(null);
       const tx = {
         $queryRaw: jest.fn().mockResolvedValue([]),
@@ -91,8 +91,14 @@ describe('recent closed service collection', () => {
           ]),
         },
         planAssignment: { findUnique: current },
-        weeklyRecap: { findFirst: jest.fn().mockResolvedValue(null) },
-        dayProgress: { findUnique: jest.fn().mockResolvedValue(null) },
+        weeklyRecap: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        dayProgress: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
         progressOperation: { findMany: jest.fn().mockResolvedValue([]) },
         adherenceEvaluationRevision: {
           findUnique: jest.fn().mockResolvedValue(null),
@@ -128,7 +134,7 @@ describe('recent closed service collection', () => {
         );
         expect(
           result.days.length +
-            read.mock.calls.filter(([, date]) => date < start).length,
+            read.mock.calls[0][1].filter((date) => date < start).length,
         ).toBe(count);
         expect(result.recentClosed).toMatchObject({
           start: '2019-12-26',
@@ -139,10 +145,68 @@ describe('recent closed service collection', () => {
         expect(result.recentClosed.aggregate.global.ratio).toBeNull();
         expect(
           read.mock.calls.every(
-            ([owner, date]) => owner === 'client' && date < '2020-01-02',
+            ([owner, dates]) =>
+              owner === 'client' && dates.every((date) => date < '2020-01-02'),
           ),
         ).toBe(true);
         expect(current).toHaveBeenCalledTimes(start === '2020-01-02' ? 1 : 0);
+        expect(tx.dayProgress.findUnique).not.toHaveBeenCalled();
+        expect(tx.dayProgress.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.progressOperation.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.weeklyRecap.findMany).toHaveBeenCalledTimes(1);
+        const evidenceDates = [
+          ...new Set([
+            ...AdherencePeriodQueryDto.dates(start, end),
+            ...AdherencePeriodQueryDto.dates('2019-12-26', '2020-01-01'),
+          ]),
+        ]
+          .filter((date) => date <= '2020-01-02')
+          .sort();
+        expect(tx.dayProgress.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              client_id: 'client',
+              date: { in: evidenceDates.map((date) => new Date(date)) },
+            },
+          }),
+        );
+        expect(tx.progressOperation.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              owner_id: 'client',
+              date: { in: evidenceDates.map((date) => new Date(date)) },
+            },
+            orderBy: { id: 'asc' },
+          }),
+        );
+        const collected = [
+          ...new Set([
+            ...AdherencePeriodQueryDto.dates(start, end),
+            ...AdherencePeriodQueryDto.dates('2019-12-26', '2020-01-01'),
+          ]),
+        ].sort();
+        const weekStarts = [
+          ...new Set(
+            collected.map((date) => {
+              const at = new Date(date);
+              at.setUTCDate(at.getUTCDate() - ((at.getUTCDay() + 6) % 7));
+              return at.toISOString();
+            }),
+          ),
+        ];
+        expect(tx.weeklyRecap.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              client_id: 'client',
+              submitted_at: { not: null },
+              status: { in: ['SUBMITTED', 'REVIEWED'] },
+              OR: weekStarts.map((start) => ({
+                week_start_date: new Date(start),
+                week_end_date: new Date(Date.parse(start) + 6 * 86400000),
+              })),
+            },
+          }),
+        );
         expect(result.weeks).toHaveLength(
           new Set(
             AdherencePeriodQueryDto.dates(start, end).map((date) => {

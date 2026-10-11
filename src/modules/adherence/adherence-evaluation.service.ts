@@ -620,25 +620,74 @@ export class AdherenceEvaluationService {
           ORDER BY d.date
         `);
         const byDate = new Map(policies.map((policy) => [policy.date, policy]));
+        const closed = await reader.readMany(
+          client,
+          collectedDates.filter((date) => date < today),
+        );
+        const evidenceDates = collectedDates
+          .filter((date) => date <= today)
+          .map((date) => new Date(date + 'T00:00:00Z'));
+        const progressRows = await tx.dayProgress.findMany({
+          where: { client_id: client, date: { in: evidenceDates } },
+          select: {
+            client_id: true,
+            date: true,
+            sync_revision: true,
+            training_completed: true,
+            trainings_completed: true,
+            training_sessions: true,
+            exercises_completed: true,
+            meals_completed: true,
+          },
+        });
+        const progressByDate = new Map(
+          progressRows.map((row) => [civil(row.date), row]),
+        );
+        const receiptRows = await tx.progressOperation.findMany({
+          where: { owner_id: client, date: { in: evidenceDates } },
+          select: { id: true, owner_id: true, date: true, response: true },
+          orderBy: { id: 'asc' },
+        });
+        const receiptsByDate = new Map<string, ReceiptEvidence[]>();
+        for (const receipt of receiptRows) {
+          const date = civil(receipt.date);
+          const rows = receiptsByDate.get(date) ?? [];
+          rows.push(receipt);
+          receiptsByDate.set(date, rows);
+        }
+        const recapRows = await tx.weeklyRecap.findMany({
+          where: {
+            client_id: client,
+            OR: starts.map((start) => {
+              const end = new Date(start + 'T00:00:00Z');
+              end.setUTCDate(end.getUTCDate() + 6);
+              return {
+                week_start_date: new Date(start + 'T00:00:00Z'),
+                week_end_date: end,
+              };
+            }),
+            submitted_at: { not: null },
+            status: { in: ['SUBMITTED', 'REVIEWED'] },
+          },
+          select: {
+            id: true,
+            week_start_date: true,
+            average_daily_steps: true,
+            submitted_at: true,
+            updated_at: true,
+          },
+        });
+        const recapsByStart = new Map(
+          recapRows.map(({ week_start_date, ...recap }) => [
+            civil(week_start_date),
+            recap,
+          ]),
+        );
         const weekly = new Map<string, WeeklyEvaluation>();
         for (const start of starts) {
           const end = new Date(start + 'T00:00:00Z');
           end.setUTCDate(end.getUTCDate() + 6);
-          const recap = await tx.weeklyRecap.findFirst({
-            where: {
-              client_id: client,
-              week_start_date: new Date(start + 'T00:00:00Z'),
-              week_end_date: end,
-              submitted_at: { not: null },
-              status: { in: ['SUBMITTED', 'REVIEWED'] },
-            },
-            select: {
-              id: true,
-              average_daily_steps: true,
-              submitted_at: true,
-              updated_at: true,
-            },
-          });
+          const recap = recapsByStart.get(start) ?? null;
           const configurations = policies
             .filter(
               (policy) => policy.date >= start && policy.date <= civil(end),
@@ -678,8 +727,7 @@ export class AdherenceEvaluationService {
         }
         for (const date of collectedDates) {
           const at = new Date(date + 'T00:00:00Z');
-          const original =
-            date < today ? await reader.read(client, date) : null;
+          const original = date < today ? closed.get(date) : null;
           const basis =
             original?.status === 'stored'
               ? frozenBasis(original)
@@ -687,34 +735,8 @@ export class AdherenceEvaluationService {
                 ? await this.todayBasis(tx, client, at)
                 : unknownBasis();
           const progress =
-            date > today
-              ? null
-              : await tx.dayProgress.findUnique({
-                  where: { client_id_date: { client_id: client, date: at } },
-                  select: {
-                    client_id: true,
-                    date: true,
-                    sync_revision: true,
-                    training_completed: true,
-                    trainings_completed: true,
-                    training_sessions: true,
-                    exercises_completed: true,
-                    meals_completed: true,
-                  },
-                });
-          const receipts =
-            date > today
-              ? []
-              : await tx.progressOperation.findMany({
-                  where: { owner_id: client, date: at },
-                  select: {
-                    id: true,
-                    owner_id: true,
-                    date: true,
-                    response: true,
-                  },
-                  orderBy: { id: 'asc' },
-                });
+            date > today ? null : (progressByDate.get(date) ?? null);
+          const receipts = date > today ? [] : (receiptsByDate.get(date) ?? []);
           const evidence = normalizeAdherenceEvidence(
             basis,
             progress,
