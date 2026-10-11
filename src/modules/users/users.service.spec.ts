@@ -1082,7 +1082,12 @@ describe('UsersService', () => {
 
   it('delegates admin calendar reads to the reconciled calendar service', async () => {
     const month = [{ date: '2026-07-01', has_training: true }];
-    const week = { week_start: '2026-06-29', trainings_assigned: 2 };
+    const week = {
+      week_start: '2026-06-29',
+      trainings_assigned: 2,
+      diet_days_assigned: 3,
+      diet_days_completed: 1,
+    };
     calendarService.getMonthCalendar.mockResolvedValue(month);
     calendarService.getWeekSummary.mockResolvedValue(week);
 
@@ -1113,5 +1118,34 @@ describe('UsersService', () => {
       'client-1',
       '2026-06-29',
     );
+  });
+
+  it('rejects weekly calendar access for an unassigned admin or a client', async () => {
+    prisma.adminClientAssignment.findFirst.mockResolvedValue(null);
+    for (const role of [Role.ADMIN, Role.CLIENT]) {
+      await expect(
+        service.getClientWeekSummary('actor-1', role, 'client-1', '2026-06-29'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    }
+    expect(calendarService.getWeekSummary).not.toHaveBeenCalled();
+  });
+
+  it('passes the additive weekly counters through for the assigned admin', async () => {
+    prisma.adminClientAssignment.findFirst.mockResolvedValue({
+      id: 'assignment-1',
+    });
+    const summary = { diet_days_assigned: 4, diet_days_completed: 2 };
+    calendarService.getWeekSummary.mockResolvedValue(summary);
+    await expect(
+      service.getClientWeekSummary(
+        'admin-1',
+        Role.ADMIN,
+        'client-1',
+        '2026-06-29',
+      ),
+    ).resolves.toBe(summary);
+    expect(prisma.adminClientAssignment.findFirst).toHaveBeenCalledWith({
+      where: { admin_id: 'admin-1', client_id: 'client-1', is_active: true },
+    });
   });
 });

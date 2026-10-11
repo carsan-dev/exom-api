@@ -6,7 +6,10 @@ import {
   indexDietHistory,
   loadDietHistory,
 } from '../../common/progress/diet-history';
-import { countCompletedMealGroups } from '../../common/progress/plan-progress-reconciliation';
+import {
+  countCompletedMealGroups,
+  type MealIdentity,
+} from '../../common/progress/plan-progress-reconciliation';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 
 export interface CalendarDay {
@@ -35,6 +38,18 @@ export class CalendarService {
       dates.push(new Date(date));
     }
     return { start, end, dates };
+  }
+
+  private dietDayStatus(meals: MealIdentity[], completedIds: string[]) {
+    const assigned = meals.filter(
+      (meal) => meal.parent_meal_id === null,
+    ).length;
+    const completed = countCompletedMealGroups(completedIds, meals);
+    return {
+      assigned,
+      completed,
+      dayCompleted: assigned > 0 && completed >= assigned,
+    };
   }
 
   async getMonthCalendar(
@@ -97,13 +112,10 @@ export class CalendarService {
       const assignedMeals = historicalDiet
         ? flattenHistoricalMeals(historicalDiet)
         : (assignment?.diet?.meals ?? []);
-      const mealsCompletedCount = countCompletedMealGroups(
-        progress?.meals_completed ?? [],
+      const dietStatus = this.dietDayStatus(
         assignedMeals,
+        progress?.meals_completed ?? [],
       );
-      const assignedMealsCount = assignedMeals.filter(
-        (meal) => meal.parent_meal_id === null,
-      ).length;
       const assignedTrainingIds =
         assignment?.trainings?.map((link) => link.training_id) ?? [];
       const currentTrainingCompleted =
@@ -127,8 +139,7 @@ export class CalendarService {
         has_diet: !!assignment?.diet_id,
         is_rest_day: assignment?.is_rest_day ?? false,
         training_completed: currentTrainingCompleted,
-        diet_completed:
-          assignedMealsCount > 0 && mealsCompletedCount >= assignedMealsCount,
+        diet_completed: dietStatus.dayCompleted,
       });
     }
 
@@ -214,31 +225,26 @@ export class CalendarService {
       );
     }, 0);
 
-    const totalMeals = assignments.reduce((sum, a) => {
-      return (
-        sum + mealsFor(a).filter((meal) => meal.parent_meal_id === null).length
-      );
-    }, 0);
-
-    const mealsCompleted = assignments.reduce((sum, assignment) => {
+    const dietDays = assignments.map((assignment) => {
       const progress = progressMap.get(
         `${assignment.client_id}:${assignment.date.toISOString()}`,
       );
-      return (
-        sum +
-        countCompletedMealGroups(
-          progress?.meals_completed ?? [],
-          mealsFor(assignment),
-        )
+      return this.dietDayStatus(
+        mealsFor(assignment),
+        progress?.meals_completed ?? [],
       );
-    }, 0);
+    });
 
     return {
       week_start: weekStart,
       trainings_assigned: trainingsAssigned,
       trainings_completed: trainingsCompleted,
-      total_meals: totalMeals,
-      meals_completed: mealsCompleted,
+      total_meals: dietDays.reduce((sum, day) => sum + day.assigned, 0),
+      meals_completed: dietDays.reduce((sum, day) => sum + day.completed, 0),
+      diet_days_assigned: assignments.filter(
+        (assignment) => !!assignment.diet_id,
+      ).length,
+      diet_days_completed: dietDays.filter((day) => day.dayCompleted).length,
     };
   }
 }
