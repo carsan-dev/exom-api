@@ -196,5 +196,5 @@ async function main() {
   }
   } finally { snapshot(directory, true); }
 }
-module.exports = { assertOwned, environment, validateProfile };
+module.exports = { assertOwned, environment, validateProfile, database };
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
