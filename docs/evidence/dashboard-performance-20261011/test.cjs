@@ -4,6 +4,76 @@ const { AsyncLocalStorage } = require('node:async_hooks');
 const { instrumentQueries, payloadHash, summarize, endpointMap } = require('./benchmark-dashboard.cjs');
 const { compare } = require('./compare.cjs');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+
+const requiredProvenance = [
+  'fixture_hash',
+  'docs/evidence/dashboard-performance-20261011/benchmark-dashboard.cjs',
+  'docs/evidence/dashboard-performance-20261011/test.cjs',
+  'scripts/run-recap-review-persistence.cjs',
+];
+
+function provenanceCli(key, sides = [], value) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'exom-provenance-'));
+  try {
+    const fixture = comparisonFixture();
+    const now = Date.now();
+    const directories = ['before', 'after'].map((side, index) => {
+      const directory = path.join(root, side);
+      fs.mkdirSync(directory);
+      const responses = fixture[side];
+      responses.day.data.diet_history[0].captured_at = new Date(now + 100 + index).toISOString();
+      const endpoints = Object.fromEntries(Object.entries(responses).map(([name, response]) => [name, {
+        warm: { bytes: { median: Buffer.byteLength(JSON.stringify(response)) }, hash: payloadHash(response) },
+        first_request: { wall_ms: 1 },
+      }]));
+      const measurement = { fixture_hash: 'a'.repeat(64), fixture: { days: 30 }, responses, endpoints, parallel: {} };
+      const manifest = { before: Object.fromEntries(requiredProvenance.slice(1).map((file) => [file, 'b'.repeat(64)])) };
+      if (sides.includes(side)) {
+        const target = key === 'fixture_hash' ? measurement : manifest.before;
+        if (value === undefined) delete target[key];
+        else target[key] = value;
+      }
+      fs.writeFileSync(path.join(directory, 'measurement.json'), JSON.stringify(measurement));
+      fs.writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest));
+      fs.writeFileSync(path.join(directory, 'resource.json'), '{}');
+      fs.utimesSync(path.join(directory, 'measurement.json'), new Date(now + 1000), new Date(now + 1000));
+      return directory;
+    });
+    const result = spawnSync(process.execPath, [path.join(__dirname, 'compare.cjs'), ...directories], { encoding: 'utf8' });
+    assert.ifError(result.error);
+    if (sides.length) {
+      assert.notEqual(result.status, 0, `${key} must fail CLI`);
+      assert.match(result.stderr, /Required SHA256 provenance/, `${key} must fail before payload comparison`);
+      for (const directory of directories) assert.equal(fs.existsSync(path.join(directory, 'comparison.json')), false);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /canonical11 PASS/);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(directories[1], 'comparison.json'))).canonical_equal, true);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('CLI rejects each missing required hash on either or both inputs before equality', () => {
+  for (const key of requiredProvenance) {
+    for (const sides of [['before'], ['after'], ['before', 'after']]) provenanceCli(key, sides);
+  }
+});
+
+test('CLI rejects matching malformed hashes before equality', () => {
+  for (const key of requiredProvenance) {
+    for (const value of ['', null, 7, 'a'.repeat(63), 'g'.repeat(64), {}]) {
+      provenanceCli(key, ['before', 'after'], value);
+    }
+  }
+});
+
+test('CLI retains valid provenance and complete canonical comparisons', () => provenanceCli());
 
 function comparisonFixture() {
   const rows = Array.from({ length: 200 }, () => {
