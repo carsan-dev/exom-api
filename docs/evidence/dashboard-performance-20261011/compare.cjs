@@ -4,6 +4,10 @@ const path = require('node:path');
 const { payloadHash, endpointMap } = require('./benchmark-dashboard.cjs');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function requireHash(value, locator) {
+  assert.ok(typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value), 'Required SHA256 provenance: ' + locator);
+}
+
 function compare(before, after, windows) {
   const allowed = new Set(['profile.data.profile.id', 'day.data.diet_history.0.captured_at']);
   for (let index = 0; index < 200; index++) allowed.add(`selector.data.data.${index}.profile.id`);
@@ -74,6 +78,8 @@ if (require.main === module) {
   const [beforeDirectory, afterDirectory] = process.argv.slice(2);
   const load = (directory, file) => JSON.parse(fs.readFileSync(path.join(directory, file), 'utf8'));
   const before = load(beforeDirectory, 'measurement.json'), after = load(afterDirectory, 'measurement.json');
+  requireHash(before.fixture_hash, 'before.fixture_hash');
+  requireHash(after.fixture_hash, 'after.fixture_hash');
   assert.equal(before.fixture_hash, after.fixture_hash);
   const windows = [beforeDirectory, afterDirectory].map((directory) => [
     fs.statSync(path.join(directory, 'resource.json')).birthtimeMs,
@@ -81,6 +87,8 @@ if (require.main === module) {
   ]);
   const originalManifest = load(beforeDirectory, 'manifest.json'), candidateManifest = load(afterDirectory, 'manifest.json');
   for (const file of ['docs/evidence/dashboard-performance-20261011/benchmark-dashboard.cjs', 'docs/evidence/dashboard-performance-20261011/test.cjs', 'scripts/run-recap-review-persistence.cjs']) {
+    requireHash(originalManifest.before?.[file], 'before manifest: ' + file);
+    requireHash(candidateManifest.before?.[file], 'after manifest: ' + file);
     assert.equal(originalManifest.before[file], candidateManifest.before[file], 'Measured harness drift: ' + file);
   }
   const result = compare(before.responses, after.responses, windows);
