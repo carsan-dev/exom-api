@@ -336,6 +336,27 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     const before = await prisma.adherenceEvaluationRevision.findMany({
       where: { client_id: client },
     });
+    const repeated = await Promise.all([
+      service.get(client, Role.CLIENT, client, query),
+      service.get(client, Role.CLIENT, client, query),
+    ]);
+    expect(repeated.map((result) => result.days)).toEqual([
+      first.days,
+      first.days,
+    ]);
+    expect(
+      await prisma.adherenceEvaluationRevision.count({
+        where: { client_id: client },
+      }),
+    ).toBe(before.length);
+    await expect(
+      service.get(admin, Role.CLIENT, client, query),
+    ).rejects.toThrow();
+    expect(
+      await prisma.adherenceEvaluationRevision.count({
+        where: { client_id: client },
+      }),
+    ).toBe(before.length);
     const session = randomUUID();
     // Exact production DB shape/atomic receipt simulation; no ProgressService
     // effects, mobile queues, notifications or accepted payload mutations.
