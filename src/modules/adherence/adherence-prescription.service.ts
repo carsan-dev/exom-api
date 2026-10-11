@@ -884,6 +884,35 @@ export class AdherencePrescriptionService {
       ? stored(rows[0].value, client, date)
       : unknown('missing_stored_basis');
   }
+  async readMany(
+    client: string,
+    dates: readonly string[],
+  ): Promise<Map<string, PrescriptionResult>> {
+    const selected = [...new Set(dates)];
+    const valid = client ? selected.filter(dateValid) : [];
+    const result = new Map<string, PrescriptionResult>(
+      selected.map((date) => [
+        date,
+        unknown(
+          valid.includes(date) ? 'missing_stored_basis' : 'invalid_client_date',
+        ),
+      ]),
+    );
+    if (!valid.length) return result;
+    const rows = await this.reader.$queryRaw<
+      Array<Envelope & { date: string }>
+    >(
+      Prisma.sql`SELECT to_char(date, 'YYYY-MM-DD') AS date, payload AS value
+        FROM public.adherence_historical_prescriptions
+        WHERE client_id = ${client} AND date = ANY(ARRAY[${Prisma.join(valid)}]::date[])`,
+    );
+    for (const date of valid) {
+      const matches = rows.filter((row) => row.date === date);
+      if (matches.length === 1)
+        result.set(date, stored(matches[0].value, client, date));
+    }
+    return result;
+  }
   async publish(
     client: string,
     date: string,

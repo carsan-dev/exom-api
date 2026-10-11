@@ -116,6 +116,7 @@ class Store implements AdherenceCommitSql, PrescriptionPublisher {
   payload?: unknown;
   trainingSnapshots: unknown[] = [];
   rirTargets: unknown[] = [];
+  batchRows: unknown[] = [];
   queries: string[] = [];
   args: unknown[][] = [];
   async withTransaction<T>(
@@ -150,6 +151,8 @@ class Store implements AdherenceCommitSql, PrescriptionPublisher {
         }
         this.payload = next;
         rows = [{ value: next }];
+      } else if (statement.text.includes('to_char(date')) {
+        rows = this.batchRows;
       } else if (statement.text.includes('training_day_snapshots')) {
         rows = this.trainingSnapshots;
       } else if (statement.text.includes('rir_day_targets')) {
@@ -596,6 +599,46 @@ describe('verified sixteen-source effective prescription', () => {
 });
 
 describe('immutable historical prescription consumer', () => {
+  it('batches exact disjoint dates once and retains stored owner/date validation', async () => {
+    const db = new Store();
+    const service = new AdherencePrescriptionService(db, db);
+    const expected = await service.publish('c', '2020-01-01', key);
+    db.batchRows = [
+      { date: '2020-01-01', value: db.payload },
+      { date: '2030-01-01', value: db.payload },
+      { date: '2020-01-02', value: db.payload },
+    ];
+    db.queries = [];
+    db.args = [];
+    const result = await service.readMany('c', [
+      '2020-01-01',
+      '2030-01-01',
+      '2020-01-01',
+      '2021-01-01',
+      'invalid',
+    ]);
+    expect(result.get('2020-01-01')).toEqual(expected);
+    expect(result.get('2030-01-01')).toMatchObject({
+      reason: 'invalid_stored_basis',
+    });
+    expect(result.get('2021-01-01')).toMatchObject({
+      reason: 'missing_stored_basis',
+    });
+    expect(result.get('invalid')).toMatchObject({
+      reason: 'invalid_client_date',
+    });
+    expect(result.has('2020-01-02')).toBe(false);
+    expect(db.queries).toHaveLength(1);
+    expect(db.args[0]).toEqual(['c', '2020-01-01', '2030-01-01', '2021-01-01']);
+    expect(db.queries[0]).not.toMatch(/journal|baseline|snapshot|profile/i);
+    expect(await service.readMany('', ['2020-01-01'])).toEqual(
+      new Map([
+        ['2020-01-01', { status: 'unknown', reason: 'invalid_client_date' }],
+      ]),
+    );
+    expect(await service.readMany('c', [])).toEqual(new Map());
+    expect(db.queries).toHaveLength(1);
+  });
   it('publishes full untimed catalog projection and reads only the bounded stored membership basis', async () => {
     const db = new Store();
     const service = new AdherencePrescriptionService(db, db);
