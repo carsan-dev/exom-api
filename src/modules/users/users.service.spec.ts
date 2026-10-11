@@ -44,6 +44,9 @@ describe('UsersService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
     };
+    planAssignment: {
+      findUnique: jest.Mock;
+    };
     exercise: {
       findMany: jest.Mock;
     };
@@ -94,6 +97,9 @@ describe('UsersService', () => {
       dayProgress: {
         findFirst: jest.fn(),
         update: jest.fn(),
+      },
+      planAssignment: {
+        findUnique: jest.fn().mockResolvedValue(null),
       },
       exercise: {
         findMany: jest.fn(),
@@ -284,6 +290,14 @@ describe('UsersService', () => {
       ),
     ).resolves.toEqual({
       ...progress,
+      // Additive "x de N": no assignment row for this day.
+      training_summary: {
+        training_completion_mode: 'ALL',
+        assigned_count: 0,
+        completed_count: 0,
+        assigned_training_ids: [],
+        completed_training_ids: [],
+      },
       diet_history: [],
       exercises_completed: [
         {
@@ -1146,6 +1160,83 @@ describe('UsersService', () => {
     ).resolves.toBe(summary);
     expect(prisma.adminClientAssignment.findFirst).toHaveBeenCalledWith({
       where: { admin_id: 'admin-1', client_id: 'client-1', is_active: true },
+    });
+  });
+
+  describe('day training summary (x de N)', () => {
+    it.each([
+      ['ANY', true],
+      ['ALL', false],
+    ] as const)(
+      'reports recorded completions of the assigned trainings under %s',
+      async (mode, flag) => {
+        prisma.dayProgress.findFirst.mockResolvedValue({
+          id: 'progress-1',
+          client_id: 'client-1',
+          date: new Date('2026-10-05T00:00:00.000Z'),
+          training_completed: flag,
+          trainings_completed: ['training-2', 'old-plan-training'],
+          exercises_completed: [],
+          meals_completed: [],
+          notes: null,
+        });
+        prisma.planAssignment.findUnique.mockResolvedValue({
+          training_id: 'training-1',
+          training_completion_mode: mode,
+          trainings: [
+            { training_id: 'training-1' },
+            { training_id: 'training-2' },
+            { training_id: 'training-3' },
+          ],
+        });
+
+        await expect(
+          service.getClientDayProgress(
+            'super-admin-1',
+            Role.SUPER_ADMIN,
+            'client-1',
+            '2026-10-05',
+          ),
+        ).resolves.toMatchObject({
+          training_completed: flag,
+          training_summary: {
+            training_completion_mode: mode,
+            assigned_count: 3,
+            completed_count: 1,
+            assigned_training_ids: ['training-1', 'training-2', 'training-3'],
+            completed_training_ids: ['training-2'],
+          },
+        });
+      },
+    );
+
+    it('counts a legacy single-training mirror without link rows', async () => {
+      prisma.dayProgress.findFirst.mockResolvedValue({
+        id: 'progress-1',
+        client_id: 'client-1',
+        date: new Date('2026-10-05T00:00:00.000Z'),
+        training_completed: true,
+        trainings_completed: ['training-legacy'],
+        exercises_completed: [],
+        meals_completed: [],
+        notes: null,
+      });
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        training_id: 'training-legacy',
+        training_completion_mode: 'ALL',
+        trainings: [],
+      });
+
+      await expect(
+        service.getClientDayProgress(
+          'super-admin-1',
+          Role.SUPER_ADMIN,
+          'client-1',
+          '2026-10-05',
+        ),
+      ).resolves.toMatchObject({
+        training_summary: { assigned_count: 1, completed_count: 1 },
+      });
     });
   });
 });

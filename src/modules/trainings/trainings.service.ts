@@ -24,6 +24,7 @@ import {
   CatalogColorType,
   Prisma,
   TrainingBlockType,
+  TrainingCompletionMode,
   TrainingMeasureType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -35,6 +36,7 @@ import {
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
+import { isTrainingDayComplete } from '../../common/progress/training-completion';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 import { lockClientsDayProgress } from '../../common/progress/day-progress-lock';
 
@@ -760,6 +762,7 @@ export class TrainingsService {
         client_id: true,
         date: true,
         training_id: true,
+        training_completion_mode: true,
         trainings: {
           orderBy: { position: 'asc' },
           select: { training_id: true },
@@ -842,13 +845,18 @@ export class TrainingsService {
             ...historicalLegacyEntries,
           ] as unknown as Prisma.InputJsonValue,
           trainings_completed: [...completedIds],
-          // This edit only evaluates trainingId. With several assigned trainings
-          // we cannot prove the others from their ambiguous historical IDs, so
-          // leave an incomplete day incomplete until explicit completion or a
-          // reconciliation that verifies every assigned training's execution.
+          // This edit only evaluates trainingId. Under ALL with several assigned
+          // trainings we cannot prove the others from their ambiguous historical
+          // IDs, so an incomplete day stays incomplete until explicit completion
+          // or a reconciliation that verifies every assigned training. Under ANY
+          // the verified execution of this assigned training is sufficient.
           training_completed:
             progress.training_completed ||
-            (assignedIds.length === 1 && reconciled.trainingCompleted),
+            isTrainingDayComplete(
+              assignment.training_completion_mode,
+              assignedIds,
+              reconciled.trainingCompleted ? [trainingId] : [],
+            ),
         },
       });
     }
@@ -1506,11 +1514,18 @@ export class TrainingsService {
           legacyDayCompletion,
       }),
     );
+    const trainingCompletionMode =
+      assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
     return {
       date: target.toISOString().split('T')[0],
-      training_completed:
-        serializedTrainings.length > 0 &&
-        serializedTrainings.every((training) => training.completed),
+      training_completed: isTrainingDayComplete(
+        trainingCompletionMode,
+        serializedTrainings.map((training) => training.id),
+        serializedTrainings
+          .filter((training) => training.completed)
+          .map((training) => training.id),
+      ),
+      training_completion_mode: trainingCompletionMode,
       trainings: serializedTrainings,
     };
   }

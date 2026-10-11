@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { TrainingCompletionMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   flattenHistoricalMeals,
@@ -11,6 +12,7 @@ import {
   type MealIdentity,
 } from '../../common/progress/plan-progress-reconciliation';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
+import { isTrainingDayComplete } from '../../common/progress/training-completion';
 
 export interface CalendarDay {
   date: string;
@@ -19,6 +21,23 @@ export interface CalendarDay {
   is_rest_day: boolean;
   training_completed: boolean;
   diet_completed: boolean;
+  /** Additive: ALL (every assigned training) or ANY (one of them). */
+  training_completion_mode: TrainingCompletionMode;
+  /** Additive: trainings assigned that day. */
+  trainings_assigned: number;
+  /** Additive: recorded completions of trainings assigned that day. */
+  trainings_done: number;
+}
+
+interface TrainingDayAssignment {
+  training_id?: string | null;
+  training_completion_mode?: TrainingCompletionMode;
+  trainings?: Array<{ training_id: string }>;
+}
+
+interface TrainingDayProgress {
+  training_completed?: boolean;
+  trainings_completed?: string[];
 }
 
 @Injectable()
@@ -38,6 +57,48 @@ export class CalendarService {
       dates.push(new Date(date));
     }
     return { start, end, dates };
+  }
+
+  /**
+   * Day training status computed on read from stored completions, with the
+   * day's completion mode and the legacy single-training fallback. Shared by
+   * the month calendar and the week summary so both count the same days.
+   */
+  private trainingDayStatus(
+    assignment: TrainingDayAssignment | undefined,
+    progress: TrainingDayProgress | undefined,
+  ) {
+    const mode =
+      assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
+    const linkedIds =
+      assignment?.trainings?.map((link) => link.training_id) ?? [];
+    const storedIds = progress?.trainings_completed ?? [];
+    if (linkedIds.length === 0) {
+      // Legacy single-training mirror without link rows.
+      const completed = Boolean(
+        assignment?.training_id && progress?.training_completed,
+      );
+      return {
+        mode,
+        assigned: assignment?.training_id ? 1 : 0,
+        done: completed ? 1 : 0,
+        completed,
+      };
+    }
+    const done = linkedIds.filter((id) => storedIds.includes(id)).length;
+    const legacySingleCompletion = Boolean(
+      linkedIds.length === 1 &&
+      progress?.training_completed &&
+      storedIds.length === 0,
+    );
+    return {
+      mode,
+      assigned: linkedIds.length,
+      done: legacySingleCompletion ? 1 : done,
+      completed:
+        isTrainingDayComplete(mode, linkedIds, storedIds) ||
+        legacySingleCompletion,
+    };
   }
 
   private dietDayStatus(meals: MealIdentity[], completedIds: string[]) {
@@ -116,19 +177,7 @@ export class CalendarService {
         assignedMeals,
         progress?.meals_completed ?? [],
       );
-      const assignedTrainingIds =
-        assignment?.trainings?.map((link) => link.training_id) ?? [];
-      const currentTrainingCompleted =
-        assignedTrainingIds.length > 0
-          ? assignedTrainingIds.every((id) =>
-              progress?.trainings_completed.includes(id),
-            ) ||
-            Boolean(
-              assignedTrainingIds.length === 1 &&
-              progress?.training_completed &&
-              progress.trainings_completed.length === 0,
-            )
-          : Boolean(assignment?.training_id && progress?.training_completed);
+      const trainingStatus = this.trainingDayStatus(assignment, progress);
 
       days.push({
         date: dateStr,
@@ -138,8 +187,11 @@ export class CalendarService {
         ),
         has_diet: !!assignment?.diet_id,
         is_rest_day: assignment?.is_rest_day ?? false,
-        training_completed: currentTrainingCompleted,
+        training_completed: trainingStatus.completed,
         diet_completed: dietStatus.dayCompleted,
+        training_completion_mode: trainingStatus.mode,
+        trainings_assigned: trainingStatus.assigned,
+        trainings_done: trainingStatus.done,
       });
     }
 
@@ -225,6 +277,20 @@ export class CalendarService {
       );
     }, 0);
 
+    // Mode-aware day counts ("x/N days"): a rest day or a day without
+    // trainings is not a training day. Per-training counts above are kept.
+    const trainingDays = assignments
+      .filter((assignment) => !assignment.is_rest_day)
+      .map((assignment) =>
+        this.trainingDayStatus(
+          assignment,
+          progressMap.get(
+            `${assignment.client_id}:${assignment.date.toISOString()}`,
+          ),
+        ),
+      )
+      .filter((day) => day.assigned > 0);
+
     const dietDays = assignments.map((assignment) => {
       const progress = progressMap.get(
         `${assignment.client_id}:${assignment.date.toISOString()}`,
@@ -239,6 +305,9 @@ export class CalendarService {
       week_start: weekStart,
       trainings_assigned: trainingsAssigned,
       trainings_completed: trainingsCompleted,
+      training_days_assigned: trainingDays.length,
+      training_days_completed: trainingDays.filter((day) => day.completed)
+        .length,
       total_meals: dietDays.reduce((sum, day) => sum + day.assigned, 0),
       meals_completed: dietDays.reduce((sum, day) => sum + day.completed, 0),
       diet_days_assigned: assignments.filter(

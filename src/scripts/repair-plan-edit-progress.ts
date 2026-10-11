@@ -1,10 +1,11 @@
 import 'dotenv/config';
-import { Prisma } from '@prisma/client';
+import { Prisma, TrainingCompletionMode } from '@prisma/client';
 import {
   DAY_PROGRESS_TRANSACTION_OPTIONS,
   lockClientDayProgress,
 } from '../common/progress/day-progress-lock';
 import { reconcileTrainingProgress } from '../common/progress/plan-progress-reconciliation';
+import { isTrainingDayComplete } from '../common/progress/training-completion';
 import { PrismaService } from '../prisma/prisma.service';
 
 const apply = process.argv.includes('--apply');
@@ -121,7 +122,16 @@ function analyzeTrainingRepair(
     data: {
       exercises_completed:
         reconciled.entries as unknown as Prisma.InputJsonValue,
-      training_completed: reconciled.trainingCompleted,
+      // ALL keeps its historical single-session rule unchanged; ANY needs one
+      // fully reconciled assigned training.
+      training_completed:
+        assignment.training_completion_mode === TrainingCompletionMode.ANY
+          ? isTrainingDayComplete(
+              assignment.training_completion_mode,
+              trainings.map((training) => training.id),
+              completedTrainingIds,
+            )
+          : reconciled.trainingCompleted,
       trainings_completed: completedTrainingIds,
     },
   };

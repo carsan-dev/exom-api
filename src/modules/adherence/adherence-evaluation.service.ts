@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { Prisma, Role } from '@prisma/client';
+import { Prisma, Role, TrainingCompletionMode } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -88,6 +88,12 @@ export interface EvaluationBasis {
   trainingKnown: boolean;
   rest: boolean;
   units: EvidenceUnit[];
+  /**
+   * ALL (absent: frozen/unknown bases and legacy rows) evaluates one unit per
+   * assigned training. ANY prescribes one training to choose from: the day is
+   * a single unit, complete when any assigned training is proven complete.
+   */
+  completionMode?: TrainingCompletionMode;
   nutritionKnown: boolean;
   groups: MealGroup[];
   calories: number | null;
@@ -284,7 +290,10 @@ export function normalizeAdherenceEvidence(
     ),
   ].sort((a, b) => a - b);
   const executions: ExecutionProof[] = [];
-  const training = basis.units.map((unit): PlannedUnit => {
+  const chooseOne =
+    basis.completionMode === TrainingCompletionMode.ANY &&
+    basis.units.length > 1;
+  const perUnit = basis.units.map((unit): PlannedUnit => {
     const candidates = sessions.filter(
       (session) =>
         session.training_id === unit.trainingId &&
@@ -330,9 +339,11 @@ export function normalizeAdherenceEvidence(
         });
       return supported;
     });
+    // The legacy day flag is a per-unit claim only under ALL. Under ANY it is
+    // judged once for the collapsed day below, never spread over every unit.
     const unsupported =
       own?.trainings_completed.includes(unit.trainingId) ||
-      own?.training_completed ||
+      (!chooseOne && own?.training_completed) ||
       entries.some(
         (entry) =>
           !entry.training_session_id &&
@@ -349,6 +360,26 @@ export function normalizeAdherenceEvidence(
           : COMPLETION.INCOMPLETE,
     };
   });
+  // ANY: one proven training satisfies the day (1/1); otherwise an unproven
+  // claim (stored ID, session-less entry or the legacy day flag) stays
+  // indeterminate (2026-09-29) and anything else is 0/1.
+  const training: PlannedUnit[] = chooseOne
+    ? [
+        {
+          id: `any:${basis.units.map((unit) => unit.id).join(',')}`,
+          completion: perUnit.some(
+            (unit) => unit.completion === COMPLETION.COMPLETE,
+          )
+            ? COMPLETION.COMPLETE
+            : own?.training_completed ||
+                perUnit.some(
+                  (unit) => unit.completion === COMPLETION.INDETERMINATE,
+                )
+              ? COMPLETION.INDETERMINATE
+              : COMPLETION.INCOMPLETE,
+        },
+      ]
+    : perUnit;
   const selectedMeals: string[] = [];
   let calories = 0;
   let protein = 0;
@@ -558,6 +589,7 @@ export class AdherenceEvaluationService {
       trainingKnown: true,
       rest: assignment.is_rest_day,
       units: assignment.is_rest_day ? [] : units,
+      completionMode: assignment.training_completion_mode,
       nutritionKnown: true,
       groups:
         diet?.meals

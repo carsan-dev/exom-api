@@ -117,6 +117,11 @@ enum LastSetVideoPolicy {
   NEVER
 }
 
+enum TrainingCompletionMode {
+  ALL
+  ANY
+}
+
 enum ManagedUploadPurpose {
   AVATAR
   FEEDBACK_IMAGE
@@ -653,17 +658,18 @@ model MealIngredient {
 // ─── Assignments & Progress ───────────────────────────────────────────────────
 
 model PlanAssignment {
-  id                      String   @id @default(uuid())
-  client_id               String
-  admin_id                String?
-  date                    DateTime @db.Date
-  training_id             String?
-  diet_id                 String?
-  auto_assignment_rule_id String?
-  is_rest_day             Boolean  @default(false)
-  notes                   String?
-  created_at              DateTime @default(now())
-  updated_at              DateTime @updatedAt
+  id                       String                 @id @default(uuid())
+  client_id                String
+  admin_id                 String?
+  date                     DateTime               @db.Date
+  training_id              String?
+  diet_id                  String?
+  auto_assignment_rule_id  String?
+  is_rest_day              Boolean                @default(false)
+  training_completion_mode TrainingCompletionMode @default(ALL)
+  notes                    String?
+  created_at               DateTime               @default(now())
+  updated_at               DateTime               @updatedAt
 
   training           Training?                @relation(fields: [training_id], references: [id], onDelete: SetNull)
   trainings          PlanAssignmentTraining[]
@@ -821,16 +827,17 @@ model AdherenceCatalogJournal {
 }
 
 model AutoAssignmentRule {
-  id                String    @id @default(uuid())
-  client_id         String
-  admin_id          String?
-  source_week_start DateTime  @db.Date
-  starts_on         DateTime  @db.Date
-  ends_on           DateTime? @db.Date
-  is_active         Boolean   @default(true)
-  deactivated_at    DateTime?
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  id                       String                 @id @default(uuid())
+  client_id                String
+  admin_id                 String?
+  source_week_start        DateTime               @db.Date
+  starts_on                DateTime               @db.Date
+  ends_on                  DateTime?              @db.Date
+  is_active                Boolean                @default(true)
+  training_completion_mode TrainingCompletionMode @default(ALL)
+  deactivated_at           DateTime?
+  created_at               DateTime               @default(now())
+  updated_at               DateTime               @updatedAt
 
   days        AutoAssignmentRuleDay[]
   assignments PlanAssignment[]

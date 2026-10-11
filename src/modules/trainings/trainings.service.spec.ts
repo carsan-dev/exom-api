@@ -872,6 +872,8 @@ describe('TrainingsService', () => {
     ).resolves.toEqual({
       date: '2026-09-03',
       training_completed: false,
+      // Additive field: an assignment without a stored mode reads as ALL.
+      training_completion_mode: 'ALL',
       trainings: [],
     });
     expect(prisma.planAssignment.findUnique).toHaveBeenCalledWith(
@@ -1151,6 +1153,139 @@ describe('TrainingsService', () => {
       expect.objectContaining({
         select: expect.objectContaining({ exercises_completed: true }),
       }),
+    );
+  });
+
+  describe('training completion mode', () => {
+    it.each([
+      ['ANY', true],
+      ['ALL', false],
+    ] as const)(
+      'catalog reconciliation of one verified training of two under %s sets the day to %s',
+      async (mode, expected) => {
+        const date = new Date('2026-09-03T00:00:00.000Z');
+        const tx = {
+          trainingExercise: {
+            findMany: jest
+              .fn()
+              .mockResolvedValue([{ id: 'te-b', exercise_id: 'ex-b' }]),
+          },
+          planAssignment: {
+            findMany: jest.fn().mockResolvedValue([
+              {
+                client_id: 'client-1',
+                date,
+                training_id: null,
+                training_completion_mode: mode,
+                trainings: [
+                  { training_id: 'training-a' },
+                  { training_id: 'training-b' },
+                ],
+              },
+            ]),
+          },
+          dayProgress: {
+            findMany: jest.fn().mockResolvedValue([
+              {
+                id: 'progress-1',
+                client_id: 'client-1',
+                date,
+                training_completed: false,
+                trainings_completed: [],
+                exercises_completed: [
+                  {
+                    training_exercise_id: 'te-b',
+                    exercise_id: 'ex-b',
+                    training_session_id: 'session-b',
+                  },
+                ],
+              },
+            ]),
+            update: jest.fn(),
+          },
+          trainingDaySnapshot: { findMany: jest.fn().mockResolvedValue([]) },
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        };
+
+        await (
+          service as unknown as {
+            reconcileAssignedProgress(
+              tx: unknown,
+              trainingId: string,
+              deletedIds: ReadonlySet<string>,
+            ): Promise<void>;
+          }
+        ).reconcileAssignedProgress(tx, 'training-b', new Set());
+
+        expect(tx.dayProgress.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              trainings_completed: ['training-b'],
+              training_completed: expected,
+            }),
+          }),
+        );
+      },
+    );
+
+    it.each([
+      ['ANY', true],
+      ['ALL', false],
+    ] as const)(
+      'findDay with one of two trainings completed under %s reports training_completed=%s',
+      async (mode, expected) => {
+        const createTraining = (id: string, exerciseId: string) => ({
+          id,
+          name: id,
+          type: 'FUERZA',
+          types: ['FUERZA'],
+          accentColor: null,
+          is_active: true,
+          blocks: [],
+          exercises: [
+            {
+              id: `te-${id}`,
+              exercise_id: exerciseId,
+              order: 0,
+              block_id: null,
+              exercise: { id: exerciseId },
+            },
+          ],
+        });
+        prisma.planAssignment.findUnique.mockResolvedValue({
+          training_completion_mode: mode,
+          trainings: ['a', 'b'].map((n) => ({
+            id: `assignment-training-${n}`,
+            requires_last_set_video: false,
+            training: createTraining(`training-${n}`, `exercise-${n}`),
+          })),
+          training: null,
+        });
+        prisma.dayProgress.findUnique.mockResolvedValue({
+          training_completed: expected,
+          trainings_completed: ['training-b'],
+          exercises_completed: [
+            {
+              training_exercise_id: 'te-training-b',
+              exercise_id: 'exercise-b',
+            },
+          ],
+        });
+
+        const result = await service.findDay(
+          'client-1',
+          new Date('2026-09-03T00:00:00.000Z'),
+        );
+
+        expect(result).toMatchObject({
+          training_completed: expected,
+          training_completion_mode: mode,
+          trainings: [
+            { id: 'training-a', completed: false },
+            { id: 'training-b', completed: true },
+          ],
+        });
+      },
     );
   });
 });

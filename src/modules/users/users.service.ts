@@ -20,6 +20,7 @@ import { randomBytes } from 'crypto';
 import { IdentityService } from '../identity/identity.service';
 import { IdentityProvider } from '../identity/identity-provider';
 import { PrismaService } from '../../prisma/prisma.service';
+import { trainingCompletionSummary } from '../../common/progress/training-completion';
 import {
   flattenHistoricalMeals,
   loadDietHistory,
@@ -1040,6 +1041,29 @@ export class UsersService {
       [clientId],
       new Date(date),
     );
+    // "x de N": recorded completions of the trainings assigned that day.
+    // Recorded data only; the stored flag stays the canonical day status.
+    const assignment = await this.prisma.planAssignment.findUnique({
+      where: { client_id_date: { client_id: clientId, date: new Date(date) } },
+      select: {
+        training_id: true,
+        training_completion_mode: true,
+        trainings: {
+          orderBy: { position: 'asc' },
+          select: { training_id: true },
+        },
+      },
+    });
+    const assignedTrainingIds = assignment?.trainings.length
+      ? assignment.trainings.map((link) => link.training_id)
+      : assignment?.training_id
+        ? [assignment.training_id]
+        : [];
+    const trainingSummary = trainingCompletionSummary(
+      assignment?.training_completion_mode,
+      assignedTrainingIds,
+      progress?.trainings_completed ?? [],
+    );
 
     if (!progress && dietHistory.length) {
       return {
@@ -1047,6 +1071,7 @@ export class UsersService {
         client_id: clientId,
         date: new Date(date),
         training_completed: false,
+        training_summary: trainingSummary,
         trainings_completed: [],
         exercises_completed: [],
         meals_completed: [],
@@ -1106,6 +1131,7 @@ export class UsersService {
 
     return {
       ...progress,
+      training_summary: trainingSummary,
       diet_history: dietHistory,
       exercises_completed: completedExercises.map((entry) => ({
         ...entry,
