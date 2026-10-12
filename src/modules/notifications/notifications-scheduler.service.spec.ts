@@ -292,8 +292,82 @@ describe('NotificationsSchedulerService', () => {
       expect.objectContaining({
         trainingsAssigned: 2,
         trainingsCompleted: 2,
+        trainingDaysAssigned: 1,
+        trainingDaysCompleted: 1,
       }),
       expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it('counts mode-aware training days in the weekly admin summary', async () => {
+    const day = (offset: number) => new Date(Date.UTC(2026, 3, 13 + offset));
+    const ids = (offset: number) => [
+      `t${offset}-a`,
+      `t${offset}-b`,
+      `t${offset}-c`,
+    ];
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      {
+        admin_id: 'admin-1',
+        client_id: 'client-1',
+        client: {
+          email: 'client@example.com',
+          profile: { first_name: 'Ada', last_name: 'Lovelace' },
+        },
+      },
+    ]);
+    const plans = [0, 1, 2, 3, 4, 5].map((offset) => ({
+      client_id: 'client-1',
+      date: day(offset),
+      training_id: ids(offset)[0],
+      training_completion_mode: 'ANY',
+      trainings: ids(offset).map((training_id) => ({ training_id })),
+      diet: null,
+    }));
+    plans.push({
+      client_id: 'client-1',
+      date: day(6),
+      training_id: 'all-a',
+      training_completion_mode: 'ALL',
+      trainings: [{ training_id: 'all-a' }, { training_id: 'all-b' }],
+      diet: null,
+    });
+    prisma.planAssignment.findMany.mockResolvedValue(plans);
+    prisma.dayProgress.findMany.mockResolvedValue([
+      // ANY days with one of three done count as complete.
+      ...[0, 1].map((offset) => ({
+        client_id: 'client-1',
+        date: day(offset),
+        training_completed: true,
+        trainings_completed: [ids(offset)[1]],
+        meals_completed: [],
+      })),
+      // ALL day with one of two done does not count.
+      {
+        client_id: 'client-1',
+        date: day(6),
+        training_completed: false,
+        trainings_completed: ['all-a'],
+        meals_completed: [],
+      },
+    ]);
+
+    await (
+      service as unknown as { weeklyClientSummaryToAdmin(): Promise<void> }
+    ).weeklyClientSummaryToAdmin();
+
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+      'system-admin',
+      ['admin-1'],
+      'admin_weekly_summary',
+      expect.objectContaining({
+        trainingDaysAssigned: 7,
+        trainingDaysCompleted: 2,
+      }),
+      expect.objectContaining({
+        body: 'Ada Lovelace: 2/7 días con entreno, 0/0 comidas',
+      }),
       expect.any(Object),
     );
   });

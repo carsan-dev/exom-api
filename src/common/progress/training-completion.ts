@@ -53,3 +53,57 @@ export function trainingCompletionSummary(
     completed_training_ids: completed,
   };
 }
+
+export interface TrainingDayAssignment {
+  training_id?: string | null;
+  training_completion_mode?: TrainingCompletionMode;
+  trainings?: Array<{ training_id: string }>;
+}
+
+export interface TrainingDayProgress {
+  training_completed?: boolean;
+  trainings_completed?: string[];
+}
+
+/**
+ * Day training status computed on read from stored completions, with the
+ * day's completion mode and the legacy single-training fallback. Shared by
+ * the month calendar, the week summary and the weekly admin notification so
+ * all of them count the same days.
+ */
+export function trainingDayStatus(
+  assignment: TrainingDayAssignment | undefined,
+  progress: TrainingDayProgress | undefined,
+) {
+  const mode =
+    assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
+  const linkedIds =
+    assignment?.trainings?.map((link) => link.training_id) ?? [];
+  const storedIds = progress?.trainings_completed ?? [];
+  if (linkedIds.length === 0) {
+    // Legacy single-training mirror without link rows.
+    const completed = Boolean(
+      assignment?.training_id && progress?.training_completed,
+    );
+    return {
+      mode,
+      assigned: assignment?.training_id ? 1 : 0,
+      done: completed ? 1 : 0,
+      completed,
+    };
+  }
+  const done = linkedIds.filter((id) => storedIds.includes(id)).length;
+  const legacySingleCompletion = Boolean(
+    linkedIds.length === 1 &&
+    progress?.training_completed &&
+    storedIds.length === 0,
+  );
+  return {
+    mode,
+    assigned: linkedIds.length,
+    done: legacySingleCompletion ? 1 : done,
+    completed:
+      isTrainingDayComplete(mode, linkedIds, storedIds) ||
+      legacySingleCompletion,
+  };
+}

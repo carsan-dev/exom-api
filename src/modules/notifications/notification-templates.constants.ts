@@ -108,6 +108,9 @@ export const NOTIFICATION_TEMPLATE_VARIABLE_HELP: Record<string, string> = {
   mealsCompleted: 'Comidas registradas por el cliente en la semana.',
   planSummary:
     'Resumen del plan asignado, por ejemplo "un entrenamiento" o "2 días de dieta".',
+  trainingDaysAssigned: 'Días de la semana con entrenamiento planificado.',
+  trainingDaysCompleted:
+    'Días con entreno completado según el modo del día (todos los entrenos o uno de ellos).',
   trainingsAssigned: 'Total de entrenamientos planificados en la semana.',
   trainingsCompleted: 'Entrenamientos completados por el cliente en la semana.',
 };
@@ -350,13 +353,15 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: NotificationTemplateDefinition[] =
       description: 'Cron de lunes con resumen por cliente asignado.',
       category: 'Admin',
       title: 'Resumen semanal de cliente',
-      body: '{clientName}: {trainingsCompleted}/{trainingsAssigned} entrenos, {mealsCompleted}/{mealsAssigned} comidas',
+      body: '{clientName}: {trainingDaysCompleted}/{trainingDaysAssigned} días con entreno, {mealsCompleted}/{mealsAssigned} comidas',
       route: '/admin/clients/{clientId}',
       variables: [
         'clientName',
         'clientId',
         'trainingsCompleted',
         'trainingsAssigned',
+        'trainingDaysCompleted',
+        'trainingDaysAssigned',
         'mealsCompleted',
         'mealsAssigned',
       ],

@@ -12,7 +12,7 @@ import {
   type MealIdentity,
 } from '../../common/progress/plan-progress-reconciliation';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
-import { isTrainingDayComplete } from '../../common/progress/training-completion';
+import { trainingDayStatus } from '../../common/progress/training-completion';
 
 export interface CalendarDay {
   date: string;
@@ -27,17 +27,6 @@ export interface CalendarDay {
   trainings_assigned: number;
   /** Additive: recorded completions of trainings assigned that day. */
   trainings_done: number;
-}
-
-interface TrainingDayAssignment {
-  training_id?: string | null;
-  training_completion_mode?: TrainingCompletionMode;
-  trainings?: Array<{ training_id: string }>;
-}
-
-interface TrainingDayProgress {
-  training_completed?: boolean;
-  trainings_completed?: string[];
 }
 
 @Injectable()
@@ -57,48 +46,6 @@ export class CalendarService {
       dates.push(new Date(date));
     }
     return { start, end, dates };
-  }
-
-  /**
-   * Day training status computed on read from stored completions, with the
-   * day's completion mode and the legacy single-training fallback. Shared by
-   * the month calendar and the week summary so both count the same days.
-   */
-  private trainingDayStatus(
-    assignment: TrainingDayAssignment | undefined,
-    progress: TrainingDayProgress | undefined,
-  ) {
-    const mode =
-      assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
-    const linkedIds =
-      assignment?.trainings?.map((link) => link.training_id) ?? [];
-    const storedIds = progress?.trainings_completed ?? [];
-    if (linkedIds.length === 0) {
-      // Legacy single-training mirror without link rows.
-      const completed = Boolean(
-        assignment?.training_id && progress?.training_completed,
-      );
-      return {
-        mode,
-        assigned: assignment?.training_id ? 1 : 0,
-        done: completed ? 1 : 0,
-        completed,
-      };
-    }
-    const done = linkedIds.filter((id) => storedIds.includes(id)).length;
-    const legacySingleCompletion = Boolean(
-      linkedIds.length === 1 &&
-      progress?.training_completed &&
-      storedIds.length === 0,
-    );
-    return {
-      mode,
-      assigned: linkedIds.length,
-      done: legacySingleCompletion ? 1 : done,
-      completed:
-        isTrainingDayComplete(mode, linkedIds, storedIds) ||
-        legacySingleCompletion,
-    };
   }
 
   private dietDayStatus(meals: MealIdentity[], completedIds: string[]) {
@@ -177,7 +124,7 @@ export class CalendarService {
         assignedMeals,
         progress?.meals_completed ?? [],
       );
-      const trainingStatus = this.trainingDayStatus(assignment, progress);
+      const trainingStatus = trainingDayStatus(assignment, progress);
 
       days.push({
         date: dateStr,
@@ -282,7 +229,7 @@ export class CalendarService {
     const trainingDays = assignments
       .filter((assignment) => !assignment.is_rest_day)
       .map((assignment) =>
-        this.trainingDayStatus(
+        trainingDayStatus(
           assignment,
           progressMap.get(
             `${assignment.client_id}:${assignment.date.toISOString()}`,
