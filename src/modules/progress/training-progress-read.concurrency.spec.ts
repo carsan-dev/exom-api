@@ -2637,4 +2637,192 @@ suite('training progress bounded PostgreSQL read model', () => {
       ).indicators,
     ).toMatchObject({ trainings_completed: 2, volume: null });
   });
+
+  it('falls back to labelled current catalog names only where no snapshot names the exercise or training', async () => {
+    const owner = await client();
+    const day = '2026-09-24';
+    const squat = `${prefix}-catalog-squat`;
+    const press = `${prefix}-catalog-press`;
+    const deleted = `${prefix}-catalog-deleted`;
+    const legTraining = `${prefix}-catalog-leg`;
+    const armTraining = `${prefix}-catalog-arm`;
+    await db.exercise.createMany({
+      data: [
+        { id: squat, name: 'Sentadilla actual' },
+        { id: press, name: 'Press renombrado' },
+      ],
+    });
+    await db.training.createMany({
+      data: [
+        { id: legTraining, name: 'Pierna renombrada', type: 'STRENGTH' },
+        { id: armTraining, name: 'Brazo actual', type: 'STRENGTH' },
+      ],
+    });
+    syntheticTrainingIds.push(legTraining, armTraining);
+    try {
+      await db.dayProgress.create({
+        data: {
+          client_id: owner,
+          date: date(day),
+          training_sessions: [
+            { training_id: legTraining, training_session_id: 'with-snapshot' },
+            {
+              training_id: armTraining,
+              training_session_id: 'without-snapshot',
+            },
+          ],
+          exercises_completed: [
+            // Legacy entry: no session and no occurrence identifier.
+            { exercise_id: squat, sets: [{ set_number: 1, reps: 5 }] },
+            {
+              exercise_id: press,
+              training_exercise_id: 'press-occurrence',
+              training_session_id: 'with-snapshot',
+              sets: [{ set_number: 1, reps: 8, weight_kg: 40 }],
+            },
+            {
+              exercise_id: squat,
+              training_exercise_id: 'squat-occurrence',
+              training_session_id: 'without-snapshot',
+              sets: [{ set_number: 1, reps: 6 }],
+            },
+            {
+              exercise_id: deleted,
+              training_exercise_id: 'deleted-occurrence',
+              training_session_id: 'without-snapshot',
+              sets: [{ set_number: 1, reps: 3 }],
+            },
+          ],
+        },
+      });
+      await db.trainingDaySnapshot.create({
+        data: {
+          client_id: owner,
+          date: date(day),
+          training_id: legTraining,
+          version: 1,
+          payload: {
+            name: 'Pierna histórica',
+            exercises: [
+              {
+                id: 'press-occurrence',
+                exercise_id: press,
+                exercise: { name: 'Press histórico' },
+              },
+            ],
+          },
+        },
+      });
+      const period = { from: day, to: day };
+
+      const overview = await reader.getAuthorizedOverview(owner, owner, period);
+      expect(
+        overview.exercises.map(
+          ({ exercise_id, exercise_name, name_source }) => ({
+            exercise_id,
+            exercise_name,
+            name_source,
+          }),
+        ),
+      ).toEqual([
+        { exercise_id: deleted, exercise_name: null, name_source: null },
+        {
+          exercise_id: press,
+          exercise_name: 'Press histórico',
+          name_source: 'snapshot',
+        },
+        {
+          exercise_id: squat,
+          exercise_name: 'Sentadilla actual',
+          name_source: 'current_catalog',
+        },
+      ]);
+      const identified = await reader.getAuthorizedOverview(
+        owner,
+        owner,
+        period,
+        { identification: 'identified' },
+      );
+      expect(identified.exercises.map((row) => row.exercise_id)).toEqual([
+        press,
+        squat,
+      ]);
+      const searched = await reader.getAuthorizedOverview(
+        owner,
+        owner,
+        period,
+        { search: 'sentadilla' },
+      );
+      expect(searched.exercises.map((row) => row.exercise_id)).toEqual([squat]);
+      // A renamed catalog never replaces the snapshot name in search either.
+      const renamed = await reader.getAuthorizedOverview(owner, owner, period, {
+        search: 'renombrado',
+      });
+      expect(renamed.exercises).toEqual([]);
+
+      const list = await reader.getAuthorizedSessionList(owner, owner, period);
+      expect(
+        list.page.map(
+          ({ training_session_id, training_name, training_name_source }) => ({
+            training_session_id,
+            training_name,
+            training_name_source,
+          }),
+        ),
+      ).toEqual([
+        {
+          training_session_id: 'with-snapshot',
+          training_name: 'Pierna histórica',
+          training_name_source: 'snapshot',
+        },
+        {
+          training_session_id: 'without-snapshot',
+          training_name: 'Brazo actual',
+          training_name_source: 'current_catalog',
+        },
+      ]);
+
+      const withSnapshot = await reader.getAuthorizedSessionDetail(
+        owner,
+        owner,
+        day,
+        'with-snapshot',
+      );
+      expect(withSnapshot).toMatchObject({
+        training_name: 'Pierna histórica',
+        training_name_source: 'snapshot',
+        page: [
+          {
+            exercise_id: press,
+            exercise_name: 'Press histórico',
+            exercise_name_source: 'snapshot',
+          },
+        ],
+      });
+      const withoutSnapshot = await reader.getAuthorizedSessionDetail(
+        owner,
+        owner,
+        day,
+        'without-snapshot',
+      );
+      expect(withoutSnapshot).toMatchObject({
+        training_name: 'Brazo actual',
+        training_name_source: 'current_catalog',
+        page: [
+          {
+            exercise_id: squat,
+            exercise_name: 'Sentadilla actual',
+            exercise_name_source: 'current_catalog',
+          },
+          {
+            exercise_id: deleted,
+            exercise_name: null,
+            exercise_name_source: null,
+          },
+        ],
+      });
+    } finally {
+      await db.exercise.deleteMany({ where: { id: { in: [squat, press] } } });
+    }
+  });
 });

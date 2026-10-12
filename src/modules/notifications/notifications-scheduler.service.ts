@@ -14,6 +14,10 @@ import {
   indexDietHistory,
   loadDietHistory,
 } from '../../common/progress/diet-history';
+import {
+  trainingDayStatus,
+  type TrainingDayAssignment,
+} from '../../common/progress/training-completion';
 import { NotificationsService } from './notifications.service';
 import {
   NOTIFICATION_TEMPLATE_SCHEDULE_BY_KEY,
@@ -582,6 +586,7 @@ export class NotificationsSchedulerService implements OnModuleInit {
           date: true,
           training_id: true,
           diet_id: true,
+          training_completion_mode: true,
           trainings: {
             orderBy: { position: 'asc' },
             select: { training_id: true },
@@ -615,9 +620,12 @@ export class NotificationsSchedulerService implements OnModuleInit {
       {
         trainingsAssigned: number;
         trainingsCompleted: number;
+        trainingDaysAssigned: number;
+        trainingDaysCompleted: number;
         mealsAssigned: number;
         mealsCompleted: number;
         trainingIdsByDate: Map<string, Set<string>>;
+        trainingDayByDate: Map<string, TrainingDayAssignment>;
         mealsByDate: Map<string, MealIdentity[]>;
       }
     >();
@@ -627,9 +635,12 @@ export class NotificationsSchedulerService implements OnModuleInit {
         summary = {
           trainingsAssigned: 0,
           trainingsCompleted: 0,
+          trainingDaysAssigned: 0,
+          trainingDaysCompleted: 0,
           mealsAssigned: 0,
           mealsCompleted: 0,
           trainingIdsByDate: new Map(),
+          trainingDayByDate: new Map(),
           mealsByDate: new Map(),
         };
         summaryByClient.set(clientId, summary);
@@ -649,6 +660,12 @@ export class NotificationsSchedulerService implements OnModuleInit {
           : [];
       if (trainingIds.length > 0) {
         summary.trainingsAssigned += trainingIds.length;
+        summary.trainingDaysAssigned += 1;
+        summary.trainingDayByDate.set(this.formatDate(plan.date), {
+          training_id: plan.training_id,
+          training_completion_mode: plan.training_completion_mode,
+          trainings: plan.trainings,
+        });
         summary.trainingIdsByDate.set(
           this.formatDate(plan.date),
           new Set(trainingIds),
@@ -673,6 +690,14 @@ export class NotificationsSchedulerService implements OnModuleInit {
         this.formatDate(entry.date),
       );
       if (trainingIds) {
+        // Same day semantics as the calendar week summary: mode-aware.
+        if (
+          trainingDayStatus(
+            summary.trainingDayByDate.get(this.formatDate(entry.date)),
+            entry,
+          ).completed
+        )
+          summary.trainingDaysCompleted += 1;
         const completedIds = entry.trainings_completed.filter((trainingId) =>
           trainingIds.has(trainingId),
         );
@@ -713,12 +738,14 @@ export class NotificationsSchedulerService implements OnModuleInit {
           clientId: assignment.client_id,
           trainingsCompleted: summary.trainingsCompleted,
           trainingsAssigned: summary.trainingsAssigned,
+          trainingDaysCompleted: summary.trainingDaysCompleted,
+          trainingDaysAssigned: summary.trainingDaysAssigned,
           mealsCompleted: summary.mealsCompleted,
           mealsAssigned: summary.mealsAssigned,
         },
         {
           title: 'Resumen semanal de cliente',
-          body: `${clientName}: ${summary.trainingsCompleted}/${summary.trainingsAssigned} entrenos, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
+          body: `${clientName}: ${summary.trainingDaysCompleted}/${summary.trainingDaysAssigned} días con entreno, ${summary.mealsCompleted}/${summary.mealsAssigned} comidas`,
           route: `/admin/clients/${assignment.client_id}`,
         },
         {

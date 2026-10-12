@@ -46,15 +46,24 @@ interface LoadCursor {
   s: number;
 }
 
+/**
+ * Where a displayed name comes from. The immutable day snapshot keeps
+ * priority; otherwise the current catalog name is labelled as such (it may
+ * differ from the name the client saw). null: no name available.
+ */
+export type TrainingNameSource = 'snapshot' | 'current_catalog';
+
 export interface TrainingSessionDetail {
   training_id: string;
   training_session_id: string;
   training_name: string | null;
+  training_name_source: TrainingNameSource | null;
   rpe: number | null;
   note: string | null;
   page: Array<{
     exercise_id: string;
     exercise_name: string | null;
+    exercise_name_source: TrainingNameSource | null;
     training_exercise_id: string | null;
     set_number: number | null;
     reps: number | null;
@@ -71,6 +80,7 @@ export interface TrainingSessionListPage {
     training_id: string;
     training_session_id: string;
     training_name: string | null;
+    training_name_source: TrainingNameSource | null;
     rpe: number | null;
     note: string | null;
   }>;
@@ -116,6 +126,7 @@ interface SessionListRow {
   training_session_id: string;
   item: unknown;
   payload: unknown;
+  current_training_name: string | null;
 }
 
 interface SessionCursor {
@@ -168,6 +179,22 @@ function snapshotLabel(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+// Current catalog names are labelled fallbacks; blank names are unavailable.
+function catalogLabel(value: string | null | undefined): string | null {
+  return typeof value === 'string' && /\S/.test(value) ? value : null;
+}
+
+function labelledName(
+  snapshotName: string | null,
+  catalogName: string | null | undefined,
+): { name: string | null; source: TrainingNameSource | null } {
+  if (snapshotName !== null) return { name: snapshotName, source: 'snapshot' };
+  const current = catalogLabel(catalogName);
+  return current === null
+    ? { name: null, source: null }
+    : { name: current, source: 'current_catalog' };
+}
+
 function snapshotExerciseName(
   payload: Record<string, unknown> | null,
   exerciseId: string,
@@ -192,6 +219,7 @@ function snapshotExerciseName(
 export interface TrainingExerciseSummary {
   exercise_id: string;
   exercise_name: string | null;
+  name_source: TrainingNameSource | null;
   sets: number;
   max_reps: number | null;
   max_seconds: number | null;
@@ -252,6 +280,7 @@ function validCivilDateRange(range: TrainingProgressRange): boolean {
 interface RawExercise {
   exercise_id: string | null;
   exercise_name: string | null;
+  name_source: TrainingNameSource | null;
   sets: bigint;
   max_reps: number | null;
   max_seconds: number | null;
@@ -405,8 +434,11 @@ export function buildTrainingOverviewExerciseQuery(
           ? Prisma.sql`page_ids AS (
         SELECT g.exercise_id FROM grouped g
         LEFT JOIN latest_names n ON n.exercise_id = g.exercise_id
-        WHERE (${identification} <> 'identified' OR n.exercise_name ~ '[^[:space:]]')
-          AND (${search} = '' OR strpos(lower(n.exercise_name), lower(${search})) > 0)
+        LEFT JOIN exercises x ON x.id = g.exercise_id
+        CROSS JOIN LATERAL (SELECT COALESCE(n.exercise_name,
+          CASE WHEN x.name ~ '[^[:space:]]' THEN x.name END) AS exercise_name) r
+        WHERE (${identification} <> 'identified' OR r.exercise_name ~ '[^[:space:]]')
+          AND (${search} = '' OR strpos(lower(r.exercise_name), lower(${search})) > 0)
           AND (${page?.lastExerciseId ?? null}::text IS NULL OR g.exercise_id > ${page?.lastExerciseId ?? null}::text)
         ORDER BY g.exercise_id ${page ? Prisma.sql`LIMIT ${page.limit + 1}` : Prisma.empty}
       ),`
@@ -420,7 +452,12 @@ export function buildTrainingOverviewExerciseQuery(
           session_id ASC NULLS FIRST, assignment_id ASC NULLS FIRST,
           completed_at ASC NULLS FIRST, set_number ASC
       )
-      SELECT g.exercise_id, n.exercise_name, g.sets,
+      SELECT g.exercise_id,
+        COALESCE(n.exercise_name,
+          CASE WHEN x.name ~ '[^[:space:]]' THEN x.name END) AS exercise_name,
+        CASE WHEN n.exercise_name IS NOT NULL THEN 'snapshot'
+          WHEN x.name ~ '[^[:space:]]' THEN 'current_catalog' END AS name_source,
+        g.sets,
         CASE WHEN g.max_reps <= 9007199254740991
           THEN g.max_reps::float8 END AS max_reps,
         CASE WHEN g.max_seconds <= 9007199254740991
@@ -445,6 +482,7 @@ export function buildTrainingOverviewExerciseQuery(
       }
         LEFT JOIN prs p ON p.exercise_id = g.exercise_id
         LEFT JOIN latest_names n ON n.exercise_id = g.exercise_id
+        LEFT JOIN exercises x ON x.id = g.exercise_id
       ORDER BY g.exercise_id
     `;
 }
@@ -781,7 +819,7 @@ export class TrainingProgressReadService {
       ? await tx.$queryRaw<SessionListRow[]>(Prisma.sql`
           SELECT d.date::text AS date,
             e.value->>'training_session_id' AS training_session_id,
-            e.value AS item, s.payload
+            e.value AS item, s.payload, t.name AS current_training_name
           FROM day_progress d
           CROSS JOIN LATERAL jsonb_array_elements(
             CASE WHEN jsonb_typeof(d.training_sessions) = 'array'
@@ -789,6 +827,7 @@ export class TrainingProgressReadService {
           LEFT JOIN training_day_snapshots s ON s.client_id = d.client_id
             AND s.date = d.date AND s.training_id = e.value->>'training_id'
             AND s.version = 1
+          LEFT JOIN trainings t ON t.id = e.value->>'training_id'
           WHERE d.client_id = ${clientId} AND (
             ${Prisma.join(
               pageKeys.map(
@@ -808,6 +847,7 @@ export class TrainingProgressReadService {
         rpe: number | null;
         note: string | null;
         training_name: string | null;
+        training_name_source: TrainingNameSource | null;
       } | null = null;
       for (const row of rows) {
         if (
@@ -836,11 +876,16 @@ export class TrainingProgressReadService {
         )
           throw new BadRequestException('Malformed historical session claim');
         if (item.confirmed === false) continue;
+        const label = labelledName(
+          snapshotLabel(snapshotObject(row.payload)?.name),
+          row.current_training_name,
+        );
         const candidate = {
           training_id: item.training_id,
           rpe: typeof item.rpe === 'number' ? item.rpe : null,
           note: typeof item.note === 'string' ? item.note : null,
-          training_name: snapshotLabel(snapshotObject(row.payload)?.name),
+          training_name: label.name,
+          training_name_source: label.source,
         };
         if (
           claim &&
@@ -858,6 +903,7 @@ export class TrainingProgressReadService {
         training_id: claim.training_id,
         training_session_id: key.training_session_id,
         training_name: claim.training_name,
+        training_name_source: claim.training_name_source,
         rpe: claim.rpe,
         note: claim.note,
       };
@@ -1004,7 +1050,14 @@ export class TrainingProgressReadService {
         AND training_id = ${claim.training_id} AND version = 1
     `;
     const payload = snapshotObject(snapshot?.payload);
-    const trainingName = snapshotLabel(payload?.name);
+    let trainingLabel = labelledName(snapshotLabel(payload?.name), null);
+    if (trainingLabel.source === null) {
+      // Same read-only snapshot transaction as the progress row.
+      const [current] = await tx.$queryRaw<{ name: string }[]>`
+        SELECT name FROM trainings WHERE id = ${claim.training_id}
+      `;
+      trainingLabel = labelledName(null, current?.name);
+    }
     const [integrity] = await tx.$queryRaw<{ invalid: bigint }[]>`
       SELECT count(*) AS invalid FROM day_progress d
       CROSS JOIN LATERAL jsonb_array_elements(
@@ -1044,6 +1097,35 @@ export class TrainingProgressReadService {
             s.set_index > ${cursor?.j ?? null}::bigint))
       ORDER BY e.entry_index, s.set_index LIMIT ${limit + 1}
     `);
+    // Snapshot names stay strict per occurrence; only exercises still unnamed
+    // fall back to their current catalog name (one PK lookup per page).
+    const unnamedExerciseIds = [
+      ...new Set(
+        rows
+          .slice(0, limit)
+          .flatMap((row) =>
+            typeof row.exercise_id === 'string' &&
+            snapshotExerciseName(
+              payload,
+              row.exercise_id,
+              typeof row.training_exercise_id === 'string'
+                ? row.training_exercise_id
+                : null,
+            ) === null
+              ? [row.exercise_id]
+              : [],
+          ),
+      ),
+    ];
+    const catalogNames = new Map(
+      unnamedExerciseIds.length
+        ? (
+            await tx.$queryRaw<{ id: string; name: string }[]>`
+              SELECT id, name FROM exercises WHERE id = ANY(${unnamedExerciseIds}::text[])
+            `
+          ).map((row) => [row.id, row.name] as const)
+        : [],
+    );
     const page = rows.slice(0, limit).map((row) => {
       if (!row.item || typeof row.item !== 'object' || Array.isArray(row.item))
         throw new BadRequestException('Malformed historical set');
@@ -1072,9 +1154,14 @@ export class TrainingProgressReadService {
         row.training_exercise_id,
         'training_exercise_id',
       );
+      const exerciseLabel = labelledName(
+        snapshotExerciseName(payload, exerciseId, occurrenceId),
+        catalogNames.get(exerciseId),
+      );
       return {
         exercise_id: exerciseId,
-        exercise_name: snapshotExerciseName(payload, exerciseId, occurrenceId),
+        exercise_name: exerciseLabel.name,
+        exercise_name_source: exerciseLabel.source,
         training_exercise_id: occurrenceId,
         set_number: setNumber,
         reps: seconds === null ? storedReps : null,
@@ -1100,7 +1187,8 @@ export class TrainingProgressReadService {
     return {
       training_id: claim.training_id,
       training_session_id: sessionId,
-      training_name: trainingName,
+      training_name: trainingLabel.name,
+      training_name_source: trainingLabel.source,
       rpe: claim.rpe,
       note: claim.note,
       page,
@@ -1385,6 +1473,7 @@ export class TrainingProgressReadService {
     const exercises: TrainingExerciseSummary[] = pageRows.map((row) => ({
       exercise_id: row.exercise_id,
       exercise_name: row.exercise_name,
+      name_source: row.name_source,
       sets: safeBigintCount(row.sets),
       max_reps: row.max_reps,
       max_seconds: row.max_seconds,

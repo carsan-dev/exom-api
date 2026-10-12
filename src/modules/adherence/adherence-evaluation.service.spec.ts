@@ -1,4 +1,7 @@
-import { COMPLETION } from '../../common/progress/daily-adherence-evaluator';
+import {
+  COMPLETION,
+  evaluateDailyAdherence,
+} from '../../common/progress/daily-adherence-evaluator';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdherencePrescriptionService } from './adherence-prescription.service';
@@ -332,5 +335,131 @@ describe('actual progress normalization and bounded UTC period', () => {
     expect(() =>
       AdherencePeriodQueryDto.dates('2020-02-01T00:00:00Z', '2020-03-02'),
     ).toThrow();
+  });
+});
+
+describe('training completion mode in adherence', () => {
+  const units = ['1', '2', '3'].map((n) => ({
+    id: `link-${n}`,
+    trainingId: `training-${n}`,
+    occurrences: [`occurrence-${n}`],
+  }));
+  const oneOfThreeProven = {
+    ...progress,
+    training_completed: true,
+    trainings_completed: ['training-2'],
+    training_sessions: [
+      {
+        training_session_id: 'session-2',
+        training_id: 'training-2',
+        rpe: 7,
+        note: null,
+      },
+    ],
+    exercises_completed: [
+      {
+        training_session_id: 'session-2',
+        training_exercise_id: 'occurrence-2',
+        exercise_id: 'exercise-2',
+        completed_at: '2020-01-01T12:00:00Z',
+      },
+    ],
+  };
+  const evaluate = (
+    completionMode: 'ALL' | 'ANY' | undefined,
+    evidence: Parameters<typeof normalizeAdherenceEvidence>[1],
+  ) =>
+    evaluateDailyAdherence({
+      date: '2020-01-01',
+      cutoffDate: '2020-01-02',
+      training: {
+        basis: 'known',
+        rest: false,
+        units: normalizeAdherenceEvidence(
+          { ...basis, units, completionMode },
+          evidence,
+          [],
+          'client',
+          '2020-01-01',
+        ).training,
+      },
+      nutrition: { basis: 'known', groups: [] },
+    }).training;
+
+  it('rates an ANY day with one proven training as 1/1 without caveats', () => {
+    expect(evaluate('ANY', oneOfThreeProven)).toMatchObject({
+      numerator: 1,
+      denominator: 1,
+      ratio: 1,
+      caveats: [],
+    });
+  });
+
+  it('rates an ANY day without any training as 0/1', () => {
+    expect(
+      evaluate('ANY', {
+        ...progress,
+        training_completed: false,
+        trainings_completed: [],
+        training_sessions: [],
+        exercises_completed: [],
+      }),
+    ).toMatchObject({ numerator: 0, denominator: 1, ratio: 0 });
+  });
+
+  it('keeps an unproven ANY day flag indeterminate (2026-09-29)', () => {
+    expect(
+      evaluate('ANY', {
+        ...progress,
+        training_completed: true,
+        trainings_completed: [],
+        training_sessions: [],
+        exercises_completed: [],
+      }),
+    ).toMatchObject({
+      denominator: 0,
+      ratio: null,
+      caveats: ['indeterminate_training'],
+    });
+  });
+
+  it.each([undefined, 'ALL'] as const)(
+    'keeps per-unit ALL semantics (mode %s) unchanged',
+    (mode) => {
+      const units3 = normalizeAdherenceEvidence(
+        { ...basis, units, completionMode: mode },
+        oneOfThreeProven,
+        [],
+        'client',
+        '2020-01-01',
+      ).training;
+      // Legacy day flag still marks the unproven units indeterminate.
+      expect(units3.map((unit) => [unit.id, unit.completion])).toEqual([
+        ['link-1', COMPLETION.INDETERMINATE],
+        ['link-2', COMPLETION.COMPLETE],
+        ['link-3', COMPLETION.INDETERMINATE],
+      ]);
+    },
+  );
+
+  it('treats an ANY day with a single training exactly like ALL', () => {
+    const single = { ...basis, units: [units[0]] };
+    const evidence = {
+      ...progress,
+      training_sessions: [],
+      exercises_completed: [],
+    };
+    expect(
+      normalizeAdherenceEvidence(
+        { ...single, completionMode: 'ANY' },
+        evidence,
+        [],
+        'client',
+        '2020-01-01',
+      ).training,
+    ).toEqual(
+      normalizeAdherenceEvidence(single, evidence, [], 'client', '2020-01-01')
+        .training,
+    );
   });
 });

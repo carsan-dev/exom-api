@@ -1132,6 +1132,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
             {
               exercise_id: exercise,
               exercise_name: 'Contract running',
+              name_source: 'snapshot',
               sets: 2,
               max_reps: null,
               max_seconds: 45,
@@ -1188,6 +1189,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
           training_id: trainingId,
           training_session_id: sessions[0],
           training_name: payload().name,
+          training_name_source: 'snapshot',
           rpe: 6,
           note: 'Execution 1',
           page: [
@@ -1195,6 +1197,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
               exercise_id: exercise,
               training_exercise_id: trainingExerciseId,
               exercise_name: 'Contract running',
+              exercise_name_source: 'snapshot',
               set_number: 1,
               reps: null,
               seconds: 30,
@@ -1240,6 +1243,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
             training_id: trainingId,
             training_session_id: sessions[0],
             training_name: trainingName,
+            training_name_source: 'snapshot',
             rpe: 6,
             note: 'Execution 1',
           },
@@ -1257,6 +1261,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
               training_id: trainingId,
               training_session_id: sessions[1],
               training_name: trainingName,
+              training_name_source: 'snapshot',
               rpe: 7,
               note: 'Execution 2',
             },
@@ -1362,6 +1367,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
             training_id: trainingId,
             training_session_id: sessions[0],
             training_name: trainingName,
+            training_name_source: 'snapshot',
             rpe: 6,
             note: 'Execution 1',
             page: [
@@ -1369,6 +1375,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
                 exercise_id: exercise,
                 training_exercise_id: trainingExerciseId,
                 exercise_name: exerciseName,
+                exercise_name_source: 'snapshot',
                 set_number: 1,
                 seconds: 30,
               },
@@ -1441,7 +1448,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
         });
       });
 
-      it('returns null historical names when no timed snapshot was captured', async () => {
+      it('falls back to the labelled current catalog names when no timed snapshot was captured', async () => {
         const date = '2099-03-01';
         const created = await request(server())
           .post('/api/v1/trainings')
@@ -1498,7 +1505,8 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
         expect(responseData(detail)).toMatchObject({
           training_id: legacyTrainingId,
           training_session_id: legacySessionId,
-          training_name: null,
+          training_name: 'Uncaptured legacy training',
+          training_name_source: 'current_catalog',
           page: [],
         });
         const list = await request(server())
@@ -1511,7 +1519,8 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
               date,
               training_id: legacyTrainingId,
               training_session_id: legacySessionId,
-              training_name: null,
+              training_name: 'Uncaptured legacy training',
+              training_name_source: 'current_catalog',
               rpe: 5,
               note: null,
             },

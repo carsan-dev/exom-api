@@ -7,6 +7,12 @@ import {
 import { progressCommand } from '../../common/progress/progress-command';
 import { loadTrainingHistory } from '../../common/progress/training-history';
 import {
+  buildTrainingEvidenceContext,
+  getCompletedTrainingIds,
+  getTrainingCompletedStatus,
+} from '../../common/progress/training-evidence';
+import { isTrainingDayComplete } from '../../common/progress/training-completion';
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -20,6 +26,7 @@ import {
   MediaType,
   Prisma,
   PrismaClient,
+  TrainingCompletionMode,
   TrainingMeasureType,
 } from '@prisma/client';
 import { isDeepStrictEqual } from 'node:util';
@@ -77,6 +84,7 @@ interface CompletedTrainingSession {
 
 interface AssignmentContext {
   date: Date;
+  trainingCompletionMode: TrainingCompletionMode;
   trainingIds: string[];
   trainingExerciseIds: Set<string>;
   exerciseIdByTrainingExerciseId: Map<string, string>;
@@ -320,14 +328,15 @@ export class ProgressService {
     const allExercises = assignedTrainings.flatMap(
       (training) => training.exercises,
     );
+    const evidence = buildTrainingEvidenceContext(assignedTrainings);
 
     return {
       date,
-      trainingIds: assignedTrainings.map((training) => training.id),
+      trainingCompletionMode:
+        assignment?.training_completion_mode ?? TrainingCompletionMode.ALL,
+      trainingIds: evidence.trainingIds,
       trainingExerciseIds: new Set(allExercises.map((exercise) => exercise.id)),
-      exerciseIdByTrainingExerciseId: new Map(
-        allExercises.map((exercise) => [exercise.id, exercise.exercise_id]),
-      ),
+      exerciseIdByTrainingExerciseId: evidence.exerciseIdByTrainingExerciseId,
       trainingIdByTrainingExerciseId: new Map(
         assignedTrainings.flatMap((training) =>
           training.exercises.map(
@@ -335,18 +344,8 @@ export class ProgressService {
           ),
         ),
       ),
-      trainingExerciseIdsByTrainingId: new Map(
-        assignedTrainings.map((training) => [
-          training.id,
-          new Set(training.exercises.map((exercise) => exercise.id)),
-        ]),
-      ),
-      exerciseIdsByTrainingId: new Map(
-        assignedTrainings.map((training) => [
-          training.id,
-          new Set(training.exercises.map((exercise) => exercise.exercise_id)),
-        ]),
-      ),
+      trainingExerciseIdsByTrainingId: evidence.trainingExerciseIdsByTrainingId,
+      exerciseIdsByTrainingId: evidence.exerciseIdsByTrainingId,
       requiredTrainingExerciseIds: new Set(
         assignedTrainingLinks
           .filter((link) => link.requiresLastSetVideo)
@@ -473,89 +472,6 @@ export class ProgressService {
     right: ExerciseCompletedEntry[],
   ): boolean {
     return isDeepStrictEqual(left, right);
-  }
-
-  private getTrainingCompletedStatus(
-    assignedTrainingExerciseIds: Set<string>,
-    assignedExerciseIds: Set<string>,
-    completedEntries: ExerciseCompletedEntry[],
-    exerciseIdByTrainingExerciseId: ReadonlyMap<string, string>,
-  ): boolean {
-    if (assignedTrainingExerciseIds.size === 0) {
-      return false;
-    }
-
-    const completedTrainingExerciseIds = new Set(
-      completedEntries
-        .map((entry) => entry.training_exercise_id)
-        .filter((id): id is string => Boolean(id)),
-    );
-
-    if (completedTrainingExerciseIds.size > 0) {
-      // Legacy evidence remains at exercise level until its occurrence is known.
-      // Adding an ID elsewhere must not erase that evidence. Canonical entries
-      // only count for their exact occurrence, never via their exercise_id.
-      const legacyExerciseIds = new Set(
-        completedEntries
-          .filter((entry) => !entry.training_exercise_id)
-          .map((entry) => entry.exercise_id),
-      );
-      return [...assignedTrainingExerciseIds].every(
-        (trainingExerciseId) =>
-          completedTrainingExerciseIds.has(trainingExerciseId) ||
-          legacyExerciseIds.has(
-            exerciseIdByTrainingExerciseId.get(trainingExerciseId) ?? '',
-          ),
-      );
-    }
-
-    const completedExerciseIds = new Set(
-      completedEntries.map((entry) => entry.exercise_id),
-    );
-
-    return [...assignedExerciseIds].every((exerciseId) =>
-      completedExerciseIds.has(exerciseId),
-    );
-  }
-
-  private getCompletedTrainingIds(
-    assignment: AssignmentContext,
-    completedEntries: ExerciseCompletedEntry[],
-    historicalTrainingIds: string[] = [],
-    confirmedSessions: CompletedTrainingSession[] = [],
-  ): string[] {
-    const confirmedIds = new Set(
-      confirmedSessions.map((session) => session.training_session_id),
-    );
-    const groups = new Map<string | undefined, ExerciseCompletedEntry[]>();
-    for (const entry of completedEntries) {
-      if (
-        entry.training_session_id &&
-        !confirmedIds.has(entry.training_session_id)
-      ) {
-        continue;
-      }
-      const group = groups.get(entry.training_session_id) ?? [];
-      group.push(entry);
-      groups.set(entry.training_session_id, group);
-    }
-    const completed = assignment.trainingIds.filter((trainingId) =>
-      [...groups.values()].some((entries) =>
-        this.getTrainingCompletedStatus(
-          assignment.trainingExerciseIdsByTrainingId.get(trainingId) ??
-            new Set(),
-          assignment.exerciseIdsByTrainingId.get(trainingId) ?? new Set(),
-          entries,
-          assignment.exerciseIdByTrainingExerciseId,
-        ),
-      ),
-    );
-    return [
-      ...historicalTrainingIds.filter(
-        (id) => !assignment.trainingIds.includes(id),
-      ),
-      ...completed,
-    ];
   }
 
   private validateRequiredSetPerformance(
@@ -911,15 +827,17 @@ export class ProgressService {
         }
         if (!replaced) completedExercises.push(replacement);
 
-        const trainingsCompleted = this.getCompletedTrainingIds(
+        const trainingsCompleted = getCompletedTrainingIds(
           assignment,
           completedExercises,
           existing?.trainings_completed,
           this.parseTrainingSessions(existing?.training_sessions),
         );
-        const allTrainingsCompleted =
-          assignment.trainingIds.length > 0 &&
-          assignment.trainingIds.every((id) => trainingsCompleted.includes(id));
+        const allTrainingsCompleted = isTrainingDayComplete(
+          assignment.trainingCompletionMode,
+          assignment.trainingIds,
+          trainingsCompleted,
+        );
 
         const unchanged =
           existing &&
@@ -1136,7 +1054,7 @@ export class ProgressService {
             (entry) => !consumedTargetIds.has(entry.training_exercise_id),
           ),
         );
-        const trainingsCompleted = this.getCompletedTrainingIds(
+        const trainingsCompleted = getCompletedTrainingIds(
           assignment,
           completedExercises,
           existing?.trainings_completed,
@@ -1154,8 +1072,10 @@ export class ProgressService {
               : []),
           ],
         );
-        const allTrainingsCompleted = assignment.trainingIds.every((id) =>
-          trainingsCompleted.includes(id),
+        const allTrainingsCompleted = isTrainingDayComplete(
+          assignment.trainingCompletionMode,
+          assignment.trainingIds,
+          trainingsCompleted,
         );
         const notes = dto.notes?.trim() || existing?.notes || null;
         const sessions = this.parseTrainingSessions(
@@ -1449,7 +1369,7 @@ export class ProgressService {
           }
           return (
             session.training_session_id ||
-            this.getTrainingCompletedStatus(
+            getTrainingCompletedStatus(
               assignment.trainingExerciseIdsByTrainingId.get(
                 session.training_id,
               ) ?? new Set(),
@@ -1460,7 +1380,7 @@ export class ProgressService {
             )
           );
         });
-        const trainingsCompleted = this.getCompletedTrainingIds(
+        const trainingsCompleted = getCompletedTrainingIds(
           assignment,
           filtered,
           existing.trainings_completed,
@@ -1471,11 +1391,11 @@ export class ProgressService {
           where: { client_id_date: { client_id: clientId, date } },
           data: {
             exercises_completed: this.serializeExercisesCompleted(filtered),
-            training_completed:
-              assignment.trainingIds.length > 0 &&
-              assignment.trainingIds.every((id) =>
-                trainingsCompleted.includes(id),
-              ),
+            training_completed: isTrainingDayComplete(
+              assignment.trainingCompletionMode,
+              assignment.trainingIds,
+              trainingsCompleted,
+            ),
             trainings_completed: trainingsCompleted,
             training_sessions: sessions as unknown as Prisma.InputJsonValue,
           },

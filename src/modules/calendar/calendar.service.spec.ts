@@ -60,6 +60,9 @@ describe('CalendarService', () => {
         week_start: dates[0],
         trainings_assigned: 0,
         trainings_completed: 0,
+        // Additive mode-aware day counters (no training days this week).
+        training_days_assigned: 0,
+        training_days_completed: 0,
         total_meals: 6,
         meals_completed: 3,
         diet_days_assigned: 4,
@@ -151,6 +154,8 @@ describe('CalendarService', () => {
       week_start: '2026-06-29',
       trainings_assigned: 0,
       trainings_completed: 0,
+      training_days_assigned: 0,
+      training_days_completed: 0,
       total_meals: 0,
       meals_completed: 0,
       diet_days_assigned: 0,
@@ -226,7 +231,7 @@ describe('CalendarService', () => {
       {
         client_id: 'client-1',
         date: new Date('2026-06-10T00:00:00.000Z'),
-        training_completed: true,
+        training_completed: false,
         trainings_completed: ['training-old-1', 'training-old-2'],
         meals_completed: [],
       },
@@ -265,5 +270,158 @@ describe('CalendarService', () => {
     const days = await service.getMonthCalendar('client-1', 2026, 6);
 
     expect(days[9].training_completed).toBe(true);
+  });
+
+  describe('training completion mode', () => {
+    const date = new Date('2026-06-10T00:00:00.000Z');
+    const threeTrainings = (mode?: 'ALL' | 'ANY') => ({
+      client_id: 'client-1',
+      date,
+      training_id: 'training-1',
+      diet_id: null,
+      is_rest_day: false,
+      ...(mode && { training_completion_mode: mode }),
+      trainings: [
+        { training_id: 'training-1' },
+        { training_id: 'training-2' },
+        { training_id: 'training-3' },
+      ],
+      diet: null,
+    });
+
+    it.each([
+      ['ANY', true],
+      ['ALL', false],
+      [undefined, false],
+    ] as const)(
+      'month day with 1 of 3 recorded under %s is completed=%s with x de N counts',
+      async (mode, expected) => {
+        prisma.planAssignment.findMany.mockResolvedValue([
+          threeTrainings(mode),
+        ]);
+        prisma.dayProgress.findMany.mockResolvedValue([
+          {
+            client_id: 'client-1',
+            date,
+            training_completed: expected,
+            trainings_completed: ['training-2', 'stale-training'],
+            meals_completed: [],
+          },
+        ]);
+
+        const days = await service.getMonthCalendar('client-1', 2026, 6);
+
+        expect(days[9]).toMatchObject({
+          has_training: true,
+          training_completed: expected,
+          training_completion_mode: mode ?? 'ALL',
+          trainings_assigned: 3,
+          trainings_done: 1,
+        });
+      },
+    );
+
+    it.each([
+      // Rule ALL -> ANY promoted the flag, then ANY -> ALL never demoted it.
+      ['ALL', true, ['training-2']],
+      // Flag not proven by the stored ids on an ANY day.
+      ['ANY', false, ['training-1', 'training-2', 'training-3']],
+    ] as const)(
+      'month day follows the stored flag, not the ids, under %s with flag=%s',
+      async (mode, flag, ids) => {
+        prisma.planAssignment.findMany.mockResolvedValue([
+          threeTrainings(mode),
+        ]);
+        prisma.dayProgress.findMany.mockResolvedValue([
+          {
+            client_id: 'client-1',
+            date,
+            training_completed: flag,
+            trainings_completed: [...ids],
+            meals_completed: [],
+          },
+        ]);
+
+        const days = await service.getMonthCalendar('client-1', 2026, 6);
+
+        expect(days[9]).toMatchObject({
+          training_completed: flag,
+          trainings_done: ids.length,
+        });
+      },
+    );
+
+    it('week summary counts days by the stored flag and none without a progress row', async () => {
+      const second = new Date('2026-06-11T00:00:00.000Z');
+      const third = new Date('2026-06-12T00:00:00.000Z');
+      prisma.planAssignment.findMany.mockResolvedValue([
+        threeTrainings('ALL'),
+        { ...threeTrainings('ANY'), date: second },
+        { ...threeTrainings('ANY'), date: third },
+      ]);
+      prisma.dayProgress.findMany.mockResolvedValue([
+        {
+          client_id: 'client-1',
+          date,
+          training_completed: true,
+          trainings_completed: ['training-1'],
+          meals_completed: [],
+        },
+        {
+          client_id: 'client-1',
+          date: second,
+          training_completed: false,
+          trainings_completed: ['training-1'],
+          meals_completed: [],
+        },
+      ]);
+
+      expect(
+        await service.getWeekSummary('client-1', '2026-06-08'),
+      ).toMatchObject({
+        training_days_assigned: 3,
+        training_days_completed: 1,
+      });
+    });
+
+    it('week summary keeps per-training counts and adds mode-aware day counts', async () => {
+      const second = new Date('2026-06-11T00:00:00.000Z');
+      prisma.planAssignment.findMany.mockResolvedValue([
+        threeTrainings('ANY'),
+        { ...threeTrainings('ALL'), date: second },
+        {
+          ...threeTrainings(),
+          date: new Date('2026-06-12T00:00:00.000Z'),
+          is_rest_day: true,
+          trainings: [],
+          training_id: null,
+        },
+      ]);
+      prisma.dayProgress.findMany.mockResolvedValue([
+        {
+          client_id: 'client-1',
+          date,
+          training_completed: true,
+          trainings_completed: ['training-1'],
+          meals_completed: [],
+        },
+        {
+          client_id: 'client-1',
+          date: second,
+          training_completed: false,
+          trainings_completed: ['training-1', 'training-2'],
+          meals_completed: [],
+        },
+      ]);
+
+      expect(
+        await service.getWeekSummary('client-1', '2026-06-08'),
+      ).toMatchObject({
+        trainings_assigned: 6,
+        trainings_completed: 3,
+        training_days_assigned: 2,
+        training_days_completed: 1,
+      });
+    });
   });
 });

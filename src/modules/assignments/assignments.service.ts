@@ -7,7 +7,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { LastSetVideoPolicy, Role } from '@prisma/client';
+import {
+  LastSetVideoPolicy,
+  Role,
+  TrainingCompletionMode,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   historicalDietFor,
@@ -41,6 +45,8 @@ import {
 } from './assignment-planning-lock';
 import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
+import { isTrainingDayComplete } from '../../common/progress/training-completion';
+import { recomputeTrainingCompletionAfterModeChange } from '../../common/progress/training-evidence';
 
 type PlanNotifKind = 'training' | 'diet' | 'plan' | 'rest';
 
@@ -163,6 +169,7 @@ export interface AssignmentRecord {
   client_id: string;
   date: Date;
   is_rest_day: boolean;
+  training_completion_mode?: TrainingCompletionMode;
   training_id?: string | null;
   trainings?: Array<{
     position: number;
@@ -210,8 +217,15 @@ interface AutoAssignmentRuleRecord {
   starts_on: Date;
   ends_on: Date | null;
   is_active: boolean;
+  training_completion_mode?: TrainingCompletionMode;
   deactivated_at: Date | null;
   days: AutoAssignmentRuleDayRecord[];
+}
+
+interface CompletionModeChange {
+  date: Date;
+  previous: TrainingCompletionMode;
+  next: TrainingCompletionMode;
 }
 
 @Injectable()
@@ -229,6 +243,44 @@ export class AssignmentsService {
     operation: (tx: AssignmentTransaction) => Promise<T>,
   ): Promise<T> {
     return this.prisma.$transaction(operation, ASSIGNMENT_TRANSACTION_OPTIONS);
+  }
+
+  private async storedCompletionModes(
+    tx: AssignmentTransaction,
+    clientId: string,
+    dates: Date[],
+  ): Promise<Map<string, TrainingCompletionMode>> {
+    if (dates.length === 0) return new Map();
+    const rows = await tx.planAssignment.findMany({
+      where: { client_id: clientId, date: { in: dates } },
+      select: { date: true, training_completion_mode: true },
+    });
+    return new Map(
+      rows.map((row) => [
+        this.formatDate(row.date),
+        row.training_completion_mode ?? TrainingCompletionMode.ALL,
+      ]),
+    );
+  }
+
+  /**
+   * Promote-only recompute for every date whose completion mode actually
+   * changed. Must run inside the planning transaction that already holds
+   * lockAssignmentPlanning (day-progress lock first, then the user row).
+   */
+  private async recomputeChangedCompletionModes(
+    tx: AssignmentTransaction,
+    clientId: string,
+    changes: CompletionModeChange[],
+  ): Promise<void> {
+    for (const change of changes) {
+      if (change.previous === change.next) continue;
+      await recomputeTrainingCompletionAfterModeChange(
+        tx,
+        clientId,
+        change.date,
+      );
+    }
   }
 
   async getClientOptions(user: AuthenticatedUser) {
@@ -599,6 +651,8 @@ export class AssignmentsService {
           },
         },
       });
+      const completionMode =
+        assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
       const progress = await tx.dayProgress.findUnique({
         where: { client_id_date: { client_id: clientId, date } },
       });
@@ -657,12 +711,13 @@ export class AssignmentsService {
         data: {
           trainings_completed: trainingsCompleted,
           // Historical IDs can be derived or backfilled. Only current complete
-          // execution evidence for every assigned training can promote a false day.
-          training_completed:
-            trainings.length > 0 &&
-            trainings.every((training) =>
-              newlyCompletedTrainingIds.includes(training.id),
-            ),
+          // execution evidence (for every assigned training under ALL, for one
+          // of them under ANY) can promote a false day.
+          training_completed: isTrainingDayComplete(
+            completionMode,
+            trainings.map((training) => training.id),
+            newlyCompletedTrainingIds,
+          ),
         },
       });
     }, ASSIGNMENT_TRANSACTION_OPTIONS);
@@ -681,6 +736,8 @@ export class AssignmentsService {
       client_id: assignment.client_id,
       date: this.formatDate(assignment.date),
       is_rest_day: assignment.is_rest_day,
+      training_completion_mode:
+        assignment.training_completion_mode ?? TrainingCompletionMode.ALL,
       training_ids: trainings.map((training) => training.id),
       trainings,
       training: trainings[0] ?? null,
@@ -765,6 +822,9 @@ export class AssignmentsService {
           client_id: clientId,
           date: dateKey,
           is_rest_day: false,
+          // A cleared manual row keeps its stored mode; no row means ALL.
+          training_completion_mode:
+            assignment?.training_completion_mode ?? TrainingCompletionMode.ALL,
           training: null,
           trainings: [],
           training_ids: [],
@@ -850,6 +910,8 @@ export class AssignmentsService {
       starts_on: this.formatDate(rule.starts_on),
       ends_on: rule.ends_on ? this.formatDate(rule.ends_on) : null,
       is_active: rule.is_active,
+      training_completion_mode:
+        rule.training_completion_mode ?? TrainingCompletionMode.ALL,
       deactivated_at: rule.deactivated_at?.toISOString() ?? null,
       days: rule.days.map((day) => {
         const trainings = (day.trainings ?? []).length
@@ -943,6 +1005,8 @@ export class AssignmentsService {
           source_week_start: sourceWeek.start,
           starts_on: startsOn,
           ends_on: endsOn,
+          training_completion_mode:
+            dto.training_completion_mode ?? TrainingCompletionMode.ALL,
           days: {
             create: normalizedDays.map((day) => ({
               weekday: day.weekday,
@@ -1042,7 +1106,11 @@ export class AssignmentsService {
       await lockAssignmentPlanning(tx, existing.client_id);
       const lockedRule = await tx.autoAssignmentRule.findUnique({
         where: { id: ruleId },
-        select: { client_id: true, is_active: true },
+        select: {
+          client_id: true,
+          is_active: true,
+          training_completion_mode: true,
+        },
       });
       if (!lockedRule?.is_active) {
         throw new NotFoundException('Autoasignación activa no encontrada');
@@ -1052,6 +1120,10 @@ export class AssignmentsService {
           'La regla no pertenece al cliente indicado',
         );
       }
+      const previousMode =
+        lockedRule.training_completion_mode ?? TrainingCompletionMode.ALL;
+      // Older Admin builds omit the field: keep the stored rule mode.
+      const nextMode = dto.training_completion_mode ?? previousMode;
       const updatedRule = await tx.autoAssignmentRule.update({
         where: { id: ruleId },
         data: {
@@ -1059,6 +1131,7 @@ export class AssignmentsService {
           source_week_start: sourceWeek.start,
           starts_on: startsOn,
           ends_on: endsOn,
+          training_completion_mode: nextMode,
           days: {
             deleteMany: {},
             create: days.map((day) => ({
@@ -1085,6 +1158,29 @@ export class AssignmentsService {
         existing.client_id,
         tx,
       );
+      if (nextMode !== previousMode) {
+        // Days still linked to this rule (past included) follow the rule mode.
+        // Mode only: links, trainings and their IDs stay untouched. Rows already
+        // aligned by the materializer are excluded, so each date changes once.
+        const changed = await tx.planAssignment.updateManyAndReturn({
+          where: {
+            client_id: existing.client_id,
+            auto_assignment_rule_id: ruleId,
+            training_completion_mode: { not: nextMode },
+          },
+          data: { training_completion_mode: nextMode },
+          select: { date: true },
+        });
+        await this.recomputeChangedCompletionModes(
+          tx,
+          existing.client_id,
+          changed.map(({ date }) => ({
+            date,
+            previous: previousMode,
+            next: nextMode,
+          })),
+        );
+      }
       return updatedRule;
     });
     return this.serializeAutoRule(rule);
@@ -1143,8 +1239,12 @@ export class AssignmentsService {
     const parsedDates = uniqueDates.map((date) => this.parseDate(date));
     const affectedMonths = this.lastSetVideoPolicy.monthsForDates(parsedDates);
 
+    const requestedMode = dto.training_completion_mode;
     const results = await this.planningTransaction(async (tx) => {
       await lockAssignmentPlanning(tx, dto.client_id);
+      const previousModes = requestedMode
+        ? await this.storedCompletionModes(tx, dto.client_id, parsedDates)
+        : new Map<string, TrainingCompletionMode>();
       for (const date of parsedDates) {
         await tx.planAssignment.upsert({
           where: {
@@ -1161,6 +1261,8 @@ export class AssignmentsService {
             training_id: normalizedInput.training_id,
             diet_id: normalizedInput.diet_id,
             is_rest_day: normalizedInput.is_rest_day,
+            training_completion_mode:
+              requestedMode ?? TrainingCompletionMode.ALL,
             trainings: {
               create: normalizedInput.trainings.map((item, position) => ({
                 training_id: item.training_id,
@@ -1177,6 +1279,8 @@ export class AssignmentsService {
             training_id: normalizedInput.training_id,
             diet_id: normalizedInput.diet_id,
             is_rest_day: normalizedInput.is_rest_day,
+            // Omitted by older Admin builds: keep the stored mode.
+            ...(requestedMode && { training_completion_mode: requestedMode }),
             trainings: {
               deleteMany: {},
               create: normalizedInput.trainings.map((item, position) => ({
@@ -1189,6 +1293,19 @@ export class AssignmentsService {
             },
           },
         });
+      }
+      if (requestedMode) {
+        await this.recomputeChangedCompletionModes(
+          tx,
+          dto.client_id,
+          parsedDates.map((date) => ({
+            date,
+            previous:
+              previousModes.get(this.formatDate(date)) ??
+              TrainingCompletionMode.ALL,
+            next: requestedMode,
+          })),
+        );
       }
       await this.lastSetVideoPolicy.reconcile(
         dto.client_id,
@@ -1237,6 +1354,7 @@ export class AssignmentsService {
             daysMap.set(this.formatDate(date), {
               date,
               ...normalizedInput,
+              training_completion_mode: day.training_completion_mode,
             });
 
             return daysMap;
@@ -1253,6 +1371,7 @@ export class AssignmentsService {
               }>;
               diet_id: string | null;
               is_rest_day: boolean;
+              training_completion_mode: TrainingCompletionMode | undefined;
             }
           >(),
         )
@@ -1270,6 +1389,13 @@ export class AssignmentsService {
 
     const results = await this.planningTransaction(async (tx) => {
       await lockAssignmentPlanning(tx, dto.client_id);
+      const previousModes = await this.storedCompletionModes(
+        tx,
+        dto.client_id,
+        uniqueDays
+          .filter((day) => day.training_completion_mode)
+          .map((day) => day.date),
+      );
       for (const day of uniqueDays) {
         await tx.planAssignment.upsert({
           where: {
@@ -1286,6 +1412,8 @@ export class AssignmentsService {
             training_id: day.training_id,
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
+            training_completion_mode:
+              day.training_completion_mode ?? TrainingCompletionMode.ALL,
             trainings: {
               create: day.trainings.map((item, position) => ({
                 training_id: item.training_id,
@@ -1302,6 +1430,10 @@ export class AssignmentsService {
             training_id: day.training_id,
             diet_id: day.diet_id,
             is_rest_day: day.is_rest_day,
+            // Omitted by older Admin builds: keep the stored mode.
+            ...(day.training_completion_mode && {
+              training_completion_mode: day.training_completion_mode,
+            }),
             trainings: {
               deleteMany: {},
               create: day.trainings.map((item, position) => ({
@@ -1315,6 +1447,23 @@ export class AssignmentsService {
           },
         });
       }
+      await this.recomputeChangedCompletionModes(
+        tx,
+        dto.client_id,
+        uniqueDays.flatMap((day) =>
+          day.training_completion_mode
+            ? [
+                {
+                  date: day.date,
+                  previous:
+                    previousModes.get(this.formatDate(day.date)) ??
+                    TrainingCompletionMode.ALL,
+                  next: day.training_completion_mode,
+                },
+              ]
+            : [],
+        ),
+      );
       await this.lastSetVideoPolicy.reconcile(
         dto.client_id,
         affectedMonths,
@@ -1386,6 +1535,12 @@ export class AssignmentsService {
           assignment,
         ]),
       );
+      const previousModes = await this.storedCompletionModes(
+        tx,
+        dto.client_id,
+        targetWeek.dates,
+      );
+      const modeChanges: CompletionModeChange[] = [];
 
       for (const [index, sourceDate] of sourceWeek.dates.entries()) {
         const sourceDateKey = this.formatDate(sourceDate);
@@ -1410,6 +1565,13 @@ export class AssignmentsService {
           tx,
         );
 
+        modeChanges.push({
+          date: targetDate,
+          previous:
+            previousModes.get(this.formatDate(targetDate)) ??
+            TrainingCompletionMode.ALL,
+          next: source.training_completion_mode,
+        });
         await tx.planAssignment.upsert({
           where: {
             client_id_date: {
@@ -1425,6 +1587,7 @@ export class AssignmentsService {
             training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            training_completion_mode: source.training_completion_mode,
             trainings: {
               create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
@@ -1446,6 +1609,7 @@ export class AssignmentsService {
             training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            training_completion_mode: source.training_completion_mode,
             trainings: {
               deleteMany: {},
               create: sourceTrainings.map((link) => ({
@@ -1464,6 +1628,11 @@ export class AssignmentsService {
           },
         });
       }
+      await this.recomputeChangedCompletionModes(
+        tx,
+        dto.client_id,
+        modeChanges,
+      );
       await this.lastSetVideoPolicy.reconcile(
         dto.client_id,
         affectedMonths,
@@ -1549,6 +1718,12 @@ export class AssignmentsService {
           assignment,
         ]),
       );
+      const previousModes = await this.storedCompletionModes(
+        tx,
+        dto.client_id,
+        targets.map(({ targetDate }) => targetDate),
+      );
+      const modeChanges: CompletionModeChange[] = [];
 
       for (const { sourceDate, targetDate } of targets) {
         const source = sourceMap.get(this.formatDate(sourceDate));
@@ -1568,6 +1743,13 @@ export class AssignmentsService {
           source.diet_id,
           tx,
         );
+        modeChanges.push({
+          date: targetDate,
+          previous:
+            previousModes.get(this.formatDate(targetDate)) ??
+            TrainingCompletionMode.ALL,
+          next: source.training_completion_mode,
+        });
         await tx.planAssignment.upsert({
           where: {
             client_id_date: { client_id: dto.client_id, date: targetDate },
@@ -1580,6 +1762,7 @@ export class AssignmentsService {
             training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            training_completion_mode: source.training_completion_mode,
             trainings: {
               create: sourceTrainings.map((link) => ({
                 training_id: link.training.id,
@@ -1601,6 +1784,7 @@ export class AssignmentsService {
             training_id: sourceTrainingId,
             diet_id: source.diet_id,
             is_rest_day: source.is_rest_day,
+            training_completion_mode: source.training_completion_mode,
             trainings: {
               deleteMany: {},
               create: sourceTrainings.map((link) => ({
@@ -1619,6 +1803,11 @@ export class AssignmentsService {
           },
         });
       }
+      await this.recomputeChangedCompletionModes(
+        tx,
+        dto.client_id,
+        modeChanges,
+      );
       await this.lastSetVideoPolicy.reconcile(
         dto.client_id,
         affectedMonths,
@@ -1742,6 +1931,16 @@ export class AssignmentsService {
         const nextDate = dto.date
           ? this.parseDate(dto.date)
           : lockedAssignment.date;
+        const storedMode =
+          lockedAssignment.training_completion_mode ??
+          TrainingCompletionMode.ALL;
+        // Older Admin builds omit the field: keep the stored mode.
+        const nextMode = dto.training_completion_mode ?? storedMode;
+        // A move only succeeds onto a date without another assignment row.
+        const previousModeAtNextDate =
+          nextDate.getTime() === lockedAssignment.date.getTime()
+            ? storedMode
+            : TrainingCompletionMode.ALL;
         const existingTrainings = this.resolveAssignmentTrainingLinks(
           lockedAssignment,
         ).map((link) => ({
@@ -1804,6 +2003,7 @@ export class AssignmentsService {
             training_id: normalizedInput.training_id,
             diet_id: normalizedInput.diet_id,
             is_rest_day: normalizedInput.is_rest_day,
+            training_completion_mode: nextMode,
             trainings: {
               deleteMany: {},
               create: normalizedInput.trainings.map((item, position) => ({
@@ -1824,6 +2024,17 @@ export class AssignmentsService {
             lockedAssignment.date,
           );
         }
+        await this.recomputeChangedCompletionModes(
+          tx,
+          lockedAssignment.client_id,
+          [
+            {
+              date: nextDate,
+              previous: previousModeAtNextDate,
+              next: nextMode,
+            },
+          ],
+        );
         await this.lastSetVideoPolicy.reconcile(
           lockedAssignment.client_id,
           affectedMonths,
