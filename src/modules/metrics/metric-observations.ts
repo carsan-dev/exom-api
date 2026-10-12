@@ -53,6 +53,9 @@ export interface MetricSeries {
   first: MetricObservation | null;
   last: MetricObservation | null;
   change: number | null;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
   count: number;
   incomplete_count: number;
   points: MetricObservation[];
@@ -87,11 +90,17 @@ export function createMetricSeries(): MetricSeries[] {
     first: null,
     last: null,
     change: null,
+    min: null,
+    max: null,
+    mean: null,
     count: 0,
     incomplete_count: 0,
     points: [],
   }));
 }
+
+// Running sums for the mean; kept off the series so they never reach the wire.
+const sums = new WeakMap<MetricSeries, number>();
 
 export function addObservation(
   series: MetricSeries,
@@ -106,6 +115,13 @@ export function addObservation(
     point.quality === 'complete'
   ) {
     series.count++;
+    series.min =
+      series.min === null ? point.value : Math.min(series.min, point.value);
+    series.max =
+      series.max === null ? point.value : Math.max(series.max, point.value);
+    const sum = (sums.get(series) ?? 0) + point.value;
+    sums.set(series, sum);
+    series.mean = Math.round((sum / series.count) * 100) / 100;
     if (!series.first || point.date < series.first.date) series.first = point;
     if (!series.last || point.date > series.last.date) series.last = point;
     series.change =

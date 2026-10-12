@@ -48,6 +48,80 @@ describe('P1 metric observations and additive contracts', () => {
     expect(series.first?.value).toBe(70);
   });
 
+  const add = (
+    series: ReturnType<typeof createMetricSeries>[number],
+    date: string,
+    value: number | null,
+    quality: 'complete' | 'partial' | 'missing' = 'complete',
+    chart: [string, string] = ['2026-09-01', '2026-09-16'],
+  ) =>
+    addObservation(
+      series,
+      { date, value, quality, provenance: 'test' },
+      chart[0],
+      chart[1],
+    );
+
+  it('computes min, max and rounded mean over complete observations', () => {
+    const series = createMetricSeries()[0];
+    add(series, '2026-09-01', 70);
+    add(series, '2026-09-02', 0);
+    add(series, '2026-09-03', 71);
+    add(series, '2026-09-04', 99, 'partial');
+    add(series, '2026-09-05', null, 'missing');
+    expect(series).toMatchObject({ min: 0, max: 71, mean: 47 });
+    add(series, '2026-09-06', 1);
+    expect(series.mean).toBe(35.5);
+    const frac = createMetricSeries()[0];
+    add(frac, '2026-09-01', 1);
+    add(frac, '2026-09-02', 1);
+    add(frac, '2026-09-03', 2);
+    expect(frac.mean).toBe(1.33);
+  });
+
+  it('keeps min, max and mean null without complete observations', () => {
+    const series = createMetricSeries()[0];
+    add(series, '2026-09-01', null, 'missing');
+    add(series, '2026-09-02', 5, 'partial');
+    add(series, '2026-09-03', Number.NaN, 'complete');
+    expect(series).toMatchObject({ min: null, max: null, mean: null });
+  });
+
+  it('uses the value for a single observation', () => {
+    const series = createMetricSeries()[0];
+    add(series, '2026-09-01', 72.5);
+    expect(series).toMatchObject({ min: 72.5, max: 72.5, mean: 72.5 });
+  });
+
+  it('computes stats over the full range, not the chart window', () => {
+    const series = createMetricSeries()[0];
+    add(series, '2026-01-01', 60, 'complete', ['2026-09-01', '2026-09-16']);
+    add(series, '2026-09-10', 80, 'complete', ['2026-09-01', '2026-09-16']);
+    expect(series.points).toHaveLength(1);
+    expect(series).toMatchObject({ min: 60, max: 80, mean: 70 });
+  });
+
+  it('serializes min/max/mean without leaking internal state', () => {
+    const series = createMetricSeries()[0];
+    add(series, '2026-09-01', 1);
+    expect(Object.keys(JSON.parse(JSON.stringify(series)) as object)).toEqual([
+      'key',
+      'label',
+      'unit',
+      'group',
+      'source',
+      'first',
+      'last',
+      'change',
+      'min',
+      'max',
+      'mean',
+      'count',
+      'incomplete_count',
+      'points',
+    ]);
+  });
+
   it.each(['hunger_level', 'energy_level', 'digestion_level'])(
     'validates optional %s for old/new apps',
     async (field) => {
