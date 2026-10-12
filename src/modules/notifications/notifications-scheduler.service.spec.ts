@@ -371,4 +371,68 @@ describe('NotificationsSchedulerService', () => {
       expect.any(Object),
     );
   });
+
+  it('counts weekly training days by the stored flag, not by recomputed ids', async () => {
+    const first = new Date(Date.UTC(2026, 3, 13));
+    const second = new Date(Date.UTC(2026, 3, 14));
+    const third = new Date(Date.UTC(2026, 3, 15));
+    const trainings = ['a', 'b', 'c'].map((training_id) => ({ training_id }));
+    prisma.adminClientAssignment.findMany.mockResolvedValue([
+      {
+        admin_id: 'admin-1',
+        client_id: 'client-1',
+        client: {
+          email: 'client@example.com',
+          profile: { first_name: 'Ada', last_name: 'Lovelace' },
+        },
+      },
+    ]);
+    prisma.planAssignment.findMany.mockResolvedValue(
+      [first, second, third].map((date) => ({
+        client_id: 'client-1',
+        date,
+        training_id: 'a',
+        training_completion_mode: 'ALL',
+        trainings,
+        diet: null,
+      })),
+    );
+    prisma.dayProgress.findMany.mockResolvedValue([
+      // Mode went ALL -> ANY -> ALL: flag stays true with one id recorded.
+      {
+        client_id: 'client-1',
+        date: first,
+        training_completed: true,
+        trainings_completed: ['b'],
+        meals_completed: [],
+      },
+      // Every id recorded but the flag was never proven: not completed.
+      {
+        client_id: 'client-1',
+        date: second,
+        training_completed: false,
+        trainings_completed: ['a', 'b', 'c'],
+        meals_completed: [],
+      },
+      // No progress row at all for the third day.
+    ]);
+
+    await (
+      service as unknown as { weeklyClientSummaryToAdmin(): Promise<void> }
+    ).weeklyClientSummaryToAdmin();
+
+    expect(notifications.sendInternalTemplate).toHaveBeenCalledWith(
+      'system-admin',
+      ['admin-1'],
+      'admin_weekly_summary',
+      expect.objectContaining({
+        trainingDaysAssigned: 3,
+        trainingDaysCompleted: 1,
+      }),
+      expect.objectContaining({
+        body: 'Ada Lovelace: 1/3 días con entreno, 0/0 comidas',
+      }),
+      expect.any(Object),
+    );
+  });
 });

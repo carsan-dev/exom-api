@@ -143,17 +143,52 @@ type RecomputeClient = Pick<
   '$queryRaw' | 'planAssignment' | 'dayProgress'
 >;
 
-function jsonObjects<T>(value: Prisma.JsonValue | null | undefined): T[] {
+function jsonRecords(
+  value: Prisma.JsonValue | null | undefined,
+): Prisma.JsonObject[] {
   // Stored day_progress JSON is written only by the progress writers; entries
   // that are not objects carry no execution evidence and are ignored here.
   return Array.isArray(value)
-    ? value
-        .filter(
-          (item): item is Prisma.JsonObject =>
-            typeof item === 'object' && item !== null && !Array.isArray(item),
-        )
-        .map((item) => item as unknown as T)
+    ? value.filter(
+        (item): item is Prisma.JsonObject =>
+          typeof item === 'object' && item !== null && !Array.isArray(item),
+      )
     : [];
+}
+
+function optionalString(value: Prisma.JsonValue | undefined) {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function evidenceExerciseEntries(
+  value: Prisma.JsonValue | null | undefined,
+): EvidenceExerciseEntry[] {
+  return jsonRecords(value).flatMap((item) => {
+    const exerciseId = item.exercise_id;
+    if (typeof exerciseId !== 'string') return [];
+    return [
+      {
+        exercise_id: exerciseId,
+        training_session_id: optionalString(item.training_session_id),
+        training_exercise_id: optionalString(item.training_exercise_id),
+      },
+    ];
+  });
+}
+
+function evidenceTrainingSessions(
+  value: Prisma.JsonValue | null | undefined,
+): EvidenceTrainingSession[] {
+  return jsonRecords(value).flatMap((item) => {
+    const trainingId = item.training_id;
+    if (typeof trainingId !== 'string') return [];
+    return [
+      {
+        training_id: trainingId,
+        training_session_id: optionalString(item.training_session_id),
+      },
+    ];
+  });
 }
 
 /**
@@ -221,9 +256,9 @@ export async function recomputeTrainingCompletionAfterModeChange(
   );
   const evidenceIds = getCompletedTrainingIds(
     context,
-    jsonObjects<EvidenceExerciseEntry>(progress.exercises_completed),
+    evidenceExerciseEntries(progress.exercises_completed),
     [],
-    jsonObjects<EvidenceTrainingSession>(progress.training_sessions),
+    evidenceTrainingSessions(progress.training_sessions),
   );
   if (
     !isTrainingDayComplete(

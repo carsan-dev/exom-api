@@ -66,10 +66,14 @@ export interface TrainingDayProgress {
 }
 
 /**
- * Day training status computed on read from stored completions, with the
- * day's completion mode and the legacy single-training fallback. Shared by
- * the month calendar, the week summary and the weekly admin notification so
- * all of them count the same days.
+ * Day training status for read models (month calendar, week summary, weekly
+ * admin notification), so all of them count the same days.
+ *
+ * Completion is the canonical stored day flag (`training_completed`): no
+ * progress row means not completed. Stored IDs intersected with the assigned
+ * trainings feed only the "x of N" counts; they never decide completion, so a
+ * mode change that left the flag and the IDs disagreeing cannot make the read
+ * models diverge from dashboard, streaks and achievements.
  */
 export function trainingDayStatus(
   assignment: TrainingDayAssignment | undefined,
@@ -80,30 +84,24 @@ export function trainingDayStatus(
   const linkedIds =
     assignment?.trainings?.map((link) => link.training_id) ?? [];
   const storedIds = progress?.trainings_completed ?? [];
+  const completed = progress?.training_completed === true;
   if (linkedIds.length === 0) {
     // Legacy single-training mirror without link rows.
-    const completed = Boolean(
-      assignment?.training_id && progress?.training_completed,
-    );
     return {
       mode,
       assigned: assignment?.training_id ? 1 : 0,
-      done: completed ? 1 : 0,
+      done: assignment?.training_id && completed ? 1 : 0,
       completed,
     };
   }
-  const done = linkedIds.filter((id) => storedIds.includes(id)).length;
-  const legacySingleCompletion = Boolean(
-    linkedIds.length === 1 &&
-    progress?.training_completed &&
-    storedIds.length === 0,
-  );
+  const legacySingleCompletion =
+    linkedIds.length === 1 && completed && storedIds.length === 0;
   return {
     mode,
     assigned: linkedIds.length,
-    done: legacySingleCompletion ? 1 : done,
-    completed:
-      isTrainingDayComplete(mode, linkedIds, storedIds) ||
-      legacySingleCompletion,
+    done: legacySingleCompletion
+      ? 1
+      : linkedIds.filter((id) => storedIds.includes(id)).length,
+    completed,
   };
 }

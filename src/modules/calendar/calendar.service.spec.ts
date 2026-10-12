@@ -231,7 +231,7 @@ describe('CalendarService', () => {
       {
         client_id: 'client-1',
         date: new Date('2026-06-10T00:00:00.000Z'),
-        training_completed: true,
+        training_completed: false,
         trainings_completed: ['training-old-1', 'training-old-2'],
         meals_completed: [],
       },
@@ -320,6 +320,69 @@ describe('CalendarService', () => {
         });
       },
     );
+
+    it.each([
+      // Rule ALL -> ANY promoted the flag, then ANY -> ALL never demoted it.
+      ['ALL', true, ['training-2']],
+      // Flag not proven by the stored ids on an ANY day.
+      ['ANY', false, ['training-1', 'training-2', 'training-3']],
+    ] as const)(
+      'month day follows the stored flag, not the ids, under %s with flag=%s',
+      async (mode, flag, ids) => {
+        prisma.planAssignment.findMany.mockResolvedValue([
+          threeTrainings(mode),
+        ]);
+        prisma.dayProgress.findMany.mockResolvedValue([
+          {
+            client_id: 'client-1',
+            date,
+            training_completed: flag,
+            trainings_completed: [...ids],
+            meals_completed: [],
+          },
+        ]);
+
+        const days = await service.getMonthCalendar('client-1', 2026, 6);
+
+        expect(days[9]).toMatchObject({
+          training_completed: flag,
+          trainings_done: ids.length,
+        });
+      },
+    );
+
+    it('week summary counts days by the stored flag and none without a progress row', async () => {
+      const second = new Date('2026-06-11T00:00:00.000Z');
+      const third = new Date('2026-06-12T00:00:00.000Z');
+      prisma.planAssignment.findMany.mockResolvedValue([
+        threeTrainings('ALL'),
+        { ...threeTrainings('ANY'), date: second },
+        { ...threeTrainings('ANY'), date: third },
+      ]);
+      prisma.dayProgress.findMany.mockResolvedValue([
+        {
+          client_id: 'client-1',
+          date,
+          training_completed: true,
+          trainings_completed: ['training-1'],
+          meals_completed: [],
+        },
+        {
+          client_id: 'client-1',
+          date: second,
+          training_completed: false,
+          trainings_completed: ['training-1'],
+          meals_completed: [],
+        },
+      ]);
+
+      expect(
+        await service.getWeekSummary('client-1', '2026-06-08'),
+      ).toMatchObject({
+        training_days_assigned: 3,
+        training_days_completed: 1,
+      });
+    });
 
     it('week summary keeps per-training counts and adds mode-aware day counts', async () => {
       const second = new Date('2026-06-11T00:00:00.000Z');
