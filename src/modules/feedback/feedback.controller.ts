@@ -10,7 +10,10 @@ import {
   CreateFeedbackDto,
   RespondFeedbackDto,
 } from './dto/create-feedback.dto';
-import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
+import {
+  AdminFeedbackQueryDto,
+  FeedbackStatsQueryDto,
+} from './dto/admin-feedback-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -42,8 +45,12 @@ export class FeedbackController {
     status: 200,
     description: 'Estadísticas de feedback obtenidas correctamente',
   })
-  getStats(@CurrentUser() user: AuthenticatedUser) {
-    return this.feedbackService.getStats(user.id, user.role);
+  @ApiResponse({ status: 400, description: 'Parámetros de consulta inválidos' })
+  getStats(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: FeedbackStatsQueryDto,
+  ) {
+    return this.feedbackService.getStats(user.id, user.role, query);
   }
 
   @Get()

@@ -19,7 +19,14 @@ import * as admin from 'firebase-admin';
 import { paginate } from '../../common/dto/pagination.dto';
 import { withLiveUsers } from '../../common/user-external-effect';
 import { PrismaService } from '../../prisma/prisma.service';
-import { NotificationQueryDto } from './dto/notification-query.dto';
+import {
+  NotificationQueryDto,
+  NotificationStatsQueryDto,
+} from './dto/notification-query.dto';
+import {
+  resolveStatsPeriod,
+  statsPeriodDateFilter,
+} from '../../common/dto/stats-period-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import {
   CreateNotificationTemplateDto,
@@ -1223,19 +1230,29 @@ export class NotificationsService implements OnModuleInit {
     return paginate(data, total, query);
   }
 
-  async getStats(senderId: string) {
+  async getStats(senderId: string, query: NotificationStatsQueryDto = {}) {
     const now = new Date();
     const today = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
     );
+    const createdAt = statsPeriodDateFilter(resolveStatsPeriod(query));
 
-    const where = { sender_id: senderId };
+    const scope: Prisma.NotificationWhereInput = {
+      sender_id: senderId,
+      ...(query.recipient_id ? { recipient_id: query.recipient_id } : {}),
+    };
+    const where: Prisma.NotificationWhereInput = {
+      ...scope,
+      ...(createdAt ? { created_at: createdAt } : {}),
+    };
 
+    // `today` keeps its literal meaning (sent since UTC midnight) regardless
+    // of the selected period; only the recipient filter narrows it.
     const [total, sentToday, failed] = await Promise.all([
       this.prisma.notification.count({ where }),
       this.prisma.notification.count({
         where: {
-          ...where,
+          ...scope,
           created_at: { gte: today },
           status: NotificationStatus.SENT,
         },

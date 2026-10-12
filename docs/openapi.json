@@ -13520,10 +13520,16 @@
       },
       "Wire245": {
         "properties": {
+          "avg_review_seconds": {
+            "$ref": "#/components/schemas/Wire31"
+          },
           "pending": {
             "type": "number"
           },
           "reviewed": {
+            "type": "number"
+          },
+          "reviewed_in_period": {
             "type": "number"
           },
           "total": {
@@ -13531,6 +13537,8 @@
           }
         },
         "required": [
+          "avg_review_seconds",
+          "reviewed_in_period",
           "total",
           "pending",
           "reviewed"
@@ -14421,6 +14429,15 @@
           "last": {
             "$ref": "#/components/schemas/Wire275"
           },
+          "max": {
+            "$ref": "#/components/schemas/Wire31"
+          },
+          "mean": {
+            "$ref": "#/components/schemas/Wire31"
+          },
+          "min": {
+            "$ref": "#/components/schemas/Wire31"
+          },
           "points": {
             "$ref": "#/components/schemas/Wire277"
           },
@@ -14440,6 +14457,9 @@
           "first",
           "last",
           "change",
+          "min",
+          "max",
+          "mean",
           "count",
           "incomplete_count",
           "points"
@@ -17373,7 +17393,13 @@
           "archived": {
             "type": "number"
           },
+          "avg_review_seconds": {
+            "$ref": "#/components/schemas/Wire31"
+          },
           "reviewed": {
+            "type": "number"
+          },
+          "reviewed_in_period": {
             "type": "number"
           },
           "submitted": {
@@ -17384,6 +17410,8 @@
           }
         },
         "required": [
+          "avg_review_seconds",
+          "reviewed_in_period",
           "total",
           "submitted",
           "reviewed",
@@ -35158,7 +35186,37 @@
     "/api/v1/feedback/stats": {
       "get": {
         "operationId": "FeedbackController_getStats",
-        "parameters": [],
+        "parameters": [
+          {
+            "description": "Inclusive UTC civil start date (YYYY-MM-DD)",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "example": "2026-10-01",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive UTC civil end date (YYYY-MM-DD); covers the whole day",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "example": "2026-10-31",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by client ID",
+            "in": "query",
+            "name": "client_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -35189,6 +35247,16 @@
               }
             },
             "description": "Respuesta HTTP serializada"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Parámetros de consulta inválidos"
           },
           "default": {
             "content": {
@@ -37380,7 +37448,37 @@
     "/api/v1/notifications/stats": {
       "get": {
         "operationId": "NotificationsController_getStats",
-        "parameters": [],
+        "parameters": [
+          {
+            "description": "Inclusive UTC civil start date (YYYY-MM-DD)",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "example": "2026-10-01",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive UTC civil end date (YYYY-MM-DD); covers the whole day",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "example": "2026-10-31",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by recipient ID",
+            "in": "query",
+            "name": "recipient_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -37411,6 +37509,16 @@
               }
             },
             "description": "Respuesta HTTP serializada"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Parámetros de consulta inválidos"
           },
           "default": {
             "content": {
@@ -40140,7 +40248,37 @@
     "/api/v1/recaps/stats": {
       "get": {
         "operationId": "RecapsController_getStats",
-        "parameters": [],
+        "parameters": [
+          {
+            "description": "Inclusive UTC civil start date (YYYY-MM-DD)",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "example": "2026-10-01",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive UTC civil end date (YYYY-MM-DD); covers the whole day",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "example": "2026-10-31",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by client ID",
+            "in": "query",
+            "name": "client_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -40171,6 +40309,16 @@
               }
             },
             "description": "Respuesta HTTP serializada"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Parámetros de consulta inválidos"
           },
           "default": {
             "content": {

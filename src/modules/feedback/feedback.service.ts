@@ -21,7 +21,19 @@ import {
   MediaType,
   Role,
 } from '@prisma/client';
-import { AdminFeedbackQueryDto } from './dto/admin-feedback-query.dto';
+import {
+  AdminFeedbackQueryDto,
+  FeedbackStatsQueryDto,
+} from './dto/admin-feedback-query.dto';
+import {
+  resolveStatsPeriod,
+  statsPeriodDateFilter,
+  statsPeriodSql,
+} from '../../common/dto/stats-period-query.dto';
+import {
+  ReviewDurationRow,
+  reviewDurationStats,
+} from '../../common/review-duration-stats';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { parseDateOnly } from '../../common/date-only';
@@ -319,13 +331,35 @@ export class FeedbackService {
     return paginate(data, total, query);
   }
 
-  async getStats(currentUserId: string, currentUserRole: string) {
-    const accessible = this.accessibleFeedbackWhere(
-      currentUserId,
-      currentUserRole,
-    );
+  private accessibleFeedbackSql(
+    currentUserId: string,
+    currentUserRole: string,
+  ): Prisma.Sql {
+    // Mirrors accessibleFeedbackWhere for raw aggregates; keep both in sync.
+    if (currentUserRole === Role.SUPER_ADMIN)
+      return Prisma.sql`AND EXISTS (SELECT 1 FROM users u
+        WHERE u.id = f.client_id AND u.role = 'CLIENT'::"Role")`;
+    if (currentUserRole === Role.ADMIN)
+      return Prisma.sql`AND EXISTS (SELECT 1 FROM admin_client_assignments a
+        WHERE a.client_id = f.client_id AND a.admin_id = ${currentUserId}
+          AND a.is_active = true)`;
+    return Prisma.sql`AND FALSE`;
+  }
 
-    const [total, pending, reviewed] = await Promise.all([
+  async getStats(
+    currentUserId: string,
+    currentUserRole: string,
+    query: FeedbackStatsQueryDto = {},
+  ) {
+    const period = resolveStatsPeriod(query);
+    const createdAt = statsPeriodDateFilter(period);
+    const accessible: Prisma.FeedbackMediaWhereInput = {
+      ...this.accessibleFeedbackWhere(currentUserId, currentUserRole),
+      ...(query.client_id ? { client_id: query.client_id } : {}),
+      ...(createdAt ? { created_at: createdAt } : {}),
+    };
+
+    const [total, pending, reviewed, reviewRows] = await Promise.all([
       this.prisma.feedbackMedia.count({
         where: accessible,
       }),
@@ -341,9 +375,20 @@ export class FeedbackService {
           status: FeedbackStatus.REVIEWED,
         },
       }),
+      this.prisma.$queryRaw<ReviewDurationRow[]>(Prisma.sql`
+        SELECT COUNT(*)::int AS reviewed_count,
+          AVG(EXTRACT(EPOCH FROM (f.reviewed_at - f.created_at)))::float8
+            AS avg_seconds
+        FROM feedback_media f
+        WHERE f.status = 'REVIEWED'::"FeedbackStatus"
+          AND f.reviewed_at IS NOT NULL
+          AND f.reviewed_at >= f.created_at
+          ${this.accessibleFeedbackSql(currentUserId, currentUserRole)}
+          ${query.client_id ? Prisma.sql`AND f.client_id = ${query.client_id}` : Prisma.empty}
+          ${statsPeriodSql(Prisma.raw('f.reviewed_at'), period)}`),
     ]);
 
-    return { total, pending, reviewed };
+    return { total, pending, reviewed, ...reviewDurationStats(reviewRows) };
   }
 
   async findMy(clientId: string, pagination: PaginationDto) {

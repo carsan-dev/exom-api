@@ -3,6 +3,7 @@ import { Transform } from 'class-transformer';
 import { IsBoolean, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { RecapStatus } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
+import { StatsPeriodQueryDto } from '../../../common/dto/stats-period-query.dto';
 
 export const ADMIN_RECAP_STATUSES = [
   RecapStatus.SUBMITTED,
@@ -42,4 +43,11 @@ export class AdminRecapQueryDto extends PaginationDto {
   @Transform(({ value }) => toBoolean(value))
   @IsBoolean()
   archived?: boolean;
+}
+
+export class RecapStatsQueryDto extends StatsPeriodQueryDto {
+  @ApiPropertyOptional({ description: 'Filter by client ID' })
+  @IsOptional()
+  @IsUUID()
+  client_id?: string;
 }
