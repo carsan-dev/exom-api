@@ -30,7 +30,7 @@ assert.ok(fs.existsSync(join(directory, 'privacy.cjs')) && fs.existsSync(join(di
 fs.writeFileSync(join(directory, '.env'), 'SYNTHETIC_SECRET=not-readable');
 const child = spawnSync(process.execPath, ['-e', `const assert = require('node:assert/strict'); assert.equal(require('node:fs').readFileSync(${JSON.stringify(join(directory, '.env'))}, 'utf8'), ''); assert.throws(() => require('node:net').connect({host:'provider.example.invalid', port:443}), /External provider/);`], { env, encoding: 'utf8', shell: false });
 assert.equal(child.status, 0, child.stderr);
-const report = { success: true, numPassedTests: 224, numPendingTests: 0, numTodoTests: 0, numPendingTestSuites: 0, openHandles: [], testResults: [{ name: 'test/a.spec.ts', status: 'passed', assertionResults: [{ status: 'passed' }] }] };
+const report = { success: true, numPassedTests: 232,numPendingTests: 0, numTodoTests: 0, numPendingTestSuites: 0, openHandles: [], testResults: [{ name: 'test/a.spec.ts', status: 'passed', assertionResults: [{ status: 'passed' }] }] };
 validateSelection(report, ['test/a.spec.ts']);
 assert.doesNotThrow(() => validateProfile(report, 'pg', ['test/a.spec.ts']));
 assert.doesNotThrow(() => validateProfile(report, 'adherence-on', ['test/a.spec.ts']));
@@ -40,6 +40,6 @@ assert.throws(() => validateProfile(report, 'all', ['test/a.spec.ts']), /Require
 for (const change of [{ numPendingTests: 1 }, { numTodoTests: 1 }, { testResults: [] }, { success: false }, { openHandles: [{}] }]) assert.throws(() => validateSelection({ ...report, ...change }, ['test/a.spec.ts']));
 validateReport(report, 'concurrency');
 validateReport({ ...report, numPassedTests: 19 }, 'e2e');
-assert.throws(() => validateReport({ ...report, numPassedTests: 223 }, 'concurrency'));
+assert.throws(() => validateReport({ ...report, numPassedTests: 231 }, 'concurrency'));
 assert.throws(() => validateReport({ ...report, numPassedTests: 18 }, 'e2e'));
 console.log('Owned image, environment, selection and minimum-count self-checks: PASS; retained ' + directory);

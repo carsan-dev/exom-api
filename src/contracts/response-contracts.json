@@ -8796,6 +8796,12 @@
     "Wire245": {
       "type": "object",
       "properties": {
+        "avg_review_seconds": {
+          "$ref": "#/components/schemas/Wire31"
+        },
+        "reviewed_in_period": {
+          "type": "number"
+        },
         "total": {
           "type": "number"
         },
@@ -8807,6 +8813,8 @@
         }
       },
       "required": [
+        "avg_review_seconds",
+        "reviewed_in_period",
         "total",
         "pending",
         "reviewed"
@@ -9636,6 +9644,15 @@
         "change": {
           "$ref": "#/components/schemas/Wire31"
         },
+        "min": {
+          "$ref": "#/components/schemas/Wire31"
+        },
+        "max": {
+          "$ref": "#/components/schemas/Wire31"
+        },
+        "mean": {
+          "$ref": "#/components/schemas/Wire31"
+        },
         "count": {
           "type": "number"
         },
@@ -9655,6 +9672,9 @@
         "first",
         "last",
         "change",
+        "min",
+        "max",
+        "mean",
         "count",
         "incomplete_count",
         "points"
@@ -12191,6 +12211,12 @@
     "Wire379": {
       "type": "object",
       "properties": {
+        "avg_review_seconds": {
+          "$ref": "#/components/schemas/Wire31"
+        },
+        "reviewed_in_period": {
+          "type": "number"
+        },
         "total": {
           "type": "number"
         },
@@ -12205,6 +12231,8 @@
         }
       },
       "required": [
+        "avg_review_seconds",
+        "reviewed_in_period",
         "total",
         "submitted",
         "reviewed",

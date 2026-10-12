@@ -22,7 +22,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { RequiresApproval } from '../../common/decorators/requires-approval.decorator';
 import { Role } from '@prisma/client';
-import { NotificationQueryDto } from './dto/notification-query.dto';
+import {
+  NotificationQueryDto,
+  NotificationStatsQueryDto,
+} from './dto/notification-query.dto';
 import { MyNotificationsQueryDto } from './dto/my-notifications-query.dto';
 import {
   SendNotificationDto,
@@ -129,8 +132,12 @@ export class NotificationsController {
     status: 200,
     description: 'Estadisticas de notificaciones obtenidas correctamente',
   })
-  getStats(@CurrentUser() user: AuthenticatedUser) {
-    return this.notificationsService.getStats(user.id);
+  @ApiResponse({ status: 400, description: 'Parámetros de consulta inválidos' })
+  getStats(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: NotificationStatsQueryDto,
+  ) {
+    return this.notificationsService.getStats(user.id, query);
   }
 
   @Get('templates')

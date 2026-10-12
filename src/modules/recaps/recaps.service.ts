@@ -16,7 +16,17 @@ import {
 import {
   ADMIN_RECAP_STATUSES,
   AdminRecapQueryDto,
+  RecapStatsQueryDto,
 } from './dto/admin-recap-query.dto';
+import {
+  resolveStatsPeriod,
+  statsPeriodDateFilter,
+  statsPeriodSql,
+} from '../../common/dto/stats-period-query.dto';
+import {
+  ReviewDurationRow,
+  reviewDurationStats,
+} from '../../common/review-duration-stats';
 import { Prisma, RecapStatus, Role } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { WeeklyRecap } from '@prisma/client';
@@ -495,35 +505,74 @@ export class RecapsService {
     return { success: true };
   }
 
-  async getStats(adminId: string, adminRole: string) {
+  private accessibleRecapSql(adminId: string, role: string): Prisma.Sql {
+    // Mirrors accessibleRecapWhere for raw aggregates; keep both in sync.
+    if (role === Role.SUPER_ADMIN)
+      return Prisma.sql`AND EXISTS (SELECT 1 FROM users u
+        WHERE u.id = r.client_id AND u.role = 'CLIENT'::"Role")`;
+    if (role === Role.ADMIN)
+      return Prisma.sql`AND EXISTS (SELECT 1 FROM admin_client_assignments a
+        WHERE a.client_id = r.client_id AND a.admin_id = ${adminId}
+          AND a.is_active = true)`;
+    return Prisma.sql`AND FALSE`;
+  }
+
+  async getStats(
+    adminId: string,
+    adminRole: string,
+    query: RecapStatsQueryDto = {},
+  ) {
+    const period = resolveStatsPeriod(query);
+    const submittedAt = statsPeriodDateFilter(period);
     const where: Prisma.WeeklyRecapWhereInput = {
       ...this.accessibleRecapWhere(adminId, adminRole),
       status: { in: [RecapStatus.SUBMITTED, RecapStatus.REVIEWED] },
+      ...(query.client_id ? { client_id: query.client_id } : {}),
+      ...(submittedAt ? { submitted_at: submittedAt } : {}),
     };
 
-    const [total, submitted, reviewed, archived] = await Promise.all([
-      this.prisma.weeklyRecap.count({ where }),
-      this.prisma.weeklyRecap.count({
-        where: {
-          ...where,
-          status: RecapStatus.SUBMITTED,
-        },
-      }),
-      this.prisma.weeklyRecap.count({
-        where: {
-          ...where,
-          status: RecapStatus.REVIEWED,
-        },
-      }),
-      this.prisma.weeklyRecap.count({
-        where: {
-          ...where,
-          archived_at: { not: null },
-        },
-      }),
-    ]);
+    const [total, submitted, reviewed, archived, reviewRows] =
+      await Promise.all([
+        this.prisma.weeklyRecap.count({ where }),
+        this.prisma.weeklyRecap.count({
+          where: {
+            ...where,
+            status: RecapStatus.SUBMITTED,
+          },
+        }),
+        this.prisma.weeklyRecap.count({
+          where: {
+            ...where,
+            status: RecapStatus.REVIEWED,
+          },
+        }),
+        this.prisma.weeklyRecap.count({
+          where: {
+            ...where,
+            archived_at: { not: null },
+          },
+        }),
+        this.prisma.$queryRaw<ReviewDurationRow[]>(Prisma.sql`
+          SELECT COUNT(*)::int AS reviewed_count,
+            AVG(EXTRACT(EPOCH FROM (r.reviewed_at - r.submitted_at)))::float8
+              AS avg_seconds
+          FROM weekly_recaps r
+          WHERE r.status = 'REVIEWED'::"RecapStatus"
+            AND r.reviewed_at IS NOT NULL
+            AND r.submitted_at IS NOT NULL
+            AND r.reviewed_at >= r.submitted_at
+            ${this.accessibleRecapSql(adminId, adminRole)}
+            ${query.client_id ? Prisma.sql`AND r.client_id = ${query.client_id}` : Prisma.empty}
+            ${statsPeriodSql(Prisma.raw('r.reviewed_at'), period)}`),
+      ]);
 
-    return { total, submitted, reviewed, archived };
+    return {
+      total,
+      submitted,
+      reviewed,
+      archived,
+      ...reviewDurationStats(reviewRows),
+    };
   }
 
   async findForAdmin(
