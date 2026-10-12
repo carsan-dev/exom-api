@@ -20,10 +20,12 @@ import { randomBytes } from 'crypto';
 import { IdentityService } from '../identity/identity.service';
 import { IdentityProvider } from '../identity/identity-provider';
 import { PrismaService } from '../../prisma/prisma.service';
+import { trainingCompletionSummary } from '../../common/progress/training-completion';
 import {
   flattenHistoricalMeals,
   loadDietHistory,
 } from '../../common/progress/diet-history';
+import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
 import { ChallengesService } from '../challenges/challenges.service';
 import { STREAK_PUBLIC_SELECT } from '../streaks/streak-public';
 import { EmailService } from '../email/email.service';
@@ -760,6 +762,7 @@ export class UsersService {
     await this.assertAdminUsersExist(desiredAdminIds);
 
     const result = await this.prisma.$transaction(async (tx) => {
+      await lockClientDayProgress(tx, clientId);
       const currentActiveAssignments = await tx.adminClientAssignment.findMany({
         where: { client_id: clientId, is_active: true },
         select: { admin_id: true },
@@ -1038,6 +1041,29 @@ export class UsersService {
       [clientId],
       new Date(date),
     );
+    // "x de N": recorded completions of the trainings assigned that day.
+    // Recorded data only; the stored flag stays the canonical day status.
+    const assignment = await this.prisma.planAssignment.findUnique({
+      where: { client_id_date: { client_id: clientId, date: new Date(date) } },
+      select: {
+        training_id: true,
+        training_completion_mode: true,
+        trainings: {
+          orderBy: { position: 'asc' },
+          select: { training_id: true },
+        },
+      },
+    });
+    const assignedTrainingIds = assignment?.trainings.length
+      ? assignment.trainings.map((link) => link.training_id)
+      : assignment?.training_id
+        ? [assignment.training_id]
+        : [];
+    const trainingSummary = trainingCompletionSummary(
+      assignment?.training_completion_mode,
+      assignedTrainingIds,
+      progress?.trainings_completed ?? [],
+    );
 
     if (!progress && dietHistory.length) {
       return {
@@ -1045,6 +1071,7 @@ export class UsersService {
         client_id: clientId,
         date: new Date(date),
         training_completed: false,
+        training_summary: trainingSummary,
         trainings_completed: [],
         exercises_completed: [],
         meals_completed: [],
@@ -1104,6 +1131,7 @@ export class UsersService {
 
     return {
       ...progress,
+      training_summary: trainingSummary,
       diet_history: dietHistory,
       exercises_completed: completedExercises.map((entry) => ({
         ...entry,
@@ -1204,6 +1232,17 @@ export class UsersService {
     await this.assertClientAccess(adminId, adminRole, clientId);
 
     return this.calendarService.getWeekSummary(clientId, weekStart);
+  }
+
+  async getClientMetricsOverview(
+    adminId: string,
+    adminRole: string,
+    clientId: string,
+    query: import('../metrics/dto/metrics-overview-query.dto').MetricsOverviewQueryDto,
+  ) {
+    await this.assertClientAccess(adminId, adminRole, clientId);
+    await this.assertClientExists(clientId);
+    return this.metricsService.getOverview(clientId, query);
   }
 
   async getClientMetrics(
@@ -1316,6 +1355,14 @@ export class UsersService {
     const adminIdsToCreate = desiredAdminIds.filter(
       (adminId) => !assignmentsByAdminId.has(adminId),
     );
+
+    if (adminIdsToCreate.length > 0) {
+      // New assignments take FK locks on users. Acquire those parents first,
+      // in archive's sorted user-before-assignment order, not after old-row DML.
+      await tx.$queryRaw`SELECT id FROM users
+        WHERE id IN (${Prisma.join([clientId, ...adminIdsToCreate])})
+        ORDER BY id FOR UPDATE`;
+    }
 
     await Promise.all([
       assignmentsToDeactivate.length > 0

@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { MetricsService } from './metrics.service';
+import { MetricsOverviewQueryDto } from './dto/metrics-overview-query.dto';
 import { CreateBodyMetricDto } from './dto/create-metric.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -14,6 +15,17 @@ import { Role } from '@prisma/client';
 @Roles(Role.CLIENT)
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
+
+  @Get('overview')
+  @ApiOperation({
+    summary: 'Comparativas y gráficos paginados del cliente autenticado',
+  })
+  getOverview(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: MetricsOverviewQueryDto,
+  ) {
+    return this.metricsService.getOverview(user.id, query);
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create or update the body metric for a day' })

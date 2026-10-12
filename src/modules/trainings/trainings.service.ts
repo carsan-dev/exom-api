@@ -24,6 +24,7 @@ import {
   CatalogColorType,
   Prisma,
   TrainingBlockType,
+  TrainingCompletionMode,
   TrainingMeasureType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -35,6 +36,7 @@ import {
 } from './dto/create-training.dto';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { reconcileTrainingProgress } from '../../common/progress/plan-progress-reconciliation';
+import { isTrainingDayComplete } from '../../common/progress/training-completion';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 import { lockClientsDayProgress } from '../../common/progress/day-progress-lock';
 
@@ -760,6 +762,7 @@ export class TrainingsService {
         client_id: true,
         date: true,
         training_id: true,
+        training_completion_mode: true,
         trainings: {
           orderBy: { position: 'asc' },
           select: { training_id: true },
@@ -794,14 +797,6 @@ export class TrainingsService {
     for (const progress of progresses) {
       const key = `${progress.client_id}:${progress.date.toISOString()}`;
       if (!assignedKeys.has(key) || historicalKeys.has(key)) continue;
-      const reconciled = reconcileTrainingProgress(
-        progress.exercises_completed,
-        currentExercises,
-        explicitlyDeletedIds,
-      );
-      const completedIds = new Set(progress.trainings_completed);
-      if (reconciled.trainingCompleted) completedIds.add(trainingId);
-      else completedIds.delete(trainingId);
       const assignment = assignments.find(
         (item) => `${item.client_id}:${item.date.toISOString()}` === key,
       )!;
@@ -810,15 +805,58 @@ export class TrainingsService {
         : assignment.training_id
           ? [assignment.training_id]
           : [];
+      // Without an occurrence ID a catalog entry cannot be owned by one of
+      // several assigned trainings. Keep it as history, never infer its owner.
+      const entries = progress.exercises_completed;
+      const relevantEntries =
+        assignedIds.length > 1 && Array.isArray(entries)
+          ? entries.filter(
+              (entry) =>
+                typeof entry === 'object' &&
+                entry !== null &&
+                !Array.isArray(entry) &&
+                typeof entry.training_exercise_id === 'string',
+            )
+          : entries;
+      const reconciled = reconcileTrainingProgress(
+        relevantEntries,
+        currentExercises,
+        explicitlyDeletedIds,
+      );
+      const completedIds = new Set(progress.trainings_completed);
+      // Old IDs may record explicit completion or a derived/backfilled result;
+      // catalog edits cannot establish their provenance or erase that history.
+      if (reconciled.trainingCompleted) completedIds.add(trainingId);
+      const historicalLegacyEntries =
+        assignedIds.length > 1 && Array.isArray(entries)
+          ? entries.filter(
+              (entry) =>
+                typeof entry !== 'object' ||
+                entry === null ||
+                Array.isArray(entry) ||
+                typeof entry.training_exercise_id !== 'string',
+            )
+          : [];
       await tx.dayProgress.update({
         where: { id: progress.id },
         data: {
-          exercises_completed:
-            reconciled.entries as unknown as Prisma.InputJsonValue,
+          exercises_completed: [
+            ...reconciled.entries,
+            ...historicalLegacyEntries,
+          ] as unknown as Prisma.InputJsonValue,
           trainings_completed: [...completedIds],
+          // This edit only evaluates trainingId. Under ALL with several assigned
+          // trainings we cannot prove the others from their ambiguous historical
+          // IDs, so an incomplete day stays incomplete until explicit completion
+          // or a reconciliation that verifies every assigned training. Under ANY
+          // the verified execution of this assigned training is sufficient.
           training_completed:
-            assignedIds.length > 0 &&
-            assignedIds.every((id) => completedIds.has(id)),
+            progress.training_completed ||
+            isTrainingDayComplete(
+              assignment.training_completion_mode,
+              assignedIds,
+              reconciled.trainingCompleted ? [trainingId] : [],
+            ),
         },
       });
     }
@@ -1476,11 +1514,18 @@ export class TrainingsService {
           legacyDayCompletion,
       }),
     );
+    const trainingCompletionMode =
+      assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
     return {
       date: target.toISOString().split('T')[0],
-      training_completed:
-        serializedTrainings.length > 0 &&
-        serializedTrainings.every((training) => training.completed),
+      training_completed: isTrainingDayComplete(
+        trainingCompletionMode,
+        serializedTrainings.map((training) => training.id),
+        serializedTrainings
+          .filter((training) => training.completed)
+          .map((training) => training.id),
+      ),
+      training_completion_mode: trainingCompletionMode,
       trainings: serializedTrainings,
     };
   }

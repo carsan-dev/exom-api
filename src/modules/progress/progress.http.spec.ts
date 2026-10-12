@@ -11,6 +11,7 @@ import request from 'supertest';
 import { Role } from '@prisma/client';
 import { ProgressController } from './progress.controller';
 import { ProgressService } from './progress.service';
+import { TrainingProgressReadService } from './training-progress-read.service';
 import {
   progressCommand,
   ProgressCommand,
@@ -28,6 +29,7 @@ describe('P4 HTTP offline protocol (real controller/pipes/filter, isolated auth 
     dto: unknown;
     command: ProgressCommand | undefined;
   }> = [];
+  const trainingSeen: typeof seen = [];
   const current = {
     sync_revision: 7,
     exercises_completed: [
@@ -42,6 +44,7 @@ describe('P4 HTTP offline protocol (real controller/pipes/filter, isolated auth 
     const module = await Test.createTestingModule({
       controllers: [ProgressController],
       providers: [
+        { provide: TrainingProgressReadService, useValue: {} },
         {
           provide: ProgressService,
           useValue: {
@@ -54,6 +57,14 @@ describe('P4 HTTP offline protocol (real controller/pipes/filter, isolated auth 
                   current_revision: 7,
                   current_progress: current,
                 });
+              return Promise.resolve({ ...current, operation_revision: 7 });
+            },
+            completeTraining: (owner: string, dto: unknown) => {
+              trainingSeen.push({
+                owner,
+                dto,
+                command: progressCommand.getStore(),
+              });
               return Promise.resolve({ ...current, operation_revision: 7 });
             },
           },
@@ -94,6 +105,7 @@ describe('P4 HTTP offline protocol (real controller/pipes/filter, isolated auth 
   beforeEach(() => {
     conflict = false;
     seen.length = 0;
+    trainingSeen.length = 0;
   });
   afterAll(async () => {
     await app?.close();
@@ -104,6 +116,109 @@ describe('P4 HTTP offline protocol (real controller/pipes/filter, isolated auth 
     training_exercise_id: 'te',
     sets: [{ set_number: 1, seconds: 30, rir: 2 }],
   };
+  it('accepts session completion and preserves operation identity across retries', async () => {
+    const training = {
+      date: '2026-09-06',
+      training_id: 'training-a',
+      training_session_id: 'session-a',
+      rpe: 8,
+      session_note: 'Steady effort',
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await request(app.getHttpServer())
+        .post('/api/v1/progress/trainings/complete')
+        .set('x-exom-operation-id', 'complete:session-a')
+        .set('x-exom-revision', '2')
+        .send(training)
+        .expect(201);
+      expect(response.body).toMatchObject({
+        success: true,
+        data: { sync_revision: 7, operation_revision: 7 },
+      });
+    }
+    expect(trainingSeen).toMatchObject([
+      {
+        owner: 'isolated-client',
+        dto: training,
+        command: { id: 'complete:session-a', revision: 2 },
+      },
+      {
+        owner: 'isolated-client',
+        dto: training,
+        command: { id: 'complete:session-a', revision: 2 },
+      },
+    ]);
+    expect(trainingSeen[0]?.command?.payloadHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(trainingSeen[1]?.command?.payloadHash).toBe(
+      trainingSeen[0]?.command?.payloadHash,
+    );
+
+    await request(app.getHttpServer())
+      .post('/api/v1/progress/trainings/complete')
+      .set('x-exom-operation-id', 'complete:session-a')
+      .set('x-exom-revision', '2')
+      .send({ ...training, training_session_id: 'session-b' })
+      .expect(201);
+    expect(trainingSeen[2]?.command?.payloadHash).not.toBe(
+      trainingSeen[0]?.command?.payloadHash,
+    );
+  });
+
+  it('accepts legacy training completion without session fields or operation headers', async () => {
+    const legacy = { date: '2026-09-06', training_id: 'training-a' };
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/progress/trainings/complete')
+      .send(legacy)
+      .expect(201);
+    expect(response.body).toMatchObject({
+      success: true,
+      data: { sync_revision: 7, operation_revision: 7 },
+    });
+    expect(trainingSeen).toEqual([
+      { owner: 'isolated-client', dto: legacy, command: undefined },
+    ]);
+  });
+
+  it('rejects invalid training completion payloads and operation headers before service forwarding', async () => {
+    const valid = {
+      date: '2026-09-06',
+      training_id: 'training-a',
+      training_session_id: 'session-a',
+      rpe: 8,
+      session_note: 'Steady effort',
+    };
+    for (const invalid of [
+      { ...valid, rpe: 0 },
+      { ...valid, rpe: 11 },
+      { ...valid, rpe: 8.5 },
+      { ...valid, training_session_id: '' },
+      { ...valid, training_session_id: 's'.repeat(129) },
+      { ...valid, session_note: 'n'.repeat(1001) },
+      { ...valid, unexpected: 'unknown' },
+    ]) {
+      await request(app.getHttpServer())
+        .post('/api/v1/progress/trainings/complete')
+        .send(invalid)
+        .expect(400);
+    }
+    await request(app.getHttpServer())
+      .post('/api/v1/progress/trainings/complete')
+      .set('x-exom-operation-id', 'missing-revision')
+      .send(valid)
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/api/v1/progress/trainings/complete')
+      .set('x-exom-revision', '2')
+      .send(valid)
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/api/v1/progress/trainings/complete')
+      .set('x-test-role', Role.ADMIN)
+      .send(valid)
+      .expect(403);
+    expect(trainingSeen).toHaveLength(0);
+  });
+
   it('keeps conflict revision and canonical historical values in the actual HTTP error', async () => {
     conflict = true;
     const response = await request(app.getHttpServer())

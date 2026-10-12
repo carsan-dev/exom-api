@@ -10,7 +10,7 @@ test('missing integration URL fails without a production fallback', () => {
   assert.throws(databaseUrl);
 });
 test('rejects remote hosts, wrong databases, roles and URL overrides', () => {
-  for (const url of [valid.replace('127.0.0.1','remote.example'),valid.replace('/exom_ci','/production'),valid.replace('exom_ci:','admin:'),valid+'?host=remote.example']) {
+  for (const url of [valid.replace('127.0.0.1','remote.example'),valid.replace('/exom_ci','/production'),valid.replace('exom_ci:','admin:'),valid.replace(':5432/', ':55493/'),valid+'?host=remote.example']) {
     process.env.TEST_DATABASE_URL=url;
     assert.throws(databaseUrl);
   }

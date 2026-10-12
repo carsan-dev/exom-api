@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, PrismaClient, Role } from '@prisma/client';
+import { PrismaClient, Role } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { lockClientDayProgress } from '../../common/progress/day-progress-lock';
+import { calculateStreak } from '../challenges/challenge-progress';
 
 type StreakDb = Omit<
   PrismaClient,
@@ -22,19 +23,6 @@ export class StreakCalculatorService {
   private utcDate(date: Date): Date {
     return new Date(
       Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-    );
-  }
-
-  private hasActivity(progress: {
-    training_completed: boolean;
-    exercises_completed: Prisma.JsonValue;
-    meals_completed: string[];
-  }): boolean {
-    return (
-      progress.training_completed ||
-      (Array.isArray(progress.exercises_completed) &&
-        progress.exercises_completed.length > 0) ||
-      progress.meals_completed.length > 0
     );
   }
 
@@ -106,33 +94,11 @@ export class StreakCalculatorService {
           },
         })
       : [];
-    const activityByDate = new Map(
-      progresses.map((progress) => [
-        this.utcDate(progress.date).getTime(),
-        (!trackingStartedAt || progress.updated_at >= trackingStartedAt) &&
-          this.hasActivity(progress),
-      ]),
-    );
-
-    let currentDays = 0;
-    let calculatedLongest = 0;
-    let lastActiveDate: Date | null = null;
-
-    for (const assignment of assignments) {
-      const date = this.utcDate(assignment.date);
-      const active = activityByDate.get(date.getTime()) ?? false;
-
-      // Current calendar day remains open until tomorrow.
-      if (!active && date.getTime() === asOf.getTime()) continue;
-
-      if (active) {
-        currentDays += 1;
-        calculatedLongest = Math.max(calculatedLongest, currentDays);
-        lastActiveDate = date;
-      } else {
-        currentDays = 0;
-      }
-    }
+    const {
+      currentDays,
+      longestDays: calculatedLongest,
+      lastActiveDate,
+    } = calculateStreak(assignments, progresses, asOf, trackingStartedAt);
 
     const previousCurrentDays = existing?.current_days ?? 0;
     const longestDays =

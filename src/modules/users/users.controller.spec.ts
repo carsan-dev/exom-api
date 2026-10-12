@@ -5,6 +5,7 @@ import { Role } from '@prisma/client';
 import request from 'supertest';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
+import { TrainingProgressReadService } from '../progress/training-progress-read.service';
 
 describe('UsersController', () => {
   let app: INestApplication<Server>;
@@ -24,6 +25,7 @@ describe('UsersController', () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [UsersController],
       providers: [
+        { provide: TrainingProgressReadService, useValue: {} },
         {
           provide: UsersService,
           useValue: usersService,

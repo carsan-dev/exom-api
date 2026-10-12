@@ -487,4 +487,141 @@ describe('AutoAssignmentMaterializerService', () => {
       where: { id: 'future-auto' },
     });
   });
+
+  describe('training completion mode', () => {
+    const thursday = new Date('2026-07-02T00:00:00.000Z');
+    const rule = (mode?: 'ALL' | 'ANY') => ({
+      id: 'rule-1',
+      admin_id: 'admin-1',
+      ...(mode && { training_completion_mode: mode }),
+      starts_on: new Date('2026-06-01T00:00:00.000Z'),
+      ends_on: null,
+      days: [
+        {
+          weekday: 4,
+          training_id: null,
+          diet_id: null,
+          is_rest_day: false,
+          trainings: [
+            {
+              training_id: 'training-1',
+              last_set_video_policy: LastSetVideoPolicy.AUTO,
+            },
+            {
+              training_id: 'training-2',
+              last_set_video_policy: LastSetVideoPolicy.AUTO,
+            },
+          ],
+        },
+      ],
+    });
+    const existing = (mode?: 'ALL' | 'ANY') => ({
+      id: 'auto-1',
+      admin_id: 'admin-1',
+      date: thursday,
+      training_id: 'training-1',
+      diet_id: null,
+      is_rest_day: false,
+      auto_assignment_rule_id: 'rule-1',
+      ...(mode && { training_completion_mode: mode }),
+      trainings: [
+        {
+          training_id: 'training-1',
+          last_set_video_policy: LastSetVideoPolicy.AUTO,
+          legacy_video_exempt: false,
+        },
+        {
+          training_id: 'training-2',
+          last_set_video_policy: LastSetVideoPolicy.AUTO,
+          legacy_video_exempt: false,
+        },
+      ],
+    });
+    const update = jest.fn();
+    const findUnique = jest.fn();
+
+    beforeEach(() => {
+      Object.assign(prisma.dayProgress, { update });
+      Object.assign(prisma.planAssignment, { findUnique });
+      update.mockReset().mockResolvedValue({});
+      findUnique.mockReset().mockResolvedValue({
+        training_id: 'training-1',
+        training_completion_mode: 'ANY',
+        trainings: ['1', '2'].map((n) => ({
+          training: {
+            id: `training-${n}`,
+            exercises: [{ id: `te-${n}`, exercise_id: `exercise-${n}` }],
+          },
+        })),
+        training: null,
+      });
+      prisma.$queryRaw.mockImplementation((query: { sql: string }) =>
+        Promise.resolve(
+          query.sql.includes('training_day_snapshots')
+            ? []
+            : [{ id: 'client-1' }],
+        ),
+      );
+    });
+
+    it('copies the rule mode to a materialized future day and promotes it from evidence', async () => {
+      prisma.autoAssignmentRule.findMany.mockResolvedValue([rule('ANY')]);
+      prisma.planAssignment.findMany.mockResolvedValue([existing('ALL')]);
+      prisma.dayProgress.findUnique.mockResolvedValue({
+        id: 'progress-future',
+        training_completed: false,
+        exercises_completed: [
+          { training_exercise_id: 'te-2', exercise_id: 'exercise-2' },
+        ],
+        training_sessions: [],
+      });
+
+      await service.reconcile('client-1', {
+        start: thursday,
+        end: thursday,
+        dates: [thursday],
+      });
+
+      const [[updateArgs]] = prisma.planAssignment.update.mock.calls as Array<
+        [{ where: { id: string }; data: Record<string, unknown> }]
+      >;
+      expect(updateArgs.where).toEqual({ id: 'auto-1' });
+      expect(updateArgs.data.training_completion_mode).toBe('ANY');
+      // Mode-only change: plan_assignment_trainings (and their IDs) are kept.
+      expect(updateArgs.data).not.toHaveProperty('trainings');
+      expect(update).toHaveBeenCalledWith({
+        where: { id: 'progress-future' },
+        data: { training_completed: true },
+      });
+    });
+
+    it('leaves legacy rows untouched when rule and day are both ALL', async () => {
+      prisma.autoAssignmentRule.findMany.mockResolvedValue([rule()]);
+      prisma.planAssignment.findMany.mockResolvedValue([existing()]);
+
+      await service.reconcile('client-1', {
+        start: thursday,
+        end: thursday,
+        dates: [thursday],
+      });
+
+      expect(prisma.planAssignment.update).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('creates new rule days with the rule mode', async () => {
+      prisma.autoAssignmentRule.findMany.mockResolvedValue([rule('ANY')]);
+
+      await service.reconcile('client-1', {
+        start: thursday,
+        end: thursday,
+        dates: [thursday],
+      });
+
+      const [[createArgs]] = prisma.planAssignment.create.mock.calls as Array<
+        [{ data: Record<string, unknown> }]
+      >;
+      expect(createArgs.data.training_completion_mode).toBe('ANY');
+    });
+  });
 });

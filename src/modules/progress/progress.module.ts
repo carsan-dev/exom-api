@@ -5,6 +5,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { StreaksModule } from '../streaks/streaks.module';
 import { ProgressController } from './progress.controller';
 import { ProgressService } from './progress.service';
+import { TrainingProgressReadService } from './training-progress-read.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsModule } from '../uploads/uploads.module';
 import { AssignmentReconciliationModule } from '../assignments/assignment-reconciliation.module';
 
@@ -18,6 +20,15 @@ import { AssignmentReconciliationModule } from '../assignments/assignment-reconc
     AssignmentReconciliationModule,
   ],
   controllers: [ProgressController],
-  providers: [ProgressService],
+  providers: [
+    ProgressService,
+    {
+      provide: TrainingProgressReadService,
+      useFactory: (prisma: PrismaService) =>
+        new TrainingProgressReadService(prisma),
+      inject: [PrismaService],
+    },
+  ],
+  exports: [TrainingProgressReadService],
 })
 export class ProgressModule {}

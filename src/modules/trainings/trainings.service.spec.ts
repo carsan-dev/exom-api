@@ -5,12 +5,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TrainingsQueryDto } from './dto/trainings-query.dto';
 import { TrainingsService } from './trainings.service';
 import type { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
-
+type TransactionOptions = Parameters<PrismaService['$transaction']>[1];
 describe('TrainingsService', () => {
   let service: TrainingsService;
   let prisma: {
     $queryRaw: jest.Mock<Promise<unknown>, [Prisma.Sql]>;
-    $transaction: jest.Mock<Promise<unknown>, [unknown]>;
+    $transaction: jest.Mock<Promise<unknown>, [unknown, TransactionOptions?]>;
     training: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -36,7 +36,7 @@ describe('TrainingsService', () => {
         .fn<Promise<unknown>, [Prisma.Sql]>()
         .mockResolvedValue([]),
       $transaction: jest
-        .fn<Promise<unknown>, [unknown]>()
+        .fn<Promise<unknown>, [unknown, TransactionOptions?]>()
         .mockResolvedValue([]),
       training: {
         findMany: jest.fn(),
@@ -62,6 +62,190 @@ describe('TrainingsService', () => {
     service = new TrainingsService(
       prisma as unknown as PrismaService,
       autoAssignmentMaterializer as unknown as AutoAssignmentMaterializerService,
+    );
+  });
+
+  it('does not complete a catalog-edited training by combining partial sessions', async () => {
+    const date = new Date('2026-09-03T00:00:00.000Z');
+    const tx = {
+      trainingExercise: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'te-1', exercise_id: 'ex-1' },
+          { id: 'te-2', exercise_id: 'ex-2' },
+        ]),
+      },
+      planAssignment: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            client_id: 'client-1',
+            date,
+            training_id: 'training-1',
+            trainings: [],
+          },
+        ]),
+      },
+      dayProgress: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'progress-1',
+            client_id: 'client-1',
+            date,
+            training_completed: false,
+            trainings_completed: [],
+            exercises_completed: [
+              {
+                training_exercise_id: 'te-1',
+                exercise_id: 'ex-1',
+                training_session_id: 'session-a',
+              },
+              {
+                training_exercise_id: 'te-2',
+                exercise_id: 'ex-2',
+                training_session_id: 'session-b',
+              },
+            ],
+          },
+        ]),
+        update: jest.fn(),
+      },
+      trainingDaySnapshot: { findMany: jest.fn().mockResolvedValue([]) },
+      $queryRaw: jest.fn().mockResolvedValue([]),
+    };
+    await (
+      service as unknown as {
+        reconcileAssignedProgress(
+          tx: unknown,
+          trainingId: string,
+          deletedIds: ReadonlySet<string>,
+        ): Promise<void>;
+      }
+    ).reconcileAssignedProgress(tx, 'training-1', new Set());
+    expect(tx.dayProgress.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          trainings_completed: [],
+          training_completed: false,
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    { alreadyComplete: false, expectedComplete: false },
+    { alreadyComplete: true, expectedComplete: true },
+  ])(
+    'retains historical A when catalog B changes (day already complete: $alreadyComplete)',
+    async ({ alreadyComplete, expectedComplete }) => {
+      const date = new Date('2026-09-03T00:00:00.000Z');
+      const tx = {
+        trainingExercise: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ id: 'te-b', exercise_id: 'ex-b' }]),
+        },
+        planAssignment: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              client_id: 'client-1',
+              date,
+              training_id: null,
+              trainings: [
+                { training_id: 'training-a' },
+                { training_id: 'training-b' },
+              ],
+            },
+          ]),
+        },
+        dayProgress: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'progress-1',
+              client_id: 'client-1',
+              date,
+              training_completed: alreadyComplete,
+              trainings_completed: ['training-a'],
+              exercises_completed: [
+                {
+                  training_exercise_id: 'te-b',
+                  exercise_id: 'ex-b',
+                  training_session_id: 'session-b',
+                },
+              ],
+            },
+          ]),
+          update: jest.fn(),
+        },
+        trainingDaySnapshot: { findMany: jest.fn().mockResolvedValue([]) },
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      };
+
+      await (
+        service as unknown as {
+          reconcileAssignedProgress(
+            tx: unknown,
+            trainingId: string,
+            deletedIds: ReadonlySet<string>,
+          ): Promise<void>;
+        }
+      ).reconcileAssignedProgress(tx, 'training-b', new Set());
+
+      expect(tx.dayProgress.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            trainings_completed: ['training-a', 'training-b'],
+            training_completed: expectedComplete,
+          }),
+        }),
+      );
+    },
+  );
+
+  it('keeps a true day and historical ID when edited catalog has no exercises', async () => {
+    const date = new Date('2026-09-03T00:00:00.000Z');
+    const tx = {
+      trainingExercise: { findMany: jest.fn().mockResolvedValue([]) },
+      planAssignment: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            client_id: 'client-1',
+            date,
+            training_id: 'training-a',
+            trainings: [],
+          },
+        ]),
+      },
+      dayProgress: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'progress-1',
+            client_id: 'client-1',
+            date,
+            training_completed: true,
+            trainings_completed: ['training-a'],
+            exercises_completed: [],
+          },
+        ]),
+        update: jest.fn(),
+      },
+      trainingDaySnapshot: { findMany: jest.fn().mockResolvedValue([]) },
+      $queryRaw: jest.fn().mockResolvedValue([]),
+    };
+    await (
+      service as unknown as {
+        reconcileAssignedProgress(
+          tx: unknown,
+          trainingId: string,
+          deletedIds: ReadonlySet<string>,
+        ): Promise<void>;
+      }
+    ).reconcileAssignedProgress(tx, 'training-a', new Set());
+    expect(tx.dayProgress.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          trainings_completed: ['training-a'],
+          training_completed: true,
+        }),
+      }),
     );
   });
 
@@ -688,6 +872,8 @@ describe('TrainingsService', () => {
     ).resolves.toEqual({
       date: '2026-09-03',
       training_completed: false,
+      // Additive field: an assignment without a stored mode reads as ALL.
+      training_completion_mode: 'ALL',
       trainings: [],
     });
     expect(prisma.planAssignment.findUnique).toHaveBeenCalledWith(
@@ -967,6 +1153,139 @@ describe('TrainingsService', () => {
       expect.objectContaining({
         select: expect.objectContaining({ exercises_completed: true }),
       }),
+    );
+  });
+
+  describe('training completion mode', () => {
+    it.each([
+      ['ANY', true],
+      ['ALL', false],
+    ] as const)(
+      'catalog reconciliation of one verified training of two under %s sets the day to %s',
+      async (mode, expected) => {
+        const date = new Date('2026-09-03T00:00:00.000Z');
+        const tx = {
+          trainingExercise: {
+            findMany: jest
+              .fn()
+              .mockResolvedValue([{ id: 'te-b', exercise_id: 'ex-b' }]),
+          },
+          planAssignment: {
+            findMany: jest.fn().mockResolvedValue([
+              {
+                client_id: 'client-1',
+                date,
+                training_id: null,
+                training_completion_mode: mode,
+                trainings: [
+                  { training_id: 'training-a' },
+                  { training_id: 'training-b' },
+                ],
+              },
+            ]),
+          },
+          dayProgress: {
+            findMany: jest.fn().mockResolvedValue([
+              {
+                id: 'progress-1',
+                client_id: 'client-1',
+                date,
+                training_completed: false,
+                trainings_completed: [],
+                exercises_completed: [
+                  {
+                    training_exercise_id: 'te-b',
+                    exercise_id: 'ex-b',
+                    training_session_id: 'session-b',
+                  },
+                ],
+              },
+            ]),
+            update: jest.fn(),
+          },
+          trainingDaySnapshot: { findMany: jest.fn().mockResolvedValue([]) },
+          $queryRaw: jest.fn().mockResolvedValue([]),
+        };
+
+        await (
+          service as unknown as {
+            reconcileAssignedProgress(
+              tx: unknown,
+              trainingId: string,
+              deletedIds: ReadonlySet<string>,
+            ): Promise<void>;
+          }
+        ).reconcileAssignedProgress(tx, 'training-b', new Set());
+
+        expect(tx.dayProgress.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              trainings_completed: ['training-b'],
+              training_completed: expected,
+            }),
+          }),
+        );
+      },
+    );
+
+    it.each([
+      ['ANY', true],
+      ['ALL', false],
+    ] as const)(
+      'findDay with one of two trainings completed under %s reports training_completed=%s',
+      async (mode, expected) => {
+        const createTraining = (id: string, exerciseId: string) => ({
+          id,
+          name: id,
+          type: 'FUERZA',
+          types: ['FUERZA'],
+          accentColor: null,
+          is_active: true,
+          blocks: [],
+          exercises: [
+            {
+              id: `te-${id}`,
+              exercise_id: exerciseId,
+              order: 0,
+              block_id: null,
+              exercise: { id: exerciseId },
+            },
+          ],
+        });
+        prisma.planAssignment.findUnique.mockResolvedValue({
+          training_completion_mode: mode,
+          trainings: ['a', 'b'].map((n) => ({
+            id: `assignment-training-${n}`,
+            requires_last_set_video: false,
+            training: createTraining(`training-${n}`, `exercise-${n}`),
+          })),
+          training: null,
+        });
+        prisma.dayProgress.findUnique.mockResolvedValue({
+          training_completed: expected,
+          trainings_completed: ['training-b'],
+          exercises_completed: [
+            {
+              training_exercise_id: 'te-training-b',
+              exercise_id: 'exercise-b',
+            },
+          ],
+        });
+
+        const result = await service.findDay(
+          'client-1',
+          new Date('2026-09-03T00:00:00.000Z'),
+        );
+
+        expect(result).toMatchObject({
+          training_completed: expected,
+          training_completion_mode: mode,
+          trainings: [
+            { id: 'training-a', completed: false },
+            { id: 'training-b', completed: true },
+          ],
+        });
+      },
     );
   });
 });

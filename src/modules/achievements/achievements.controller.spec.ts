@@ -5,9 +5,12 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
 import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
+import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AchievementsController } from './achievements.controller';
 import { AchievementsService } from './achievements.service';
+
+type AuthenticatedRequest = Request & { user?: AuthenticatedUser };
 
 describe('AchievementsController', () => {
   let app: INestApplication<Server>;
@@ -36,7 +39,7 @@ describe('AchievementsController', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    app.use((req: Request, _res: Response, next: NextFunction) => {
+    app.use((req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
       const roleHeader = req.header('x-test-role');
 
       if (roleHeader) {

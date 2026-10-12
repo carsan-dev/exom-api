@@ -1,9 +1,11 @@
+import { TrainingCompletionMode } from '@prisma/client';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -55,4 +57,14 @@ export class UpdateAssignmentDto {
   @IsOptional()
   @IsBoolean()
   is_rest_day?: boolean;
+
+  @ApiPropertyOptional({
+    enum: TrainingCompletionMode,
+    enumName: 'TrainingCompletionMode',
+    description:
+      'ALL: every assigned training must be completed. ANY: completing one assigned training completes the day. Omitted on update keeps the stored value; omitted on create means ALL.',
+  })
+  @IsOptional()
+  @IsEnum(TrainingCompletionMode)
+  training_completion_mode?: TrainingCompletionMode;
 }

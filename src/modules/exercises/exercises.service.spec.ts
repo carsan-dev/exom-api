@@ -1,3 +1,5 @@
+import { ConfigService } from '@nestjs/config';
+import { UploadsService } from '../uploads/uploads.service';
 import { Prisma } from '@prisma/client';
 import { Level } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -31,7 +33,11 @@ describe('ExercisesService', () => {
       trainingExercise: { findMany: jest.fn().mockResolvedValue([]) },
     };
 
-    service = new ExercisesService(prisma as unknown as PrismaService);
+    const serviceDb = prisma as unknown as PrismaService;
+    service = new ExercisesService(
+      serviceDb,
+      new UploadsService(new ConfigService({ NODE_ENV: 'test' }), serviceDb),
+    );
   });
 
   it('applies prisma filters directly when search is empty', async () => {

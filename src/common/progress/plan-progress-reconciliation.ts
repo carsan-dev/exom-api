@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 
 export interface CompletedExerciseEntry {
   training_exercise_id?: string;
+  training_session_id?: string | null;
   exercise_id: string;
   [key: string]: unknown;
 }
@@ -27,8 +28,9 @@ export function reconcileTrainingProgress(
     currentByExerciseId.set(exercise.exercise_id, matches);
   }
 
-  const reconciled = new Map<string, CompletedExerciseEntry>();
-  const unresolved: CompletedExerciseEntry[] = [];
+  const reconciled = new Set<string>();
+  const completedBySession = new Map<string | null, Set<string>>();
+  const resultEntries: CompletedExerciseEntry[] = [];
   for (const entry of entries) {
     const storedId = entry.training_exercise_id;
     let targetId =
@@ -43,23 +45,27 @@ export function reconcileTrainingProgress(
       const matches = currentByExerciseId.get(entry.exercise_id) ?? [];
       if (matches.length === 1) targetId = matches[0].id;
     }
-    if (!targetId || reconciled.has(targetId)) {
-      unresolved.push(entry);
+    const sessionId = entry.training_session_id ?? null;
+    const key = targetId ? JSON.stringify([sessionId, targetId]) : undefined;
+    if (!targetId || !key || reconciled.has(key)) {
+      resultEntries.push(entry);
       continue;
     }
 
-    reconciled.set(targetId, {
-      ...entry,
-      training_exercise_id: targetId,
-    });
+    reconciled.add(key);
+    resultEntries.push({ ...entry, training_exercise_id: targetId });
+    const completed = completedBySession.get(sessionId) ?? new Set<string>();
+    completed.add(targetId);
+    completedBySession.set(sessionId, completed);
   }
 
-  const completedIds = new Set(reconciled.keys());
   return {
-    entries: [...reconciled.values(), ...unresolved],
+    entries: resultEntries,
     trainingCompleted:
       currentIds.size > 0 &&
-      [...currentIds].every((id) => completedIds.has(id)),
+      [...completedBySession.values()].some((completedIds) =>
+        [...currentIds].every((id) => completedIds.has(id)),
+      ),
   };
 }
 

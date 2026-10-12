@@ -32,6 +32,9 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ApprovalRequestsModule } from './modules/approval-requests/approval-requests.module';
 import { PublicConfigModule } from './modules/public-config/public-config.module';
+import { ProgressPhotosModule } from './modules/progress-photos/progress-photos.module';
+import { AdherenceConfigModule } from './modules/adherence/adherence-config.module';
+import { ClientFollowUpTasksModule } from './modules/client-followup-tasks/client-followup-tasks.module';
 
 @Module({
   imports: [
@@ -39,7 +42,13 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
       isGlobal: true,
       ignoreEnvFile: process.env.NODE_ENV === 'test',
     }),
-    ScheduleModule.forRoot(),
+    ScheduleModule.forRoot(
+      process.env.NODE_ENV === 'test' &&
+        process.env.HOST === '127.0.0.1' &&
+        process.env.EXOM_SMOKE_DISABLE_SCHEDULERS === '1'
+        ? { cronJobs: false, intervals: false, timeouts: false }
+        : undefined,
+    ),
     PrismaModule,
     JobsModule,
     DomainWorkModule,
@@ -65,6 +74,9 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
     DashboardModule,
     ApprovalRequestsModule,
     PublicConfigModule,
+    ProgressPhotosModule,
+    AdherenceConfigModule,
+    ClientFollowUpTasksModule,
   ],
   controllers: [HealthController],
   providers: [

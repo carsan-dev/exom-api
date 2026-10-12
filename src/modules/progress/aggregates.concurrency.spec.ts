@@ -595,10 +595,21 @@ const url = process.env.TEST_DATABASE_URL;
       const trainingRead = jest.spyOn(db.dayProgress, 'findMany');
       const planRead = jest.spyOn(db.planAssignment, 'findMany');
       const streakRead = jest.spyOn(db.streak, 'findUnique');
-      await domain.reconcile({
+      const work: DurableWork = {
+        key: `weight-scope-${owner}`,
+        kind: 'RECONCILE',
+        status: 'PENDING',
         owner_id: owner,
         payload: { version: 1, scopes: { WEIGHT_LOGS: true } },
-      } as DurableWork);
+        attempts: 0,
+        claim_token: null,
+        lease_until: null,
+        next_attempt_at: now,
+        last_error: null,
+        created_at: now,
+        completed_at: null,
+      };
+      await domain.reconcile(work);
       expect(trainingRead).not.toHaveBeenCalled();
       expect(planRead).not.toHaveBeenCalled();
       expect(streakRead).not.toHaveBeenCalled();

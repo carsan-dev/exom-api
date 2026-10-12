@@ -13,6 +13,27 @@ import {
 } from 'class-validator';
 
 export class CreateRecapDto {
+  @ApiPropertyOptional({ minimum: 1, maximum: 10, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  hunger_level?: number | null;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 10, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  energy_level?: number | null;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 10, nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  digestion_level?: number | null;
+
   @ApiProperty()
   @IsString()
   week_start_date: string;

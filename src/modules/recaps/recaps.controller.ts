@@ -22,6 +22,7 @@ import {
 } from './dto/create-recap.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { AdminRecapQueryDto } from './dto/admin-recap-query.dto';
+import { ReviewDraftDto, ReviewPublishDto } from './dto/review-publication.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -168,6 +169,33 @@ export class RecapsController {
   @ApiResponse({ status: 404, description: 'Recap no encontrado' })
   submit(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.recapsService.submit(user.id, id);
+  }
+
+  @Put(':id/review-draft')
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Save a version-checked private coach review draft',
+  })
+  saveReviewDraft(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ReviewDraftDto,
+  ) {
+    return this.recapsService.saveReviewDraft(user.id, user.role, id, dto);
+  }
+
+  @Post(':id/review-publish')
+  @HttpCode(200)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Explicitly publish the persisted coach review draft',
+  })
+  publishReview(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ReviewPublishDto,
+  ) {
+    return this.recapsService.publishReview(user.id, user.role, id, dto);
   }
 
   @Put(':id/review')

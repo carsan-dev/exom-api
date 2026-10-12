@@ -1,6 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { FeedbackKind, MediaType } from '@prisma/client';
 import { IsDateOnly } from '../../../common/date-only';
 
@@ -35,6 +41,15 @@ export class CreateFeedbackDto {
   @IsString()
   @IsNotEmpty()
   training_exercise_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Stable training occurrence ID, not an operation ID',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  training_session_id?: string;
 
   @ApiPropertyOptional({ description: 'Assigned date in YYYY-MM-DD format' })
   @IsOptional()

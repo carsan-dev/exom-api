@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17-bookworm
+        image: public.ecr.aws/docker/library/postgres:17-bookworm@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df
         env:
           POSTGRES_USER: exom_ci
           POSTGRES_PASSWORD: exom_ci_disposable
@@ -51,10 +51,17 @@ jobs:
       - name: Verify disposable database before migrations
         run: node scripts/test-database.cjs
       - run: npm exec -- prisma migrate deploy
-      - run: node --test scripts/test-database.test.cjs
-      - run: npm test -- --runInBand
-      - run: npm run test:concurrency
-      - run: npm run test:e2e
+      - name: Test database identity and launcher safety gates
+        run: node --test scripts/test-database.test.cjs scripts/run-adherence-integration.test.cjs
+      - name: Run all src suites and full concurrency with legacy84 and tracking OFF
+        run: npm run test:adherence:off
+      - name: Run all five external PostgreSQL suites and resolver with owned tracking ON
+        run: npm run test:adherence:on
+      - name: Run isolated HTTP integration suite
+        run: npm run test:e2e
+        env:
+          HOST: 127.0.0.1
+          EXOM_SMOKE_DISABLE_SCHEDULERS: '1'
       - name: Build the reviewed Docker source
         run: docker build --tag exom-api:${{ github.sha }} .
       - name: Smoke test the runner

@@ -1,0 +1,465 @@
+import {
+  COMPLETION,
+  evaluateDailyAdherence,
+} from '../../common/progress/daily-adherence-evaluator';
+import { Test } from '@nestjs/testing';
+import { PrismaService } from '../../prisma/prisma.service';
+import { AdherencePrescriptionService } from './adherence-prescription.service';
+import {
+  AdherenceEvaluationService,
+  normalizeAdherenceEvidence,
+} from './adherence-evaluation.service';
+import { AdherencePeriodQueryDto } from './dto/adherence-period-query.dto';
+
+const basis = {
+  trainingKnown: true,
+  rest: false,
+  units: [{ id: 'link', trainingId: 'training', occurrences: ['occurrence'] }],
+  nutritionKnown: true,
+  groups: [
+    {
+      id: 'root',
+      alternatives: [
+        { id: 'root', ingredients: [] },
+        { id: 'alt', ingredients: [] },
+      ],
+    },
+  ],
+  calories: 100,
+  protein: 10,
+};
+const date = new Date('2020-01-01T00:00:00Z');
+const progress = {
+  client_id: 'client',
+  date,
+  sync_revision: 1,
+  training_completed: true,
+  trainings_completed: ['training'],
+  training_sessions: [
+    {
+      training_session_id: 'session',
+      training_id: 'training',
+      rpe: 8,
+      note: null,
+    },
+  ],
+  exercises_completed: [
+    {
+      training_session_id: 'session',
+      training_exercise_id: 'occurrence',
+      exercise_id: 'exercise',
+      completed_at: '2020-01-01T12:00:00Z',
+    },
+  ],
+  meals_completed: ['alt'],
+};
+function receipt() {
+  return [
+    {
+      id: 'operation',
+      owner_id: 'client',
+      date,
+      response: {
+        ...progress,
+        date: date.toISOString(),
+        operation_revision: 1,
+      },
+    },
+  ];
+}
+describe('recent closed service collection', () => {
+  it.each([
+    ['2020-01-01', '2020-01-01', 7],
+    ['2030-01-01', '2030-01-31', 38],
+    ['2020-01-02', '2020-01-02', 8],
+  ])(
+    'keeps public days bounded while collecting original history for %s..%s',
+    async (start, end, count) => {
+      const read = jest
+        .spyOn(AdherencePrescriptionService.prototype, 'readMany')
+        .mockResolvedValue(new Map());
+      const current = jest.fn().mockResolvedValue(null);
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([]),
+        user: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'client',
+              role: 'CLIENT',
+              is_active: true,
+              is_locked: false,
+              is_archived: false,
+              identity_pending: false,
+            },
+          ]),
+        },
+        planAssignment: { findUnique: current },
+        weeklyRecap: {
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        dayProgress: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        progressOperation: { findMany: jest.fn().mockResolvedValue([]) },
+        adherenceEvaluationRevision: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          findFirst: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue({}),
+        },
+      };
+      class FixedEvaluation extends AdherenceEvaluationService {
+        protected override utcInstant() {
+          return new Date('2020-01-02T12:00:00Z');
+        }
+      }
+      const module = await Test.createTestingModule({
+        providers: [
+          { provide: AdherenceEvaluationService, useClass: FixedEvaluation },
+          {
+            provide: PrismaService,
+            useValue: {
+              $transaction: (run: (value: typeof tx) => Promise<unknown>) =>
+                run(tx),
+            },
+          },
+        ],
+      }).compile();
+      try {
+        const service = module.get(AdherenceEvaluationService);
+        const result = await service.get('client', 'CLIENT', 'client', {
+          start,
+          end,
+        });
+        expect(result.days.map((day) => day.date)).toEqual(
+          AdherencePeriodQueryDto.dates(start, end),
+        );
+        expect(
+          result.days.length +
+            read.mock.calls[0][1].filter((date) => date < start).length,
+        ).toBe(count);
+        expect(result.recentClosed).toMatchObject({
+          start: '2019-12-26',
+          end: '2020-01-01',
+          status: 'insufficient',
+          configuration: { known: false, low_global_percent: null },
+        });
+        expect(result.recentClosed.aggregate.global.ratio).toBeNull();
+        expect(
+          read.mock.calls.every(
+            ([owner, dates]) =>
+              owner === 'client' && dates.every((date) => date < '2020-01-02'),
+          ),
+        ).toBe(true);
+        expect(current).toHaveBeenCalledTimes(start === '2020-01-02' ? 1 : 0);
+        expect(tx.dayProgress.findUnique).not.toHaveBeenCalled();
+        expect(tx.dayProgress.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.progressOperation.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.weeklyRecap.findMany).toHaveBeenCalledTimes(1);
+        const evidenceDates = [
+          ...new Set([
+            ...AdherencePeriodQueryDto.dates(start, end),
+            ...AdherencePeriodQueryDto.dates('2019-12-26', '2020-01-01'),
+          ]),
+        ]
+          .filter((date) => date <= '2020-01-02')
+          .sort();
+        expect(tx.dayProgress.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              client_id: 'client',
+              date: { in: evidenceDates.map((date) => new Date(date)) },
+            },
+          }),
+        );
+        expect(tx.progressOperation.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              owner_id: 'client',
+              date: { in: evidenceDates.map((date) => new Date(date)) },
+            },
+            orderBy: { id: 'asc' },
+          }),
+        );
+        const collected = [
+          ...new Set([
+            ...AdherencePeriodQueryDto.dates(start, end),
+            ...AdherencePeriodQueryDto.dates('2019-12-26', '2020-01-01'),
+          ]),
+        ].sort();
+        const weekStarts = [
+          ...new Set(
+            collected.map((date) => {
+              const at = new Date(date);
+              at.setUTCDate(at.getUTCDate() - ((at.getUTCDay() + 6) % 7));
+              return at.toISOString();
+            }),
+          ),
+        ];
+        expect(tx.weeklyRecap.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              client_id: 'client',
+              submitted_at: { not: null },
+              status: { in: ['SUBMITTED', 'REVIEWED'] },
+              OR: weekStarts.map((start) => ({
+                week_start_date: new Date(start),
+                week_end_date: new Date(Date.parse(start) + 6 * 86400000),
+              })),
+            },
+          }),
+        );
+        expect(result.weeks).toHaveLength(
+          new Set(
+            AdherencePeriodQueryDto.dates(start, end).map((date) => {
+              const at = new Date(date);
+              at.setUTCDate(at.getUTCDate() - ((at.getUTCDay() + 6) % 7));
+              return at.toISOString().slice(0, 10);
+            }),
+          ).size,
+        );
+        const readsBeforeDenial = read.mock.calls.length;
+        await expect(
+          service.get('other', 'CLIENT', 'client', { start, end }),
+        ).rejects.toThrow('Client access denied');
+        expect(read).toHaveBeenCalledTimes(readsBeforeDenial);
+      } finally {
+        read.mockRestore();
+        await module.close();
+      }
+    },
+  );
+});
+
+describe('actual progress normalization and bounded UTC period', () => {
+  it('credits exact session/occurrence and replacement root claim from owner/day receipt', () => {
+    const result = normalizeAdherenceEvidence(
+      basis,
+      progress,
+      receipt(),
+      'client',
+      '2020-01-01',
+    );
+    expect(result.training[0].completion).toBe(COMPLETION.COMPLETE);
+    expect(result.nutrition[0].completion).toBe(COMPLETION.COMPLETE);
+  });
+  it('does not invent credit from unsupported legacy flags', () => {
+    const result = normalizeAdherenceEvidence(
+      basis,
+      { ...progress, training_sessions: [], exercises_completed: [] },
+      [],
+      'client',
+      '2020-01-01',
+    );
+    expect(result.training[0].completion).toBe(COMPLETION.INDETERMINATE);
+  });
+  it('excludes ambiguous global legacy completion across multiple frozen sessions', () => {
+    const multiple = {
+      ...basis,
+      units: [
+        ...basis.units,
+        {
+          id: 'second',
+          trainingId: 'other',
+          occurrences: ['other-occurrence'],
+        },
+      ],
+    };
+    const result = normalizeAdherenceEvidence(
+      multiple,
+      {
+        ...progress,
+        trainings_completed: [],
+        training_sessions: [],
+        exercises_completed: [],
+      },
+      [],
+      'client',
+      '2020-01-01',
+    );
+    expect(result.training.map((unit) => unit.completion)).toEqual([
+      COMPLETION.INDETERMINATE,
+      COMPLETION.INDETERMINATE,
+    ]);
+  });
+  it.each(['other', '2020-01-02'])(
+    'rejects foreign owner or day %s',
+    (value) => {
+      const result = normalizeAdherenceEvidence(
+        basis,
+        progress,
+        receipt(),
+        value === 'other' ? value : 'client',
+        value === 'other' ? '2020-01-01' : value,
+      );
+      expect(result.training[0].completion).not.toBe(COMPLETION.COMPLETE);
+      expect(result.nutrition[0].completion).not.toBe(COMPLETION.COMPLETE);
+    },
+  );
+  it('rejects colliding session claimed by two trainings', () => {
+    const collision = {
+      ...progress,
+      training_sessions: [
+        ...progress.training_sessions,
+        {
+          training_session_id: 'session',
+          training_id: 'other',
+          rpe: 8,
+          note: null,
+        },
+      ],
+    };
+    expect(
+      normalizeAdherenceEvidence(basis, collision, [], 'client', '2020-01-01')
+        .training[0].completion,
+    ).not.toBe(COMPLETION.COMPLETE);
+  });
+  it('does not double-credit root and alternative collisions', () => {
+    const collision = { ...progress, meals_completed: ['root', 'alt'] };
+    expect(
+      normalizeAdherenceEvidence(basis, collision, [], 'client', '2020-01-01')
+        .nutrition[0].completion,
+    ).toBe(COMPLETION.INDETERMINATE);
+  });
+  it('validates a strict civil range of at most 31 days', () => {
+    expect(
+      AdherencePeriodQueryDto.dates('2020-02-01', '2020-03-02'),
+    ).toHaveLength(31);
+    expect(() =>
+      AdherencePeriodQueryDto.dates('2020-02-01', '2020-03-03'),
+    ).toThrow();
+    expect(() =>
+      AdherencePeriodQueryDto.dates('2020-02-30', '2020-03-02'),
+    ).toThrow();
+    expect(() =>
+      AdherencePeriodQueryDto.dates('2020-02-01T00:00:00Z', '2020-03-02'),
+    ).toThrow();
+  });
+});
+
+describe('training completion mode in adherence', () => {
+  const units = ['1', '2', '3'].map((n) => ({
+    id: `link-${n}`,
+    trainingId: `training-${n}`,
+    occurrences: [`occurrence-${n}`],
+  }));
+  const oneOfThreeProven = {
+    ...progress,
+    training_completed: true,
+    trainings_completed: ['training-2'],
+    training_sessions: [
+      {
+        training_session_id: 'session-2',
+        training_id: 'training-2',
+        rpe: 7,
+        note: null,
+      },
+    ],
+    exercises_completed: [
+      {
+        training_session_id: 'session-2',
+        training_exercise_id: 'occurrence-2',
+        exercise_id: 'exercise-2',
+        completed_at: '2020-01-01T12:00:00Z',
+      },
+    ],
+  };
+  const evaluate = (
+    completionMode: 'ALL' | 'ANY' | undefined,
+    evidence: Parameters<typeof normalizeAdherenceEvidence>[1],
+  ) =>
+    evaluateDailyAdherence({
+      date: '2020-01-01',
+      cutoffDate: '2020-01-02',
+      training: {
+        basis: 'known',
+        rest: false,
+        units: normalizeAdherenceEvidence(
+          { ...basis, units, completionMode },
+          evidence,
+          [],
+          'client',
+          '2020-01-01',
+        ).training,
+      },
+      nutrition: { basis: 'known', groups: [] },
+    }).training;
+
+  it('rates an ANY day with one proven training as 1/1 without caveats', () => {
+    expect(evaluate('ANY', oneOfThreeProven)).toMatchObject({
+      numerator: 1,
+      denominator: 1,
+      ratio: 1,
+      caveats: [],
+    });
+  });
+
+  it('rates an ANY day without any training as 0/1', () => {
+    expect(
+      evaluate('ANY', {
+        ...progress,
+        training_completed: false,
+        trainings_completed: [],
+        training_sessions: [],
+        exercises_completed: [],
+      }),
+    ).toMatchObject({ numerator: 0, denominator: 1, ratio: 0 });
+  });
+
+  it('keeps an unproven ANY day flag indeterminate (2026-09-29)', () => {
+    expect(
+      evaluate('ANY', {
+        ...progress,
+        training_completed: true,
+        trainings_completed: [],
+        training_sessions: [],
+        exercises_completed: [],
+      }),
+    ).toMatchObject({
+      denominator: 0,
+      ratio: null,
+      caveats: ['indeterminate_training'],
+    });
+  });
+
+  it.each([undefined, 'ALL'] as const)(
+    'keeps per-unit ALL semantics (mode %s) unchanged',
+    (mode) => {
+      const units3 = normalizeAdherenceEvidence(
+        { ...basis, units, completionMode: mode },
+        oneOfThreeProven,
+        [],
+        'client',
+        '2020-01-01',
+      ).training;
+      // Legacy day flag still marks the unproven units indeterminate.
+      expect(units3.map((unit) => [unit.id, unit.completion])).toEqual([
+        ['link-1', COMPLETION.INDETERMINATE],
+        ['link-2', COMPLETION.COMPLETE],
+        ['link-3', COMPLETION.INDETERMINATE],
+      ]);
+    },
+  );
+
+  it('treats an ANY day with a single training exactly like ALL', () => {
+    const single = { ...basis, units: [units[0]] };
+    const evidence = {
+      ...progress,
+      training_sessions: [],
+      exercises_completed: [],
+    };
+    expect(
+      normalizeAdherenceEvidence(
+        { ...single, completionMode: 'ANY' },
+        evidence,
+        [],
+        'client',
+        '2020-01-01',
+      ).training,
+    ).toEqual(
+      normalizeAdherenceEvidence(single, evidence, [], 'client', '2020-01-01')
+        .training,
+    );
+  });
+});

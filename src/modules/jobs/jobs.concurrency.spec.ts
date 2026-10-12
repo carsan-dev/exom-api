@@ -32,6 +32,20 @@ jest.mock('firebase-admin', () => ({ messaging: () => ({ send: sendMock }) }));
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
 
+interface WorkEligibility {
+  key: string;
+  status: string;
+  next_attempt_at: Date;
+  database_now: Date;
+  due: boolean;
+}
+
+interface SlotLock {
+  classid: number;
+  objid: number;
+  granted: boolean;
+}
+
 function gate() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -123,7 +137,10 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
   });
 
   beforeEach(async () => {
-    await db.notification.deleteMany({ where: { sender_id: owner } });
+    // Milestones can use another active administrator as their system sender.
+    await db.notification.deleteMany({
+      where: { OR: [{ sender_id: owner }, { recipient_id: owner }] },
+    });
     await db.durableWork.deleteMany({
       where: { OR: [{ key: { startsWith: prefix } }, { owner_id: owner }] },
     });
@@ -394,6 +411,9 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
   });
 
   it('P6-01: global concurrency is four across two instances', async () => {
+    // This measures TEST workers, not the retained FCM queue from other suites.
+    one = new JobsService(asService(db));
+    two = new JobsService(asService(other));
     const entered = gate(),
       release = gate();
     let active = 0,
@@ -409,11 +429,77 @@ integration('P6 PostgreSQL durable jobs and delivery', () => {
     two.register('TEST', handler);
     for (let i = 0; i < 8; i++)
       await enqueueWork(db, key(`limit-${i}`), 'TEST', {});
-    const runs = Promise.all([one.drain(), two.drain()]);
-    await entered.promise;
-    expect(active).toBe(4);
-    release.release();
-    await runs;
+    const ownJobs = { key: { startsWith: key('limit-') }, kind: 'TEST' };
+    const eligibility = await pools[0].query<WorkEligibility>(
+      "SELECT key, status, next_attempt_at, timezone('UTC', clock_timestamp()) AS database_now, next_attempt_at<=timezone('UTC', clock_timestamp()) AS due FROM durable_work WHERE key LIKE $1 AND kind='TEST' ORDER BY key",
+      [key('limit-') + '%'],
+    );
+    expect(eligibility.rows).toHaveLength(8);
+    if (eligibility.rows.some((job) => job.status !== 'PENDING' || !job.due))
+      throw Error(
+        JSON.stringify({ preflight: eligibility.rows, hostNow: new Date() }),
+      );
+    const retainedFcm = () =>
+      db.durableWork.findMany({
+        where: { kind: 'FCM' },
+        orderBy: { key: 'asc' },
+        select: {
+          key: true,
+          status: true,
+          attempts: true,
+          claim_token: true,
+          lease_until: true,
+          next_attempt_at: true,
+          completed_at: true,
+          last_error: true,
+        },
+      });
+    const fcmBefore = await retainedFcm();
+    const drains = [one.drain(), two.drain()];
+    const runs = Promise.all(drains);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        entered.promise.then(() => 'entered'),
+        runs.then(() => 'drained'),
+        new Promise<string>((resolve) => {
+          deadline = setTimeout(() => resolve('deadline'), 2500);
+        }),
+      ]);
+      if (outcome !== 'entered') {
+        const jobs = await db.durableWork.findMany({
+          where: ownJobs,
+          select: { key: true, status: true, attempts: true, last_error: true },
+        });
+        const locks = await pools[0].query<SlotLock>(
+          "SELECT classid, objid, granted FROM pg_locks WHERE locktype='advisory' AND classid=61006",
+        );
+        throw Error(
+          JSON.stringify({
+            outcome,
+            active,
+            maximum,
+            jobs,
+            locks: locks.rows,
+            pools: pools.map((pool) => ({
+              total: pool.totalCount,
+              idle: pool.idleCount,
+              waiting: pool.waitingCount,
+            })),
+          }),
+        );
+      }
+      expect(active).toBe(4);
+    } finally {
+      clearTimeout(deadline);
+      release.release();
+      await Promise.allSettled(drains);
+    }
+    await Promise.all([one.drain(), two.drain()]);
+    expect(
+      await db.durableWork.count({ where: { ...ownJobs, status: 'DONE' } }),
+    ).toBe(8);
+    expect(await retainedFcm()).toEqual(fcmBefore);
     expect(maximum).toBe(4);
   });
 

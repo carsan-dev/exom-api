@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { LastSetVideoPolicy } from '@prisma/client';
+import { LastSetVideoPolicy, TrainingCompletionMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { formatDateOnly } from '../../common/date-only';
 import {
@@ -10,6 +10,7 @@ import {
   ASSIGNMENT_TRANSACTION_OPTIONS,
   lockAssignmentPlanning,
 } from './assignment-planning-lock';
+import { recomputeTrainingCompletionAfterModeChange } from '../../common/progress/training-evidence';
 
 export interface AutoAssignmentRange {
   start: Date;
@@ -23,6 +24,7 @@ interface DesiredAutoAssignment {
   diet_id: string | null;
   is_rest_day: boolean;
   auto_assignment_rule_id: string;
+  training_completion_mode: TrainingCompletionMode;
   trainings: Array<{
     training_id: string;
     last_set_video_policy: LastSetVideoPolicy;
@@ -127,6 +129,7 @@ export class AutoAssignmentMaterializerService {
             diet_id: true,
             is_rest_day: true,
             auto_assignment_rule_id: true,
+            training_completion_mode: true,
             trainings: {
               orderBy: { position: 'asc' },
               select: {
@@ -158,6 +161,7 @@ export class AutoAssignmentMaterializerService {
       ]),
     );
     const changedDates: Date[] = [];
+    const modeChangedDates: Date[] = [];
 
     for (const date of mutableDates) {
       if (
@@ -213,12 +217,16 @@ export class AutoAssignmentMaterializerService {
             training.last_set_video_policy !== expected.last_set_video_policy
           );
         });
+      const modeChanged =
+        (existing.training_completion_mode ?? TrainingCompletionMode.ALL) !==
+        desired.training_completion_mode;
       const assignmentChanged =
         existing.admin_id !== desired.admin_id ||
         existing.training_id !== desired.training_id ||
         existing.diet_id !== desired.diet_id ||
         existing.is_rest_day !== desired.is_rest_day ||
         existing.auto_assignment_rule_id !== desired.auto_assignment_rule_id ||
+        modeChanged ||
         trainingsChanged;
 
       if (!assignmentChanged) continue;
@@ -231,6 +239,7 @@ export class AutoAssignmentMaterializerService {
           diet_id: desired.diet_id,
           is_rest_day: desired.is_rest_day,
           auto_assignment_rule_id: desired.auto_assignment_rule_id,
+          training_completion_mode: desired.training_completion_mode,
           ...(trainingsChanged && {
             trainings: {
               deleteMany: {},
@@ -246,6 +255,13 @@ export class AutoAssignmentMaterializerService {
         },
       });
       changedDates.push(date);
+      if (modeChanged) modeChangedDates.push(date);
+    }
+
+    // Only a future date can carry progress here (today with progress is
+    // skipped above). Same transaction and planning lock; promote-only.
+    for (const date of modeChangedDates) {
+      await recomputeTrainingCompletionAfterModeChange(db, clientId, date);
     }
 
     if (changedDates.length > 0) {
@@ -261,6 +277,7 @@ export class AutoAssignmentMaterializerService {
     TRule extends {
       id: string;
       admin_id: string | null;
+      training_completion_mode?: TrainingCompletionMode;
       starts_on: Date;
       ends_on: Date | null;
       days: Array<{
@@ -316,6 +333,8 @@ export class AutoAssignmentMaterializerService {
         diet_id: dietId,
         is_rest_day: day.is_rest_day,
         auto_assignment_rule_id: rule.id,
+        training_completion_mode:
+          rule.training_completion_mode ?? TrainingCompletionMode.ALL,
         trainings,
       };
     }
