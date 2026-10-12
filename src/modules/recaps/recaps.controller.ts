@@ -21,7 +21,10 @@ import {
   ReviewRecapDto,
 } from './dto/create-recap.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
-import { AdminRecapQueryDto } from './dto/admin-recap-query.dto';
+import {
+  AdminRecapQueryDto,
+  RecapStatsQueryDto,
+} from './dto/admin-recap-query.dto';
 import { ReviewDraftDto, ReviewPublishDto } from './dto/review-publication.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -92,8 +95,12 @@ export class RecapsController {
     status: 200,
     description: 'Estadísticas de recaps obtenidas correctamente',
   })
-  getStats(@CurrentUser() user: AuthenticatedUser) {
-    return this.recapsService.getStats(user.id, user.role);
+  @ApiResponse({ status: 400, description: 'Parámetros de consulta inválidos' })
+  getStats(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: RecapStatsQueryDto,
+  ) {
+    return this.recapsService.getStats(user.id, user.role, query);
   }
 
   @Get()

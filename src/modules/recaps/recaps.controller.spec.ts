@@ -352,6 +352,44 @@ describe('RecapsController', () => {
     );
   });
 
+  it('calls recap stats without filters when no params are sent', async () => {
+    recapsService.getStats.mockResolvedValue({ total: 0 });
+    await request(app.getHttpServer()).get('/recaps/stats').expect(200);
+    expect(recapsService.getStats).toHaveBeenCalledWith('admin-1', 'ADMIN', {});
+  });
+
+  it('passes validated period and client filters to recap stats', async () => {
+    recapsService.getStats.mockResolvedValue({ total: 0 });
+    const query = {
+      from: '2026-10-01',
+      to: '2026-10-31',
+      client_id: '550e8400-e29b-41d4-a716-446655440000',
+    };
+    await request(app.getHttpServer())
+      .get('/recaps/stats')
+      .query(query)
+      .expect(200);
+    expect(recapsService.getStats).toHaveBeenCalledWith(
+      'admin-1',
+      'ADMIN',
+      expect.objectContaining(query),
+    );
+  });
+
+  it.each([
+    { from: '2026-02-30' },
+    { to: '31/10/2026' },
+    { from: '2026-10-02', to: '2026-10-01' },
+    { client_id: 'not-a-uuid' },
+    { unknown: 'x' },
+  ])('rejects invalid recap stats query %p with 400', async (query) => {
+    await request(app.getHttpServer())
+      .get('/recaps/stats')
+      .query(query)
+      .expect(400);
+    expect(recapsService.getStats).not.toHaveBeenCalled();
+  });
+
   it('rejects the legacy notes field in review payloads', async () => {
     await request(app.getHttpServer())
       .put('/recaps/recap-1/review')

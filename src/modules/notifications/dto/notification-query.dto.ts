@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { NotificationStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
+import { StatsPeriodQueryDto } from '../../../common/dto/stats-period-query.dto';
 
 export class NotificationQueryDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Filter by recipient ID' })
@@ -21,4 +22,11 @@ export class NotificationQueryDto extends PaginationDto {
   @IsOptional()
   @IsString()
   search?: string;
+}
+
+export class NotificationStatsQueryDto extends StatsPeriodQueryDto {
+  @ApiPropertyOptional({ description: 'Filter by recipient ID' })
+  @IsOptional()
+  @IsUUID()
+  recipient_id?: string;
 }
