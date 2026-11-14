@@ -24,19 +24,29 @@ import { loadStampFontBytes } from './base-stamp-font';
  * vertically centred, computed from each page's own MediaBox and /Rotate.
  */
 
-export const STAMP_FONT_SIZE = 6.5;
+/**
+ * 7.5 pt (was 6.5 pt, as in the reference): at 6.5 pt, gray 0.74 and opacity
+ * 0.6 the line was painted but blended into the dark pages (effective gray
+ * ~0.47 on a ~0.07 background) and was reported as invisible at 100 % zoom.
+ */
+export const STAMP_FONT_SIZE = 7.5;
 export const STAMP_MIN_FONT_SIZE = 4;
-/** Distance from the visible right page edge to the text centre line, in pt. */
+/**
+ * Distance from the visible right page edge to the text centre line, in pt.
+ * On the delivered A4 pages the rightmost content ends ~36 pt from the edge
+ * (measured 2026-11-14), so the 7.5 pt line still clears it by ~19 pt.
+ */
 export const STAMP_EDGE_OFFSET = 14;
 /** The line never exceeds this fraction of the visible page height. */
 export const STAMP_MAX_LENGTH_RATIO = 0.7;
 /**
- * Light gray at 0.6 opacity. The reference samples each page background and
+ * Light gray at 0.9 fill opacity: legible on the dark EXOM pages while staying
+ * a discreet margin note. The reference samples each page background and
  * switches to dark gray on light pages; every EXOM page is dark, so that
  * sampling (which needs a renderer) is deliberately not ported.
  */
-export const STAMP_GRAY = 0.74;
-export const STAMP_OPACITY = 0.6;
+export const STAMP_GRAY = 0.82;
+export const STAMP_OPACITY = 0.9;
 
 /**
  * Smallest visible page height, in pt, among the page formats the product
@@ -233,6 +243,9 @@ export async function stampPdf(
       page.getRotation().angle,
       textWidthAt1pt,
     );
+    // Registering resources normalizes the page, which wraps its existing
+    // content in q/Q (pdf-lib's autoNormalizeCTM), so the stamp is drawn in
+    // the default CTM with no clip left over by the page; covered by a spec.
     const fontKey = page.node.newFontDictionary('ExomStamp', font.ref);
     const graphicsStateKey = page.node.newExtGState(
       'ExomStampGS',

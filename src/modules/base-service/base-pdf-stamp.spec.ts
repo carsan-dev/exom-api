@@ -4,17 +4,24 @@ import {
   PDFDocument,
   PDFHexString,
   PDFName,
+  PDFNumber,
   PDFRawStream,
   PDFRef,
   PDFString,
+  clip,
+  concatTransformationMatrix,
   decodePDFRawStream,
   degrees,
+  endPath,
+  rectangle,
 } from '@cantoo/pdf-lib';
 import {
   STAMP_EDGE_OFFSET,
   STAMP_FONT_SIZE,
+  STAMP_GRAY,
   STAMP_MAX_LENGTH_RATIO,
   STAMP_MIN_FONT_SIZE,
+  STAMP_OPACITY,
   buildStampSubject,
   buildStampText,
   computeStampPlacement,
@@ -241,7 +248,7 @@ describe('stampPdf', () => {
       const streamsAfter = contentStreams(after, i);
       expect(streamsAfter.length).toBeGreaterThan(streamsBefore.length);
       // Exactly one text run per page in the subset DM Sans font, at the
-      // size of the placement rule (6.5 pt unless the page is too short for
+      // size of the placement rule (STAMP_FONT_SIZE unless the page is too short for
       // the line, as the 300 pt-high rotated page is now that the stamp
       // carries the email), whose glyph ids spell the stamp text.
       const ops = stampOps(after, i);
@@ -337,6 +344,67 @@ describe('stampPdf', () => {
     const copy = Uint8Array.from(source);
     await stampPdf(source, { text: TEXT });
     expect(Buffer.from(source).equals(Buffer.from(copy))).toBe(true);
+  });
+
+  it('paints the line legibly: 7.5 pt, gray 0.82, fill opacity 0.9', async () => {
+    // Regression: at 6.5 pt, gray 0.74 and opacity 0.6 the line blended into
+    // the dark EXOM pages (effective gray ~0.47 on ~0.07) and the owner could
+    // not read it at 100 % zoom.
+    expect(STAMP_FONT_SIZE).toBe(7.5);
+    expect(STAMP_GRAY).toBe(0.82);
+    expect(STAMP_OPACITY).toBe(0.9);
+    const after = await PDFDocument.load(
+      await stampPdf(source, { text: TEXT }),
+      { updateMetadata: false },
+    );
+    const stampStream = contentStreams(after, 0).at(-1) ?? '';
+    expect(stampStream).toMatch(/\b0\.82 0\.82 0\.82 rg\b/);
+    const gsKey = /\/(\S+) gs\b/.exec(stampStream)?.[1] ?? '';
+    const gs = after
+      .getPage(0)
+      .node.Resources()
+      ?.lookup(PDFName.of('ExtGState'), PDFDict)
+      .lookup(PDFName.of(gsKey), PDFDict);
+    expect(gs?.get(PDFName.of('ca'))).toEqual(PDFNumber.of(0.9));
+    expect(stampOps(after, 0)[0].size).toBe(7.5);
+  });
+
+  it('draws the stamp in the default graphics state even if the page leaves a clip and a CTM active', async () => {
+    // A page whose content ends with a tiny clip and a 1 % scale still in
+    // force (no q/Q around them) must not shrink or clip the stamp.
+    const doc = await PDFDocument.create({ updateMetadata: false });
+    const page = doc.addPage([595.28, 841.89]);
+    page.pushOperators(
+      concatTransformationMatrix(0.01, 0, 0, 0.01, 0, 0),
+      rectangle(0, 0, 1, 1),
+      clip(),
+      endPath(),
+    );
+    const after = await PDFDocument.load(
+      await stampPdf(await doc.save(), { text: TEXT }),
+      { updateMetadata: false },
+    );
+    const streams = contentStreams(after, 0);
+    const stampIndex = streams.findIndex((s) => / Tj\b/.test(s));
+    expect(stampIndex).toBe(streams.length - 1);
+    // Replay every operator painted before the stamp: the q/Q depth must be
+    // back to 0 and no cm or clip may remain in force at that level.
+    let depth = 0;
+    const leaked: string[][] = [[]];
+    for (const token of streams.slice(0, stampIndex).join('\n').split(/\s+/)) {
+      if (token === 'q') {
+        depth += 1;
+        leaked[depth] = [];
+      } else if (token === 'Q') {
+        depth -= 1;
+      } else if (token === 'cm' || token === 'W' || token === 'W*') {
+        leaked[depth].push(token);
+      }
+    }
+    expect(depth).toBe(0);
+    expect(leaked[0]).toEqual([]);
+    // The stamp itself saves and restores the state it changes.
+    expect(streams[stampIndex].trim()).toMatch(/^q\b[\s\S]*\bQ$/);
   });
 
   it('leaves Subject/Keywords untouched when not given', async () => {
