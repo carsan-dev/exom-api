@@ -185,6 +185,7 @@ describe('actual complete immutable history cut on PG17', () => {
       '20261005210000_add_weekly_recap_review_drafts_and_publication',
       '20261009190000_p5fu05_global_challenge_eligibility_periods',
       '20261011120000_training_completion_mode',
+      '20261114120000_base_service',
     ]);
     const databaseUrl = url.toString();
     execFileSync(
