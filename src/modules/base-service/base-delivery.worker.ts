@@ -157,8 +157,15 @@ export class BaseDeliveryWorker implements OnModuleInit {
       )
         throw new PermanentWorkError('EMAIL_DEDUP_WINDOW_EXPIRED');
     }
+    // A send carries the delivery's original sources unless the producer
+    // declared confirmed other material (materialChanged); the declaration
+    // must match the record either way.
     const deliveryFiles = parseRecordedFiles(delivery.files);
-    if (!deliveryFiles || !sameSources(deliveryFiles, payload.files))
+    if (
+      !deliveryFiles ||
+      sameSources(deliveryFiles, payload.files) ===
+        (payload.materialChanged === true)
+    )
       throw new PermanentWorkError('BASE_DELIVERY_FILES_INVALID');
 
     // Catalogue reads and stamping: no transaction, no lock.

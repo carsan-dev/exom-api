@@ -27,6 +27,7 @@ import {
   sendFailureUnrecorded,
 } from './base-delivery-state';
 import {
+  compareResendMaterial,
   parseRecordedFiles,
   PreparedDelivery,
   prepareDeliveryFiles,
@@ -63,6 +64,17 @@ export interface BaseDeliverySendView {
    * the email may have arrived. False for PENDING and SENT sends.
    */
   possibly_delivered: boolean;
+  /**
+   * The source PDFs of THIS send differ from the delivery's original material
+   * (changed bytes or another file set), as confirmed by an admin. False when
+   * the send's record or the delivery's files are unreadable.
+   */
+  material_changed: boolean;
+  /**
+   * This send was requested with `accept_changed_source: true` and needed it:
+   * its material differed from the previous send's.
+   */
+  accepted_changed_source: boolean;
 }
 
 export interface BaseDeliveryView {
@@ -111,6 +123,17 @@ const subscriberChanged = () =>
     'El suscriptor ha cambiado mientras se preparaba el envío. Vuelve a intentarlo.',
   );
 
+/**
+ * The current catalogue material differs from the reference (the material of
+ * the delivery's latest send). Same code as before accept_changed_source
+ * existed, so older admin builds keep their handling.
+ */
+export const sourceChangedSinceDelivery = (month: number) =>
+  baseHttp.conflict(
+    'SOURCE_CHANGED_SINCE_DELIVERY',
+    `Los PDF del mes ${month} han cambiado desde el último envío de esta entrega. El reenvío mandaría la versión actual: confirma que quieres enviarla para continuar.`,
+  );
+
 const subscriberArchived = () =>
   baseHttp.conflict(
     'SUBSCRIBER_ARCHIVED',
@@ -124,6 +147,11 @@ interface SubscriberSnapshot {
   days_per_week: number;
   order_code: string;
   is_archived: boolean;
+}
+
+export interface ResendOptions {
+  /** The admin confirmed sending the current material although it changed. */
+  acceptChangedSource?: boolean;
 }
 
 export interface SendWorkRow {
@@ -153,10 +181,14 @@ export function mapDeliveryPackageError(error: unknown): HttpException {
   return mapSourceError(error, 'delivery');
 }
 
-/** One send as the API shows it, from its durable_work row. */
+/**
+ * One send as the API shows it, from its durable_work row. `original` is the
+ * delivery's own files (its original material), parsed.
+ */
 export function baseSendView(
   sendSeq: number,
   row: SendWorkRow | undefined,
+  original: readonly RecordedDeliveryFile[] | null = null,
 ): BaseDeliverySendView {
   const payload = row ? parseBaseDeliveryPayload(row.payload) : null;
   const status: BaseSendStatus = payload?.accepted
@@ -182,6 +214,11 @@ export function baseSendView(
         row?.attempts ?? 0,
         row?.last_error ?? null,
       ),
+    material_changed:
+      payload !== null &&
+      original !== null &&
+      !sameSources(original, payload.files),
+    accepted_changed_source: payload?.acceptedChangedSource === true,
   };
 }
 
@@ -194,10 +231,12 @@ export function baseDeliveryView(
   delivery: BaseDelivery,
   work: ReadonlyMap<string, SendWorkRow>,
 ): BaseDeliveryView {
+  const files = parseRecordedFiles(delivery.files);
   const sends = Array.from({ length: delivery.send_seq }, (_, index) =>
     baseSendView(
       index + 1,
       work.get(baseDeliveryWorkKey(delivery.id, index + 1)),
+      files,
     ),
   );
   const unrecorded = sendFailureUnrecorded(
@@ -215,7 +254,7 @@ export function baseDeliveryView(
     snapshot_goal: delivery.snapshot_goal,
     snapshot_days_per_week: delivery.snapshot_days_per_week,
     snapshot_order_code: delivery.snapshot_order_code,
-    files: parseRecordedFiles(delivery.files) ?? [],
+    files: files ?? [],
     requested_by_id: delivery.requested_by_id,
     requested_at: delivery.requested_at,
     sent_at: delivery.sent_at,
@@ -458,15 +497,19 @@ export class BaseDeliveriesService {
    * the delivery must still be in the state the request was prepared
    * against (409 DELIVERY_CHANGED otherwise). The new send goes to the
    * subscriber's CURRENT name and email (re-validated and re-stamped exactly
-   * like a new delivery); goal, days, month, order code and source PDFs stay
-   * those of the delivery. A source PDF whose bytes changed since the
-   * delivery is refused (409 SOURCE_CHANGED_SINCE_DELIVERY). Any rejection
-   * changes nothing.
+   * like a new delivery); goal, days, month and order code stay those of the
+   * delivery. The package is the CURRENT catalogue material of that month and
+   * route; if it differs (bytes or file set) from the reference, the material
+   * recorded by the delivery's latest send, the resend needs
+   * `acceptChangedSource` (409 SOURCE_CHANGED_SINCE_DELIVERY otherwise). The
+   * reference moves only when a resend commits (it is that new send's
+   * record), whatever its outcome. Any rejection changes nothing.
    */
   async resend(
     subscriberId: string,
     deliveryId: string,
     actor: BaseServiceActor,
+    options: ResendOptions = {},
   ): Promise<BaseDeliveryView> {
     this.assertEmailConfigured();
     try {
@@ -501,6 +544,14 @@ export class BaseDeliveriesService {
     const deliveryFiles = parseRecordedFiles(delivery.files);
     if (!deliveryFiles)
       throw new InternalServerErrorException('BASE_DELIVERY_FILES_INVALID');
+    // Valid for this send_seq only: re-checked under the lock below
+    // (DELIVERY_CHANGED), and a send's recorded files are never rewritten.
+    const reference = await this.referenceFiles(
+      this.prisma,
+      delivery.id,
+      delivery.send_seq,
+      deliveryFiles,
+    );
 
     const files = await this.preparePackage({
       name: subscriber.name,
@@ -510,11 +561,9 @@ export class BaseDeliveriesService {
       dias: delivery.snapshot_days_per_week,
       mes: delivery.month,
     });
-    if (!sameSources(deliveryFiles, files))
-      throw baseHttp.conflict(
-        'SOURCE_CHANGED_SINCE_DELIVERY',
-        `Los PDF del mes ${delivery.month} han cambiado desde que se hizo esta entrega: el reenvío no sería el mismo material. Avisa al equipo técnico.`,
-      );
+    const material = compareResendMaterial(deliveryFiles, reference, files);
+    if (material.changedSinceReference && options.acceptChangedSource !== true)
+      throw sourceChangedSinceDelivery(delivery.month);
 
     await this.prisma.$transaction(async (tx) => {
       await lockStaffActor(tx, actor);
@@ -580,9 +629,38 @@ export class BaseDeliveriesService {
         name: locked.name,
         email: locked.email,
         files,
+        // Unchanged material: the same record as before this option existed.
+        materialChanged: material.materialChanged || undefined,
+        acceptedChangedSource: material.changedSinceReference || undefined,
       });
     }, BASE_WRITE_TX);
     return this.view(deliveryId);
+  }
+
+  /**
+   * Reference material of a resend: the sources recorded by the delivery's
+   * CURRENT send (`send_seq`, its work payload), whatever that send's
+   * outcome. Falls back to the delivery's original files when that record is
+   * missing or unreadable (not produced by the API): the comparison is then
+   * against the original material, as before accept_changed_source existed.
+   */
+  private async referenceFiles(
+    db: Pick<Prisma.TransactionClient, 'durableWork'>,
+    deliveryId: string,
+    sendSeq: number,
+    original: RecordedDeliveryFile[],
+  ): Promise<RecordedDeliveryFile[]> {
+    const work = await db.durableWork.findUnique({
+      where: { key: baseDeliveryWorkKey(deliveryId, sendSeq) },
+      select: { kind: true, payload: true },
+    });
+    const payload =
+      work?.kind === BASE_DELIVERY_WORK_KIND
+        ? parseBaseDeliveryPayload(work.payload)
+        : null;
+    return payload?.deliveryId === deliveryId && payload.sendSeq === sendSeq
+      ? payload.files
+      : original;
   }
 
   async list(subscriberId: string): Promise<BaseDeliveryView[]> {

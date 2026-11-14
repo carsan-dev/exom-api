@@ -4195,6 +4195,17 @@
         ],
         "type": "object"
       },
+      "ResendBaseDeliveryDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accept_changed_source": {
+            "default": false,
+            "description": "Confirms resending the CURRENT PDFs of the delivery month and route when they changed (bytes or file set) since the latest send of this delivery. Without it such a resend is refused with 409 SOURCE_CHANGED_SINCE_DELIVERY. Ignored when nothing changed.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ResolveApprovalRequestDto": {
         "additionalProperties": false,
         "properties": {
@@ -10621,11 +10632,23 @@
       },
       "Wire151": {
         "properties": {
+          "accepted_changed_source": {
+            "enum": [
+              false,
+              true
+            ]
+          },
           "attempts": {
             "type": "number"
           },
           "error": {
             "$ref": "#/components/schemas/Wire9"
+          },
+          "material_changed": {
+            "enum": [
+              false,
+              true
+            ]
           },
           "possibly_delivered": {
             "enum": [
@@ -10673,7 +10696,9 @@
           "attempts",
           "snapshot_name",
           "snapshot_email",
-          "possibly_delivered"
+          "possibly_delivered",
+          "material_changed",
+          "accepted_changed_source"
         ],
         "type": "object"
       },
@@ -25108,6 +25133,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendBaseDeliveryDto"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "201": {
             "content": {

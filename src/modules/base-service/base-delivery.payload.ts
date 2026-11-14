@@ -16,9 +16,11 @@ export interface SavedBaseEmailRequest {
 /**
  * `durable_work.payload` of a BASE_DELIVERY_EMAIL send: the record of ONE
  * send (send_seq). Written by the producer: identity, the recipient snapshot
- * of this send (`name`, `email`) and its files (source hashes, which never
- * change within a delivery, and the stamped hashes recorded when the send was
- * created). Before every provider call the worker persists `preparedAt` and
+ * of this send (`name`, `email`) and its files (source hashes and the stamped
+ * hashes recorded when the send was created; immutable for the send). A
+ * resend may carry other source material than the delivery's original files
+ * only after an admin confirmed it (`materialChanged`, `acceptedChangedSource`
+ * below). Before every provider call the worker persists `preparedAt` and
  * `request` (first call only) and bumps `handoffs`/`lastHandoffAttempt`.
  * On acceptance `accepted`/`providerMessageId`/`acceptedAt` are added and the
  * saved request body is dropped; on a terminal failure `possiblyDelivered`
@@ -32,6 +34,19 @@ export interface BaseDeliveryWorkPayload {
   name: string;
   email: string;
   files: RecordedDeliveryFile[];
+  /**
+   * The sources of `files` differ from the delivery's original `files` (other
+   * bytes or another file set). Written by the producer, only when an admin
+   * confirmed that material (on this resend or on the earlier send whose
+   * material this one repeats); the worker refuses differing sources without
+   * it. Absent on every send whose sources are the delivery's.
+   */
+  materialChanged?: true;
+  /**
+   * This send was created with `accept_changed_source: true` AND needed it:
+   * its sources differed from the reference (the previous send's material).
+   */
+  acceptedChangedSource?: true;
   preparedAt?: string;
   request?: SavedBaseEmailRequest;
   /** Provider calls started for this send (persisted before each call). */
@@ -128,6 +143,14 @@ export function parseBaseDeliveryPayload(
     email,
     files,
   };
+  if (value.materialChanged !== undefined) {
+    if (value.materialChanged !== true) return null;
+    payload.materialChanged = true;
+  }
+  if (value.acceptedChangedSource !== undefined) {
+    if (value.acceptedChangedSource !== true) return null;
+    payload.acceptedChangedSource = true;
+  }
   if (value.preparedAt !== undefined) {
     if (typeof value.preparedAt !== 'string') return null;
     payload.preparedAt = value.preparedAt;
@@ -179,6 +202,8 @@ export function basePayloadJson(
     email: payload.email,
     files: payload.files.map((file) => ({ ...file })),
   };
+  if (payload.materialChanged) json.materialChanged = true;
+  if (payload.acceptedChangedSource) json.acceptedChangedSource = true;
   if (payload.preparedAt !== undefined) json.preparedAt = payload.preparedAt;
   if (payload.request !== undefined) json.request = { ...payload.request };
   if (

@@ -9,10 +9,13 @@ import { BasePdfSource } from './base-pdf-source';
 
 /**
  * One recorded PDF. `filename`, `source_key` and `source_sha256` (the
- * catalogue file) are fixed for the whole delivery. `sha256`/`size` describe
- * the stamped attachment of ONE send: `base_deliveries.files` keeps those of
- * the original send, and every send records its own in its work payload
- * (they change with the recipient or with the stamping library/font).
+ * catalogue file): `base_deliveries.files` keeps the delivery's ORIGINAL
+ * material, and each send records the material it carries in its work
+ * payload (the original one, unless a resend confirmed the current version
+ * with accept_changed_source). `sha256`/`size` describe the stamped
+ * attachment of ONE send: `base_deliveries.files` keeps those of the original
+ * send, and every send records its own in its work payload (they change with
+ * the recipient or with the stamping library/font).
  */
 export interface RecordedDeliveryFile {
   filename: string;
@@ -126,8 +129,10 @@ export function assertMatchesRecorded(
 }
 
 /**
- * Same catalogue material as the delivery: same files in the same order and
- * byte-identical sources. Stamped hashes are ignored (they belong to a send).
+ * Same catalogue material: same files (same keys and names) in the same order
+ * and byte-identical sources. A changed file set (a PDF added, removed or
+ * renamed) or changed bytes both make it false. Stamped hashes are ignored
+ * (they belong to a send).
  */
 export function sameSources(
   delivery: readonly RecordedDeliveryFile[],
@@ -142,4 +147,26 @@ export function sameSources(
         file.source_sha256 === delivery[index].source_sha256,
     )
   );
+}
+
+/** How the material of a prospective resend relates to what was recorded. */
+export interface ResendMaterial {
+  /**
+   * Differs from the reference (the material recorded by the delivery's
+   * latest send): the admin must confirm it (accept_changed_source).
+   */
+  changedSinceReference: boolean;
+  /** Differs from the delivery's original files (shown in the history). */
+  materialChanged: boolean;
+}
+
+export function compareResendMaterial(
+  original: readonly RecordedDeliveryFile[],
+  reference: readonly RecordedDeliveryFile[],
+  candidate: readonly RecordedDeliveryFile[],
+): ResendMaterial {
+  return {
+    changedSinceReference: !sameSources(reference, candidate),
+    materialChanged: !sameSources(original, candidate),
+  };
 }
