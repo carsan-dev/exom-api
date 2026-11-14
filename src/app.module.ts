@@ -35,6 +35,7 @@ import { PublicConfigModule } from './modules/public-config/public-config.module
 import { ProgressPhotosModule } from './modules/progress-photos/progress-photos.module';
 import { AdherenceConfigModule } from './modules/adherence/adherence-config.module';
 import { ClientFollowUpTasksModule } from './modules/client-followup-tasks/client-followup-tasks.module';
+import { BaseServiceModule } from './modules/base-service/base-service.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { ClientFollowUpTasksModule } from './modules/client-followup-tasks/clien
     ProgressPhotosModule,
     AdherenceConfigModule,
     ClientFollowUpTasksModule,
+    BaseServiceModule,
   ],
   controllers: [HealthController],
   providers: [
