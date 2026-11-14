@@ -25,6 +25,7 @@ import { BasePdfSource } from './base-pdf-source';
 import { BaseSourceNotConfiguredError } from './base-pdf-source.provider';
 import {
   assertMatchesRecorded,
+  compareResendMaterial,
   DeliveryFilesMismatchError,
   parseRecordedFiles,
   prepareDeliveryFiles,
@@ -260,6 +261,55 @@ describe('prepareDeliveryFiles / assertMatchesRecorded', () => {
     expect(sameSources(recorded, recorded.slice(1))).toBe(false);
   });
 
+  it('compareResendMaterial: the reference decides confirmation, the original the history flag', async () => {
+    const original = (
+      await prepareDeliveryFiles(new MemorySource(files), input)
+    ).recorded;
+    const corrected = new Map(files);
+    corrected.set(GUIDE_1, await pdf('guía corregida'));
+    const current = (
+      await prepareDeliveryFiles(new MemorySource(corrected), input)
+    ).recorded;
+    // First resend after the correction: needs confirmation.
+    expect(compareResendMaterial(original, original, current)).toEqual({
+      changedSinceReference: true,
+      materialChanged: true,
+    });
+    // The confirmed send is now the reference: nothing to confirm.
+    expect(compareResendMaterial(original, current, current)).toEqual({
+      changedSinceReference: false,
+      materialChanged: true,
+    });
+    // Back to the original bytes after a confirmed change.
+    expect(compareResendMaterial(original, current, original)).toEqual({
+      changedSinceReference: true,
+      materialChanged: false,
+    });
+    expect(compareResendMaterial(original, original, original)).toEqual({
+      changedSinceReference: false,
+      materialChanged: false,
+    });
+    // A renamed file with identical bytes, an added and a removed file.
+    const renamed = original.map((file) =>
+      file.source_key === GUIDE_1
+        ? {
+            ...file,
+            source_key: GUIDE_1.replace('_Guia', '-v2_Guia'),
+            filename: file.filename.replace('_Guia', '-v2_Guia'),
+          }
+        : file,
+    );
+    for (const candidate of [
+      renamed,
+      [...original, { ...original[0], source_key: 'extra.pdf' }],
+      original.slice(0, -1),
+    ])
+      expect(compareResendMaterial(original, original, candidate)).toEqual({
+        changedSinceReference: true,
+        materialChanged: true,
+      });
+  });
+
   it('refuses a name + email whose stamp cannot fit, before reading any PDF', async () => {
     const source = new MemorySource(files);
     const list = jest.spyOn(source, 'list');
@@ -399,6 +449,38 @@ describe('base delivery work payload', () => {
     expect(parseBaseDeliveryPayload(json)).toEqual(accepted);
   });
 
+  it('round-trips the confirmed-material markers through every rewrite', () => {
+    const confirmed = {
+      ...base,
+      sendSeq: 2,
+      materialChanged: true as const,
+      acceptedChangedSource: true as const,
+    };
+    expect(parseBaseDeliveryPayload(basePayloadJson(confirmed))).toEqual(
+      confirmed,
+    );
+    const accepted = {
+      ...confirmed,
+      preparedAt: '2026-11-14T10:00:05.000Z',
+      handoffs: 1,
+      lastHandoffAttempt: 1,
+      accepted: true as const,
+      providerMessageId: 'msg',
+      acceptedAt: '2026-11-14T10:00:06.000Z',
+    };
+    expect(parseBaseDeliveryPayload(basePayloadJson(accepted))).toEqual(
+      accepted,
+    );
+    // Unchanged material: no marker is written at all.
+    const json = basePayloadJson({
+      ...base,
+      materialChanged: undefined,
+      acceptedChangedSource: undefined,
+    });
+    expect(json).not.toHaveProperty('materialChanged');
+    expect(json).not.toHaveProperty('acceptedChangedSource');
+  });
+
   it.each([
     [null],
     [[]],
@@ -415,6 +497,10 @@ describe('base delivery work payload', () => {
     [{ ...base, handoffs: 1 }],
     [{ ...base, handoffs: 0, lastHandoffAttempt: 1 }],
     [{ ...base, possiblyDelivered: 'yes' }],
+    [{ ...base, materialChanged: false }],
+    [{ ...base, materialChanged: 'true' }],
+    [{ ...base, acceptedChangedSource: false }],
+    [{ ...base, acceptedChangedSource: 1 }],
   ])('rejects malformed payload %#', (value) => {
     expect(parseBaseDeliveryPayload(value)).toBeNull();
   });
@@ -703,6 +789,64 @@ describe('read-time state of a send and of its delivery', () => {
         }),
       ).toBe(false);
       expect(sendFailureUnrecorded('PENDING', null)).toBe(false);
+    });
+  });
+
+  describe('material of each send', () => {
+    const corrected = { ...file, source_sha256: 'x2', sha256: 'y2' };
+    const sentRow = (payload: unknown, sendSeq: number) => ({
+      key: baseDeliveryWorkKey('d1', sendSeq),
+      status: 'DONE',
+      payload,
+      attempts: 1,
+      last_error: null,
+    });
+
+    it('material_changed compares the send with the delivery original; accepted_changed_source is the stored confirmation', () => {
+      const original = [file];
+      const plain = sentRow(basePayloadJson(queued), 1);
+      const confirmedSend = sentRow(
+        basePayloadJson({
+          ...queued,
+          sendSeq: 2,
+          files: [corrected],
+          materialChanged: true,
+          acceptedChangedSource: true,
+        }),
+        2,
+      );
+      const repeated = sentRow(
+        basePayloadJson({
+          ...queued,
+          sendSeq: 3,
+          files: [corrected],
+          materialChanged: true,
+        }),
+        3,
+      );
+      expect(
+        [
+          baseSendView(1, plain, original),
+          baseSendView(2, confirmedSend, original),
+          baseSendView(3, repeated, original),
+        ].map((view) => [view.material_changed, view.accepted_changed_source]),
+      ).toEqual([
+        [false, false],
+        [true, true],
+        [true, false],
+      ]);
+      // Without the delivery's files, or with an unreadable send record.
+      expect(baseSendView(2, confirmedSend).material_changed).toBe(false);
+      expect(
+        baseSendView(2, sentRow({ broken: true }, 2), original),
+      ).toMatchObject({
+        material_changed: false,
+        accepted_changed_source: false,
+      });
+      expect(baseSendView(4, undefined, original)).toMatchObject({
+        material_changed: false,
+        accepted_changed_source: false,
+      });
     });
   });
 

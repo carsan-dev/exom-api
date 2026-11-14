@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PDFDocument } from '@cantoo/pdf-lib';
@@ -1645,7 +1651,7 @@ function parseSent(body: string): SentRequest['json'] {
           expect((await delivery(d.id)).status).toBe('SENT');
         });
 
-        it('a resend is refused when a source PDF changed since the delivery', async () => {
+        it('without confirmation, a resend is refused when a source PDF changed since the delivery', async () => {
           const s = await newSubscriber({ days: 4 });
           const d = await deliveries.create(s.id, 1, admin);
           await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
@@ -1669,6 +1675,591 @@ function parseSent(body: string): SentRequest['json'] {
             }),
           ).toBe(1);
           expect(sent).toHaveLength(1);
+        });
+      });
+
+      describe('S4: resend with the current material (accept_changed_source)', () => {
+        const RENAMED = `nutricion/${GOAL}/EXOM_Nutricion_${LABEL}-v2_Guia-01.pdf`;
+        const confirmed = { acceptChangedSource: true };
+        const setSource = async (key: string, title: string) => {
+          const path = join(catalogue, key);
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, await samplePdf(title));
+        };
+        const sourceSha = (key: string) =>
+          sha(readFileSync(join(catalogue, key)));
+        afterEach(() => {
+          rmSync(join(catalogue, RENAMED), { force: true });
+          for (const [key, bytes] of originals)
+            writeFileSync(join(catalogue, key), bytes);
+        });
+        const workRows = (deliveryId: string) =>
+          db.durableWork.count({
+            where: { key: { startsWith: `base-delivery:${deliveryId}:` } },
+          });
+        const payloadOf = async (deliveryId: string, seq: number) => {
+          const payload = parseBaseDeliveryPayload(
+            (await work(baseDeliveryWorkKey(deliveryId, seq))).payload,
+          );
+          if (!payload) throw Error('payload');
+          return payload;
+        };
+
+        it('REGRESSION: a confirmed resend sends the CURRENT material of the delivery route; history keeps every earlier send', async () => {
+          const s = await newSubscriber({ days: 4 });
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          const firstRecord = (await work(baseDeliveryWorkKey(d.id, 1)))
+            .payload;
+          // The subscriber's CURRENT route is no longer the delivery's.
+          await subscribers.update(s.id, { days_per_week: 3 }, admin);
+          await setSource(guide(1), 'corrected guide');
+          // Old clients (no body) and an explicit false: refused as before.
+          const refusals = [
+            await httpError(deliveries.resend(s.id, d.id, admin)),
+            await httpError(
+              deliveries.resend(s.id, d.id, admin, {
+                acceptChangedSource: false,
+              }),
+            ),
+          ];
+          for (const refused of refusals)
+            expect(refused).toMatchObject({
+              status: 409,
+              code: 'SOURCE_CHANGED_SINCE_DELIVERY',
+            });
+          expect(await workRows(d.id)).toBe(1);
+
+          const resent = await deliveries.resend(s.id, d.id, admin, confirmed);
+          expect(resent).toMatchObject({
+            status: 'PENDING',
+            send_seq: 2,
+            snapshot_days_per_week: 4,
+          });
+          // The delivery-level record (original material) never changes.
+          expect(resent.files).toEqual(d.files);
+          const second = await payloadOf(d.id, 2);
+          // Same month and route (4 days), current bytes.
+          expect(second.files.map((file) => file.source_key)).toEqual(
+            d.files.map((file) => file.source_key),
+          );
+          expect(second.files[0].source_key).toBe(training(4, 1));
+          second.files.forEach((file, index) =>
+            expect(file.source_sha256).toBe(
+              file.source_key === guide(1)
+                ? sourceSha(guide(1))
+                : d.files[index].source_sha256,
+            ),
+          );
+          expect(
+            second.files.find((file) => file.source_key === guide(1))
+              ?.source_sha256,
+          ).not.toBe(
+            d.files.find((file) => file.source_key === guide(1))?.source_sha256,
+          );
+          expect(second).toMatchObject({
+            materialChanged: true,
+            acceptedChangedSource: true,
+          });
+
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+          expect(sent).toHaveLength(2);
+          sent[1].json.attachments.forEach((attachment, index) =>
+            expect(sha(Buffer.from(attachment.content, 'base64'))).toBe(
+              second.files[index].sha256,
+            ),
+          );
+          expect(await delivery(d.id)).toMatchObject({
+            status: 'SENT',
+            send_seq: 2,
+          });
+          // The worker's rewrites keep the send's record.
+          expect(await payloadOf(d.id, 2)).toMatchObject({
+            accepted: true,
+            materialChanged: true,
+            acceptedChangedSource: true,
+            files: second.files,
+          });
+          // Earlier sends and the delivery row are never rewritten.
+          expect((await work(baseDeliveryWorkKey(d.id, 1))).payload).toEqual(
+            firstRecord,
+          );
+          expect(parseRecordedFiles((await delivery(d.id)).files)).toEqual(
+            d.files,
+          );
+          // The refusal tells the admin what confirming would do.
+          for (const refused of refusals) {
+            expect(refused.message).toContain('versión actual');
+            expect(refused.message).toContain('confirma');
+          }
+          expect(
+            (await latest(s.id, d.id)).sends.map((entry) => [
+              entry.send_seq,
+              entry.material_changed,
+              entry.accepted_changed_source,
+            ]),
+          ).toEqual([
+            [1, false, false],
+            [2, true, true],
+          ]);
+        });
+
+        it('unchanged material: the flag changes nothing (same record and bytes as without it)', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+          const [first, second] = await Promise.all([
+            payloadOf(d.id, 1),
+            payloadOf(d.id, 2),
+          ]);
+          expect(second.files).toEqual(first.files);
+          const record = doneFields(
+            (await work(baseDeliveryWorkKey(d.id, 2))).payload,
+          );
+          expect(record).not.toHaveProperty('materialChanged');
+          expect(record).not.toHaveProperty('acceptedChangedSource');
+          expect(sent[1].json.attachments).toEqual(sent[0].json.attachments);
+          expect(
+            (await latest(s.id, d.id)).sends.map((entry) => [
+              entry.material_changed,
+              entry.accepted_changed_source,
+            ]),
+          ).toEqual([
+            [false, false],
+            [false, false],
+          ]);
+        });
+
+        it('the reference is the latest send: no new confirmation while nothing changed since the confirmed one', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+          // Nothing changed since send 2: an old client resends it as is.
+          const third = await deliveries.resend(s.id, d.id, admin);
+          expect(third.send_seq).toBe(3);
+          const record3 = await payloadOf(d.id, 3);
+          expect(record3.materialChanged).toBe(true);
+          expect(record3.acceptedChangedSource).toBeUndefined();
+          expect(record3.files.map((file) => file.source_sha256)).toEqual(
+            (await payloadOf(d.id, 2)).files.map((file) => file.source_sha256),
+          );
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 3));
+          expect(await delivery(d.id)).toMatchObject({
+            status: 'SENT',
+            send_seq: 3,
+          });
+          // Back to the original bytes: different from the latest send again.
+          writeFileSync(join(catalogue, guide(1)), originals.get(guide(1))!);
+          expect(
+            await httpError(deliveries.resend(s.id, d.id, admin)),
+          ).toMatchObject({
+            status: 409,
+            code: 'SOURCE_CHANGED_SINCE_DELIVERY',
+          });
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          const record4 = await payloadOf(d.id, 4);
+          expect(record4.materialChanged).toBeUndefined();
+          expect(record4.acceptedChangedSource).toBe(true);
+          expect(record4.files.map((file) => file.source_sha256)).toEqual(
+            d.files.map((file) => file.source_sha256),
+          );
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 4));
+          expect(sent).toHaveLength(4);
+          sent[3].json.attachments.forEach((attachment, index) =>
+            expect(sha(Buffer.from(attachment.content, 'base64'))).toBe(
+              record4.files[index].sha256,
+            ),
+          );
+          expect(
+            (await latest(s.id, d.id)).sends.map((entry) => [
+              entry.send_seq,
+              entry.status,
+              entry.material_changed,
+              entry.accepted_changed_source,
+            ]),
+          ).toEqual([
+            [1, 'SENT', false, false],
+            [2, 'SENT', true, true],
+            [3, 'SENT', true, false],
+            [4, 'SENT', false, true],
+          ]);
+        });
+
+        it('a confirmed send that fails stays the reference; a source change after queueing still fails that send', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          fetchMock.mockImplementation((_url, init) => {
+            record(init);
+            return Promise.resolve(
+              new Response(JSON.stringify({ name: 'validation_error' }), {
+                status: 422,
+              }),
+            );
+          });
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+          expect(await delivery(d.id)).toMatchObject({
+            status: 'FAILED',
+            send_seq: 2,
+            last_error: 'EMAIL_REQUEST_REJECTED',
+          });
+          fetchMock.mockImplementation((_url, init) => {
+            record(init);
+            return Promise.resolve(accept(`msg-${sent.length}`));
+          });
+          // Same material as the failed confirmed send: no confirmation.
+          await deliveries.resend(s.id, d.id, admin);
+          expect((await payloadOf(d.id, 3)).materialChanged).toBe(true);
+          // The source changes AFTER send 3 was queued: send 3 fails, unsent.
+          await setSource(guide(1), 'corrected twice');
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 3));
+          expect(sent).toHaveLength(2);
+          expect(await latest(s.id, d.id)).toMatchObject({
+            status: 'FAILED',
+            send_seq: 3,
+            last_error: 'BASE_SOURCE_CHANGED',
+            possibly_delivered: false,
+          });
+          // The newest bytes differ from send 3's record: confirm again.
+          expect(
+            await httpError(deliveries.resend(s.id, d.id, admin)),
+          ).toMatchObject({
+            status: 409,
+            code: 'SOURCE_CHANGED_SINCE_DELIVERY',
+          });
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 4));
+          expect(await delivery(d.id)).toMatchObject({
+            status: 'SENT',
+            send_seq: 4,
+          });
+          expect(
+            (await payloadOf(d.id, 4)).files.find(
+              (file) => file.source_key === guide(1),
+            )?.source_sha256,
+          ).toBe(sourceSha(guide(1)));
+          expect(sent).toHaveLength(3);
+        });
+
+        it('a changed file set (renamed PDF) needs confirmation and is sent under its new name', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          rmSync(join(catalogue, guide(1)));
+          writeFileSync(join(catalogue, RENAMED), originals.get(guide(1))!);
+          // Same bytes, other file: still a change.
+          expect(
+            await httpError(deliveries.resend(s.id, d.id, admin)),
+          ).toMatchObject({
+            status: 409,
+            code: 'SOURCE_CHANGED_SINCE_DELIVERY',
+          });
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          const record2 = await payloadOf(d.id, 2);
+          expect(record2.files.map((file) => file.source_key)).toEqual(
+            d.files.map((file) =>
+              file.source_key === guide(1) ? RENAMED : file.source_key,
+            ),
+          );
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+          expect(sent[1].json.attachments.map((file) => file.filename)).toEqual(
+            record2.files.map((file) => file.filename),
+          );
+          expect(
+            sent[1].json.attachments.map((file) => file.filename),
+          ).toContain('EXOM_Nutricion_Perder-grasa-v2_Guia-01.pdf');
+          expect((await latest(s.id, d.id)).sends[1]).toMatchObject({
+            status: 'SENT',
+            material_changed: true,
+            accepted_changed_source: true,
+          });
+        });
+
+        it('the confirmation never bypasses archive, a running send, missing or ambiguous content or the stamp rule', async () => {
+          const expectRefused = async (
+            subscriberId: string,
+            deliveryId: string,
+            code: string,
+            rows: number,
+          ) => {
+            const before = await delivery(deliveryId);
+            expect(
+              await httpError(
+                deliveries.resend(subscriberId, deliveryId, admin, confirmed),
+              ),
+            ).toMatchObject({ code });
+            expect(await delivery(deliveryId)).toEqual(before);
+            expect(await workRows(deliveryId)).toBe(rows);
+          };
+          // Running send (not yet processed).
+          const running = await newSubscriber();
+          const pending = await deliveries.create(running.id, 1, admin);
+          await setSource(guide(1), 'corrected guide');
+          await expectRefused(running.id, pending.id, 'DELIVERY_PENDING', 1);
+
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          // Content missing: the month cannot be built at all.
+          rmSync(join(catalogue, guide(1)));
+          await expectRefused(s.id, d.id, 'NO_CONTENT_FOR_MONTH', 1);
+          // A file added: two guides for the month.
+          await setSource(guide(1), 'corrected guide');
+          await setSource(RENAMED, 'second guide');
+          await expectRefused(s.id, d.id, 'AMBIGUOUS_CONTENT', 1);
+          rmSync(join(catalogue, RENAMED));
+          // Stamp that cannot fit (row written by a writer skipping the rule).
+          const original = await db.baseSubscriber.findUniqueOrThrow({
+            where: { id: s.id },
+          });
+          await pool.query(
+            'UPDATE base_subscribers SET name = $2, email = $3 WHERE id = $1',
+            [
+              s.id,
+              'A'.repeat(80),
+              `${'a'.repeat(64)}@${'b'.repeat(63)}.${'c'.repeat(63)}.com`,
+            ],
+          );
+          await expectRefused(s.id, d.id, 'STAMP_TOO_LONG', 1);
+          await pool.query(
+            'UPDATE base_subscribers SET name = $2, email = $3 WHERE id = $1',
+            [s.id, original.name, original.email],
+          );
+          // Archived.
+          await subscribers.setArchived(s.id, true, admin);
+          await expectRefused(s.id, d.id, 'SUBSCRIBER_ARCHIVED', 1);
+          await subscribers.setArchived(s.id, false, admin);
+          // With every obstacle removed the same request goes through.
+          expect(
+            await deliveries.resend(s.id, d.id, admin, confirmed),
+          ).toMatchObject({ send_seq: 2, status: 'PENDING' });
+          expect(sent).toHaveLength(1);
+        });
+
+        it('the worker refuses a send whose other material was not declared by the producer', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          const key = baseDeliveryWorkKey(d.id, 2);
+          const queued = await payloadOf(d.id, 2);
+          await db.durableWork.update({
+            where: { key },
+            data: {
+              payload: basePayloadJson({
+                ...queued,
+                materialChanged: undefined,
+                acceptedChangedSource: undefined,
+              }),
+            },
+          });
+          await jobs.runKey(key);
+          expect(sent).toHaveLength(1);
+          expect(await latest(s.id, d.id)).toMatchObject({
+            status: 'FAILED',
+            last_error: 'BASE_DELIVERY_FILES_INVALID',
+            possibly_delivered: false,
+          });
+        });
+
+        it('a retry of a confirmed send (crash or lost answer) reuses its key, body and material', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          // The request commits; nothing runs in this process (crash).
+          await deliveries.resend(s.id, d.id, admin, confirmed);
+          const key = baseDeliveryWorkKey(d.id, 2);
+          const queued = await payloadOf(d.id, 2);
+          fetchMock.mockImplementation((_url, init) => {
+            record(init);
+            return sent.length === 2
+              ? Promise.reject(new Error('timeout'))
+              : Promise.resolve(accept(`msg-${sent.length}`));
+          });
+          await jobs.runKey(key);
+          expect(await payloadOf(d.id, 2)).toMatchObject({
+            materialChanged: true,
+            acceptedChangedSource: true,
+            files: queued.files,
+            handoffs: 1,
+          });
+          await due(key);
+          await jobs.runKey(key);
+          expect(sent).toHaveLength(3);
+          expect(sent[2].key).toBe(sent[1].key);
+          expect(sent[2].body).toBe(sent[1].body);
+          expect(await delivery(d.id)).toMatchObject({
+            status: 'SENT',
+            send_seq: 2,
+          });
+        });
+
+        it('a double click with confirmation creates one send', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          const outcomes = await Promise.allSettled([
+            deliveries.resend(s.id, d.id, admin, confirmed),
+            deliveries.resend(s.id, d.id, admin, confirmed),
+          ]);
+          const fulfilled = outcomes.filter(
+            (outcome) => outcome.status === 'fulfilled',
+          );
+          expect(fulfilled).toHaveLength(1);
+          for (const outcome of outcomes)
+            if (outcome.status === 'rejected')
+              expect([
+                'DELIVERY_CHANGED',
+                'DELIVERY_PENDING',
+                'SEND_ALREADY_QUEUED',
+              ]).toContain(httpErrorOf(outcome.reason).code);
+          expect(await workRows(d.id)).toBe(2);
+          expect(await delivery(d.id)).toMatchObject({
+            send_seq: 2,
+            status: 'PENDING',
+          });
+        });
+
+        it('a confirmed and an unconfirmed resend at once: the unconfirmed one is refused, one send', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          const [withFlag, withoutFlag] = await Promise.allSettled([
+            deliveries.resend(s.id, d.id, admin, confirmed),
+            deliveries.resend(s.id, d.id, superAdmin),
+          ]);
+          expect(withFlag.status).toBe('fulfilled');
+          if (withoutFlag.status !== 'rejected') throw Error('Expected 409');
+          expect(httpErrorOf(withoutFlag.reason).code).toMatch(
+            /^(SOURCE_CHANGED_SINCE_DELIVERY|DELIVERY_PENDING)$/,
+          );
+          expect(await workRows(d.id)).toBe(2);
+        });
+
+        it('a confirmed resend that waited on the lock while another resend committed creates nothing', async () => {
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          const holder = await pool.connect();
+          let result: PromiseSettledResult<unknown>[] = [];
+          let before: Awaited<ReturnType<typeof delivery>> | null = null;
+          try {
+            await holder.query('BEGIN');
+            await holder.query(
+              'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+              [superAdmin.id],
+            );
+            const holderPid = (
+              await holder.query<{ pid: number }>(
+                'SELECT pg_backend_pid() AS pid',
+              )
+            ).rows[0].pid;
+            const racing = Promise.allSettled([
+              deliveries.resend(s.id, d.id, superAdmin, confirmed),
+            ]);
+            for (let attempt = 0; ; attempt++) {
+              const { rows } = await pool.query<{ n: number }>(
+                `SELECT count(*)::int AS n FROM pg_stat_activity
+                 WHERE wait_event_type = 'Lock' AND query LIKE $1 AND pid <> $2`,
+                ['%FROM users WHERE id = $1 FOR SHARE%', holderPid],
+              );
+              if (rows[0].n === 1) break;
+              if (attempt > 300) throw Error('Resend never reached the lock');
+              await sleep(50);
+            }
+            await deliveries.resend(s.id, d.id, admin, confirmed);
+            await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+            before = await delivery(d.id);
+            expect(before).toMatchObject({ status: 'SENT', send_seq: 2 });
+            await holder.query('COMMIT');
+            result = await racing;
+          } finally {
+            holder.release();
+          }
+          const [outcome] = result;
+          if (outcome.status !== 'rejected') throw Error('Expected rejection');
+          expect(httpErrorOf(outcome.reason)).toMatchObject({
+            status: 409,
+            code: 'DELIVERY_CHANGED',
+          });
+          expect(await delivery(d.id)).toEqual(before);
+          expect(await workRows(d.id)).toBe(2);
+          expect(sent).toHaveLength(2);
+        });
+
+        it('archive racing a confirmed resend: refused under the lock, or the queued send is not sent', async () => {
+          // (a) The archive holds the subscriber row while the resend waits.
+          const s = await newSubscriber();
+          const d = await deliveries.create(s.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+          await setSource(guide(1), 'corrected guide');
+          const holder = await pool.connect();
+          let result: PromiseSettledResult<unknown>[] = [];
+          try {
+            await holder.query('BEGIN');
+            await holder.query(
+              'SELECT id FROM base_subscribers WHERE id = $1 FOR UPDATE',
+              [s.id],
+            );
+            await holder.query(
+              'UPDATE base_subscribers SET is_archived = true, archived_at = now() WHERE id = $1',
+              [s.id],
+            );
+            const holderPid = (
+              await holder.query<{ pid: number }>(
+                'SELECT pg_backend_pid() AS pid',
+              )
+            ).rows[0].pid;
+            const racing = Promise.allSettled([
+              deliveries.resend(s.id, d.id, admin, confirmed),
+            ]);
+            for (let attempt = 0; ; attempt++) {
+              const { rows } = await pool.query<{ n: number }>(
+                `SELECT count(*)::int AS n FROM pg_stat_activity
+                 WHERE wait_event_type = 'Lock' AND query LIKE $1 AND pid <> $2`,
+                ['%FROM base_subscribers WHERE id = $1 FOR UPDATE%', holderPid],
+              );
+              if (rows[0].n === 1) break;
+              if (attempt > 300) throw Error('Resend never reached the lock');
+              await sleep(50);
+            }
+            await holder.query('COMMIT');
+            result = await racing;
+          } finally {
+            holder.release();
+          }
+          const [outcome] = result;
+          if (outcome.status !== 'rejected') throw Error('Expected rejection');
+          expect(httpErrorOf(outcome.reason).code).toBe('SUBSCRIBER_ARCHIVED');
+          expect(await workRows(d.id)).toBe(1);
+
+          // (b) Archived after the confirmed resend was queued.
+          const other = await newSubscriber();
+          const d2 = await deliveries.create(other.id, 1, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d2.id, 1));
+          await setSource(guide(1), 'corrected again');
+          await deliveries.resend(other.id, d2.id, admin, confirmed);
+          await subscribers.setArchived(other.id, true, admin);
+          await jobs.runKey(baseDeliveryWorkKey(d2.id, 2));
+          expect(await latest(other.id, d2.id)).toMatchObject({
+            status: 'FAILED',
+            last_error: 'SUBSCRIBER_ARCHIVED',
+            possibly_delivered: false,
+          });
+          // Only the two original sends left.
+          expect(sent).toHaveLength(2);
         });
       });
 
