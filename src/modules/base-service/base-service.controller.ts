@@ -9,7 +9,7 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   CurrentUser,
   type AuthenticatedUser,
@@ -31,6 +31,7 @@ import {
   CreateBaseDeliveryDto,
   CreateBaseSubscriberDto,
   ListBaseSubscribersDto,
+  ResendBaseDeliveryDto,
   UpdateBaseSubscriberDto,
 } from './dto/base-service.dto';
 
@@ -121,11 +122,16 @@ export class BaseServiceController {
 
   @Post('subscribers/:subscriberId/deliveries/:deliveryId/resend')
   @ApiOperation({ summary: 'Explicitly resend a SENT or FAILED delivery' })
+  // Optional body: older admin builds send none (no confirmation).
+  @ApiBody({ type: ResendBaseDeliveryDto, required: false })
   resendDelivery(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('subscriberId', uuid) subscriberId: string,
     @Param('deliveryId', uuid) deliveryId: string,
+    @Body() dto: ResendBaseDeliveryDto,
   ): Promise<BaseDeliveryView> {
-    return this.deliveries.resend(subscriberId, deliveryId, actor);
+    return this.deliveries.resend(subscriberId, deliveryId, actor, {
+      acceptChangedSource: dto.accept_changed_source === true,
+    });
   }
 }

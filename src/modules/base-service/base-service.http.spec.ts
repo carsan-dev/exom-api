@@ -268,6 +268,26 @@ describe('Base service HTTP: guards, validation and error contract', () => {
       `/subscribers/${SUBSCRIBER}/deliveries/not-a-uuid/resend`,
       undefined,
     ],
+    [
+      'post',
+      `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`,
+      { accept_changed_source: 'true' },
+    ],
+    [
+      'post',
+      `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`,
+      { accept_changed_source: 1 },
+    ],
+    [
+      'post',
+      `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`,
+      { accept_changed_source: null },
+    ],
+    [
+      'post',
+      `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`,
+      { accept_changed_source: true, force: true },
+    ],
   ] as [Method, string, object | undefined][])(
     'rejects invalid input %#: %s %s',
     async (method, path, body) => {
@@ -276,6 +296,44 @@ describe('Base service HTTP: guards, validation and error contract', () => {
       for (const mock of allMocks) expect(mock).not.toHaveBeenCalled();
     },
   );
+
+  it('resend: no body (older admin builds), {} and false never confirm; true does', async () => {
+    const path = `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`;
+    const cases: [object | undefined, boolean][] = [
+      [undefined, false],
+      [{}, false],
+      [{ accept_changed_source: false }, false],
+      [{ accept_changed_source: true }, true],
+    ];
+    for (const [body, confirmed] of cases) {
+      deliveries.resend.mockClear();
+      const response = await call('post', path, body, 'token-admin');
+      expect(response.status).toBe(201);
+      expect(deliveries.resend).toHaveBeenCalledWith(
+        SUBSCRIBER,
+        DELIVERY,
+        expect.objectContaining({ id: 'id-token-admin', role: Role.ADMIN }),
+        { acceptChangedSource: confirmed },
+      );
+    }
+  });
+
+  it('forwards SOURCE_CHANGED_SINCE_DELIVERY with its code for the admin to ask for confirmation', async () => {
+    deliveries.resend.mockRejectedValue(
+      baseHttp.conflict('SOURCE_CHANGED_SINCE_DELIVERY', 'mensaje'),
+    );
+    const response = await call(
+      'post',
+      `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`,
+      undefined,
+      'token-admin',
+    );
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      code: 'SOURCE_CHANGED_SINCE_DELIVERY',
+      message: 'mensaje',
+    });
+  });
 
   it('forwards the machine code and Spanish message of service errors', async () => {
     deliveries.create.mockRejectedValue(

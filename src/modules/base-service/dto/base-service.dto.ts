@@ -172,3 +172,16 @@ export class CreateBaseDeliveryDto {
   @Max(1000)
   month!: number;
 }
+
+export class ResendBaseDeliveryDto {
+  @ApiPropertyOptional({
+    type: Boolean,
+    default: false,
+    description:
+      'Confirms resending the CURRENT PDFs of the delivery month and route when they changed (bytes or file set) since the latest send of this delivery. Without it such a resend is refused with 409 SOURCE_CHANGED_SINCE_DELIVERY. Ignored when nothing changed.',
+  })
+  @Provided()
+  @RawInput()
+  @IsBoolean()
+  accept_changed_source?: boolean;
+}

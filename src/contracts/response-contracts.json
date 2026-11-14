@@ -6108,6 +6108,18 @@
             false,
             true
           ]
+        },
+        "material_changed": {
+          "enum": [
+            false,
+            true
+          ]
+        },
+        "accepted_changed_source": {
+          "enum": [
+            false,
+            true
+          ]
         }
       },
       "required": [
@@ -6121,7 +6133,9 @@
         "attempts",
         "snapshot_name",
         "snapshot_email",
-        "possibly_delivered"
+        "possibly_delivered",
+        "material_changed",
+        "accepted_changed_source"
       ]
     },
     "Wire152": {
