@@ -18,6 +18,50 @@ import * as admin from 'firebase-admin';
 
 type PasswordEmailKind = 'invitation' | 'password-reset';
 
+export interface ResendAttachment {
+  filename: string;
+  /** Base64 file content. Never logged or persisted by this service. */
+  content: string;
+}
+
+export interface ResendEmailRequest {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  attachments?: ResendAttachment[];
+}
+
+/**
+ * Outcome of one Resend call. Codes are ours (never provider text, which can
+ * echo addresses): `transient` may be retried with the same key and body,
+ * `permanent` must not be retried automatically.
+ */
+export type ResendSendResult =
+  | { outcome: 'accepted'; id: string }
+  | { outcome: 'transient' | 'permanent'; code: string };
+
+export function classifyResendFailure(
+  status: number,
+  errorName: string | undefined,
+): Extract<ResendSendResult, { outcome: 'transient' | 'permanent' }> {
+  if (status === 409)
+    return errorName === 'concurrent_idempotent_requests'
+      ? { outcome: 'transient', code: 'EMAIL_IDEMPOTENCY_IN_PROGRESS' }
+      : // Same key, different body: the earlier send may have been accepted.
+        { outcome: 'permanent', code: 'EMAIL_IDEMPOTENCY_CONFLICT' };
+  if (status === 429)
+    return { outcome: 'transient', code: 'EMAIL_PROVIDER_RATE_LIMITED' };
+  if (status >= 500)
+    return { outcome: 'transient', code: 'EMAIL_PROVIDER_UNAVAILABLE' };
+  if (status === 401 || status === 403)
+    return { outcome: 'permanent', code: 'EMAIL_PROVIDER_AUTH_REJECTED' };
+  if (status === 400 || status === 422)
+    return { outcome: 'permanent', code: 'EMAIL_REQUEST_REJECTED' };
+  return { outcome: 'permanent', code: 'EMAIL_PROVIDER_REJECTED' };
+}
+
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
@@ -200,6 +244,72 @@ export class EmailService implements OnModuleInit {
         },
       });
     });
+  }
+
+  /** Sender of Resend emails, or undefined when Resend is not configured. */
+  resendSender(): string | undefined {
+    return this.resendApiKey && this.resendFromEmail
+      ? this.resendFromEmail
+      : undefined;
+  }
+
+  emailLogoUrl(): string | undefined {
+    return this.logoUrl;
+  }
+
+  /**
+   * One Resend call with optional attachments, for callers that own their
+   * durable journal (no Firebase fallback). The caller must send the same
+   * body under the same `idempotencyKey` on every retry.
+   */
+  async sendResendEmail(
+    request: ResendEmailRequest,
+    idempotencyKey: string,
+  ): Promise<ResendSendResult> {
+    if (!this.resendApiKey || !this.resendFromEmail)
+      return { outcome: 'permanent', code: 'EMAIL_PROVIDER_NOT_CONFIGURED' };
+    let response: Response;
+    try {
+      response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        // Attachments make the body several MB: allow more than plain emails.
+        signal: AbortSignal.timeout(60000),
+        headers: {
+          Authorization: 'Bearer ' + this.resendApiKey,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(request),
+      });
+    } catch {
+      // The provider may have received it: retry under the same key.
+      return { outcome: 'transient', code: 'EMAIL_PROVIDER_UNREACHABLE' };
+    }
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = undefined;
+    }
+    if (!response.ok) {
+      const name =
+        body &&
+        typeof body === 'object' &&
+        'name' in body &&
+        typeof body.name === 'string'
+          ? body.name
+          : undefined;
+      return classifyResendFailure(response.status, name);
+    }
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      !('id' in body) ||
+      typeof body.id !== 'string' ||
+      !body.id
+    )
+      return { outcome: 'transient', code: 'EMAIL_ACCEPTANCE_MISSING' };
+    return { outcome: 'accepted', id: body.id };
   }
 
   private async sendFirebaseTemplateEmail(email: string) {

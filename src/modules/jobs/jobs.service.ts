@@ -3,16 +3,52 @@ import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { DurableWork, Prisma } from '@prisma/client';
+import { PoolClient } from 'pg';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withWorkGuard } from './work-guard';
 
 export const workContext = new AsyncLocalStorage<DurableWork>();
 export class PermanentWorkError extends Error {}
 export class RetryWorkError extends Error {}
-type Handler = (work: DurableWork) => Promise<void>;
+/**
+ * Per-item context. `guard` is the work-guard connection of this item: it is
+ * pinned for the whole item anyway and its transaction lasts until the item
+ * finished, so a handler may take transaction-level ADVISORY locks on it
+ * (never row locks or writes) without holding a second pool connection.
+ */
+export interface WorkRunContext {
+  guard: Pick<PoolClient, 'query'>;
+}
+type Handler = (work: DurableWork, context: WorkRunContext) => Promise<void>;
+export interface WorkHandlerOptions {
+  /**
+   * `payload.accepted === true` proves the external effect already happened,
+   * so a claim past the attempt budget may still finish the journal (as EMAIL).
+   */
+  payloadAcceptance?: boolean;
+  /**
+   * Runs in the same transaction that marks the work FAILED (only if that
+   * update applied), so business state mirrors a terminal failure atomically.
+   * If it throws, that transaction is retried up to TERMINAL_HOOK_TRIES times;
+   * then the work is marked FAILED without the hook (logged), so a failing
+   * hook can never keep the item alive.
+   */
+  onTerminalFailure?: (
+    tx: Prisma.TransactionClient,
+    work: DurableWork,
+    code: string | null,
+  ) => Promise<unknown>;
+}
 export const WORK_CONCURRENCY = 4;
 export const WORK_LEASE_MS = 300_000;
 export const WORK_MAX_ATTEMPTS = 8;
+export const TERMINAL_HOOK_TRIES = 3;
+
+/** Error class only: messages can carry values (addresses, names). */
+function errorClass(error: unknown): string {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) return error.code;
+  return error instanceof Error ? error.name : 'unknown';
+}
 
 export async function enqueueWork(
   db: Pick<Prisma.TransactionClient, 'durableWork'>,
@@ -33,13 +69,15 @@ export async function enqueueWork(
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
   private readonly handlers = new Map<string, Handler>();
+  private readonly handlerOptions = new Map<string, WorkHandlerOptions>();
   private readonly activeSlots = new Set<number>();
   constructor(private readonly prisma: PrismaService) {}
 
-  register(kind: string, handler: Handler) {
+  register(kind: string, handler: Handler, options: WorkHandlerOptions = {}) {
     if (this.handlers.has(kind))
       throw new Error(`Duplicate work handler: ${kind}`);
     this.handlers.set(kind, handler);
+    this.handlerOptions.set(kind, options);
   }
 
   @Cron('*/5 * * * * *')
@@ -104,7 +142,7 @@ export class JobsService {
             )
               throw new PermanentWorkError('ATTEMPTS_EXHAUSTED');
             const handler = this.handlers.get(work.kind)!;
-            await workContext.run(claimed, () => handler(claimed));
+            await workContext.run(claimed, () => handler(claimed, { guard }));
             await this.finish(work, token, 'DONE', null);
           } catch (error: unknown) {
             const terminal =
@@ -142,6 +180,47 @@ export class JobsService {
     error: string | null,
     attempt = 0,
   ) {
+    const hook =
+      status === 'FAILED'
+        ? this.handlerOptions.get(work.kind)?.onTerminalFailure
+        : undefined;
+    if (!hook) return this.finishOnce(work, token, status, error, attempt);
+    for (let tries = 1; tries <= TERMINAL_HOOK_TRIES; tries++) {
+      const failure = { hook: false };
+      try {
+        return await this.finishOnce(
+          work,
+          token,
+          status,
+          error,
+          attempt,
+          hook,
+          failure,
+        );
+      } catch (caught: unknown) {
+        // Failures of the work update itself keep their previous behaviour.
+        if (!failure.hook) throw caught;
+        this.logger.error(
+          `Durable work ${work.kind}: terminal hook failed (${errorClass(caught)}), try ${tries}/${TERMINAL_HOOK_TRIES}`,
+        );
+      }
+    }
+    // Bounded: the item ends FAILED; the business row keeps its state.
+    await this.finishOnce(work, token, status, error, attempt);
+    this.logger.error(
+      `Durable work ${work.kind}: FAILED without its terminal hook (${error ?? 'unknown'})`,
+    );
+  }
+
+  private async finishOnce(
+    work: DurableWork,
+    token: string,
+    status: string,
+    error: string | null,
+    attempt: number,
+    hook?: NonNullable<WorkHandlerOptions['onTerminalFailure']>,
+    failure?: { hook: boolean },
+  ) {
     await this.prisma.$transaction(async (tx) => {
       const delay = Math.min(3600000, 5000 * 2 ** Math.max(0, attempt - 1));
       const result = await tx.$executeRaw`
@@ -154,6 +233,14 @@ export class JobsService {
           where: { id: work.key, status: { not: 'SENT' } },
           data: { status: 'FAILED', error },
         });
+      }
+      if (result && hook) {
+        try {
+          await hook(tx, work, error);
+        } catch (caught: unknown) {
+          if (failure) failure.hook = true;
+          throw caught;
+        }
       }
     });
   }
@@ -172,7 +259,8 @@ export class JobsService {
       );
     const payload = work.payload;
     return (
-      work.kind === 'EMAIL' &&
+      (work.kind === 'EMAIL' ||
+        this.handlerOptions.get(work.kind)?.payloadAcceptance === true) &&
       payload !== null &&
       typeof payload === 'object' &&
       !Array.isArray(payload) &&
