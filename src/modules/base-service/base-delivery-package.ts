@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
+import type { BaseDelivery, BaseServiceScope } from '@prisma/client';
 import {
   assertSubscriberStampFits,
   normalizeClientName,
@@ -30,6 +31,39 @@ export interface DeliveryPackageInput {
   objetivo: string;
   dias: number;
   mes: number;
+  /** What the subscriber contracted; decides which PDFs are included. */
+  scope: BaseServiceScope;
+}
+
+/** The request snapshot of a delivery that every send of it reuses. */
+export type DeliveryRequestSnapshot = Pick<
+  BaseDelivery,
+  | 'month'
+  | 'snapshot_goal'
+  | 'snapshot_days_per_week'
+  | 'snapshot_service_scope'
+  | 'snapshot_order_code'
+>;
+
+/**
+ * Package input of one send (retry or resend) of an existing delivery:
+ * route, month, order code and scope are the delivery's request snapshot,
+ * never the subscriber's current values; only the recipient belongs to the
+ * send.
+ */
+export function deliverySendInput(
+  delivery: DeliveryRequestSnapshot,
+  recipient: { name: string; email: string },
+): DeliveryPackageInput {
+  return {
+    name: recipient.name,
+    email: recipient.email,
+    orderCode: delivery.snapshot_order_code,
+    objetivo: delivery.snapshot_goal,
+    dias: delivery.snapshot_days_per_week,
+    mes: delivery.month,
+    scope: delivery.snapshot_service_scope,
+  };
 }
 
 export interface DeliveryFile {
@@ -66,6 +100,7 @@ export async function buildDeliveryPackage(
     input.objetivo,
     input.dias,
     input.mes,
+    input.scope,
   );
   const stampOptions = {
     text: buildStampText(name, email, orderCode),

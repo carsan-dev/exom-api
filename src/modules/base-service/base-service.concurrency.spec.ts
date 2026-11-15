@@ -12,7 +12,7 @@ import { PDFDocument } from '@cantoo/pdf-lib';
 import { HttpException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient, Role } from '@prisma/client';
+import { BaseServiceScope, PrismaClient, Role } from '@prisma/client';
 import { Pool } from 'pg';
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -2415,6 +2415,113 @@ function parseSent(body: string): SentRequest['json'] {
             month: 2,
           });
         });
+      });
+    });
+
+    describe('service scope', () => {
+      const withScope = (service_scope: BaseServiceScope) =>
+        subscribers.create(
+          {
+            name: 'Ana Pérez',
+            email: uniqueEmail(),
+            goal: GOAL,
+            days_per_week: 3,
+            service_scope,
+          },
+          admin,
+        );
+      const sources = (files: { source_key: string }[]) =>
+        files.map((file) => file.source_key);
+      const fail500Once = () =>
+        fetchMock.mockImplementation((_url, init) => {
+          record(init);
+          return Promise.resolve(
+            sent.length === 1
+              ? new Response(
+                  JSON.stringify({ name: 'internal_server_error' }),
+                  { status: 500 },
+                )
+              : accept(`msg-${sent.length}`),
+          );
+        });
+
+      it('existing clients keep BOTH: a subscriber created without scope gets every PDF', async () => {
+        const s = await newSubscriber();
+        expect(s.service_scope).toBe('BOTH');
+        const d = await deliveries.create(s.id, 1, admin);
+        expect(d.snapshot_service_scope).toBe('BOTH');
+        expect(sources(d.files)).toEqual([training(3, 1), guide(1), START]);
+      });
+
+      it('TRAINING records and sends only the training block', async () => {
+        const s = await withScope(BaseServiceScope.TRAINING);
+        expect(s.service_scope).toBe('TRAINING');
+        const d = await deliveries.create(s.id, 1, admin);
+        expect(d.snapshot_service_scope).toBe('TRAINING');
+        expect(sources(d.files)).toEqual([training(3, 1)]);
+        await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+        expect(sent).toHaveLength(1);
+        expect(sent[0].json.attachments.map((file) => file.filename)).toEqual([
+          training(3, 1).split('/').at(-1),
+        ]);
+        expect(sent[0].json.text.toLowerCase()).not.toContain('nutrici');
+        expect((await delivery(d.id)).status).toBe('SENT');
+      });
+
+      it('NUTRITION records the guide and, in month 1, the start guide', async () => {
+        const s = await withScope(BaseServiceScope.NUTRITION);
+        const d = await deliveries.create(s.id, 1, admin);
+        expect(sources(d.files)).toEqual([guide(1), START]);
+        await jobs.runKey(baseDeliveryWorkKey(d.id, 1));
+        expect(sent).toHaveLength(1);
+        expect(sent[0].json.text.toLowerCase()).not.toContain('entrenamiento');
+        expect((await delivery(d.id)).status).toBe('SENT');
+      });
+
+      it('a retry and a resend keep the scope of the delivery, not the edited subscriber', async () => {
+        const s = await withScope(BaseServiceScope.NUTRITION);
+        const d = await deliveries.create(s.id, 1, admin);
+        const key = baseDeliveryWorkKey(d.id, 1);
+        await subscribers.update(
+          s.id,
+          { service_scope: BaseServiceScope.TRAINING },
+          admin,
+        );
+        expect((await subscribers.get(s.id)).service_scope).toBe('TRAINING');
+        fail500Once();
+        await jobs.runKey(key);
+        expect((await work(key)).status).toBe('PENDING');
+        await due(key);
+        await jobs.runKey(key);
+        expect(sent).toHaveLength(2);
+        expect(sent[1].body).toBe(sent[0].body);
+        expect(await delivery(d.id)).toMatchObject({
+          status: 'SENT',
+          snapshot_service_scope: 'NUTRITION',
+        });
+        const resent = await deliveries.resend(s.id, d.id, admin);
+        expect(resent.snapshot_service_scope).toBe('NUTRITION');
+        await jobs.runKey(baseDeliveryWorkKey(d.id, 2));
+        expect(sent).toHaveLength(3);
+        expect(sent[2].json.attachments.map((file) => file.filename)).toEqual(
+          [guide(1), START].map((sourceKey) => sourceKey.split('/').at(-1)),
+        );
+        expect((await delivery(d.id)).status).toBe('SENT');
+        // The next month uses the edited scope.
+        const d2 = await deliveries.create(s.id, 2, admin);
+        expect(d2.snapshot_service_scope).toBe('TRAINING');
+        expect(sources(d2.files)).toEqual([training(3, 2)]);
+      });
+
+      it('the snapshot scope is immutable in the database', async () => {
+        const s = await withScope(BaseServiceScope.TRAINING);
+        const d = await deliveries.create(s.id, 1, admin);
+        await expect(
+          pool.query(
+            `UPDATE base_deliveries SET snapshot_service_scope = 'BOTH' WHERE id = $1`,
+            [d.id],
+          ),
+        ).rejects.toMatchObject({ code: '23514' });
       });
     });
   },

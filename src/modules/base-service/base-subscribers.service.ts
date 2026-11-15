@@ -1,5 +1,5 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { BaseDeliveryStatus, Prisma } from '@prisma/client';
+import { BaseDeliveryStatus, BaseServiceScope, Prisma } from '@prisma/client';
 import { allOf, searchPredicate } from '../../common/query-page';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -45,6 +45,8 @@ export interface BaseSubscriberView {
   email: string;
   goal: string;
   days_per_week: number;
+  /** What the subscriber contracted; applies to deliveries requested from now on. */
+  service_scope: BaseServiceScope;
   notes: string | null;
   is_archived: boolean;
   archived_at: Date | null;
@@ -73,6 +75,7 @@ interface SubscriberRow {
   email: string;
   goal: string;
   days_per_week: number;
+  service_scope: string;
   notes: string | null;
   is_archived: boolean;
   archived_at: Date | null;
@@ -88,7 +91,8 @@ interface SubscriberRow {
 }
 
 const projection = Prisma.sql`
-  SELECT s.id, s.order_code, s.name, s.email, s.goal, s.days_per_week, s.notes,
+  SELECT s.id, s.order_code, s.name, s.email, s.goal, s.days_per_week,
+    s.service_scope::text AS service_scope, s.notes,
     s.is_archived, s.archived_at, s.created_by_id, s.created_at, s.updated_at,
     agg.last_sent_month, COALESCE(agg.max_month, 0) + 1 AS next_month,
     latest.id AS latest_id, latest.month AS latest_month,
@@ -112,6 +116,20 @@ function latestStatus(value: string): BaseDeliveryStatus {
   return status;
 }
 
+const SERVICE_SCOPES: readonly BaseServiceScope[] =
+  Object.values(BaseServiceScope);
+
+export function parseServiceScope(value: string): BaseServiceScope | null {
+  return SERVICE_SCOPES.find((scope) => scope === value) ?? null;
+}
+
+function serviceScope(value: string): BaseServiceScope {
+  const scope = parseServiceScope(value);
+  if (!scope)
+    throw new InternalServerErrorException('BASE_SERVICE_SCOPE_INVALID');
+  return scope;
+}
+
 function toView(row: SubscriberRow): BaseSubscriberView {
   return {
     id: row.id,
@@ -120,6 +138,7 @@ function toView(row: SubscriberRow): BaseSubscriberView {
     email: row.email,
     goal: row.goal,
     days_per_week: row.days_per_week,
+    service_scope: serviceScope(row.service_scope),
     notes: row.notes,
     is_archived: row.is_archived,
     archived_at: row.archived_at,
@@ -157,6 +176,7 @@ interface NormalizedFields {
   email?: string;
   goal?: string;
   days_per_week?: number;
+  service_scope?: BaseServiceScope;
   notes?: string | null;
 }
 
@@ -256,6 +276,15 @@ export class BaseSubscribersService {
         );
       fields.days_per_week = input.days_per_week;
     }
+    if (input.service_scope !== undefined) {
+      const scope = parseServiceScope(input.service_scope);
+      if (!scope)
+        throw baseHttp.badRequest(
+          'INVALID_SERVICE_SCOPE',
+          'Lo contratado debe ser TRAINING, NUTRITION o BOTH.',
+        );
+      fields.service_scope = scope;
+    }
     if (input.notes !== undefined) {
       const notes =
         input.notes === null
@@ -324,6 +353,8 @@ export class BaseSubscribersService {
             email,
             goal,
             days_per_week,
+            // Older admin builds send no scope: everything, as before.
+            service_scope: fields.service_scope ?? BaseServiceScope.BOTH,
             notes: fields.notes ?? null,
             created_by_id: actor.id,
           },

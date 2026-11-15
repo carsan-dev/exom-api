@@ -253,6 +253,21 @@ describe('Base service HTTP: guards, validation and error contract', () => {
         order_code: 'X',
       },
     ],
+    ...['training', 'ALL', '', 1, null, ['BOTH']].map(
+      (service_scope): [Method, string, object] => [
+        'post',
+        '/subscribers',
+        {
+          name: 'Ana',
+          email: 'a@example.test',
+          goal: 'x',
+          days_per_week: 3,
+          service_scope,
+        },
+      ],
+    ),
+    ['patch', `/subscribers/${SUBSCRIBER}`, { service_scope: 'nutrition' }],
+    ['patch', `/subscribers/${SUBSCRIBER}`, { service_scope: null }],
     ['patch', `/subscribers/${SUBSCRIBER}`, { is_archived: true }],
     ['patch', `/subscribers/${SUBSCRIBER}`, { days_per_week: 0 }],
     ['patch', '/subscribers/not-a-uuid', { notes: 'x' }],
@@ -296,6 +311,50 @@ describe('Base service HTTP: guards, validation and error contract', () => {
       for (const mock of allMocks) expect(mock).not.toHaveBeenCalled();
     },
   );
+
+  it('service_scope: optional on create, accepted on edit, one of TRAINING | NUTRITION | BOTH', async () => {
+    const base = {
+      name: 'Ana',
+      email: 'a@example.test',
+      goal: 'x',
+      days_per_week: 3,
+    };
+    // Older admin builds send no scope: still valid, the service defaults it.
+    let received: object | undefined;
+    subscribers.create.mockImplementationOnce((dto: object) => {
+      received = dto;
+      return Promise.resolve({ ok: 1 });
+    });
+    const legacy = await call('post', '/subscribers', base, 'token-admin');
+    expect(legacy.status).toBe(201);
+    // toEqual ignores undefined properties: no scope value reaches the service.
+    expect(received).toEqual(base);
+    for (const service_scope of ['TRAINING', 'NUTRITION', 'BOTH']) {
+      const created = await call(
+        'post',
+        '/subscribers',
+        { ...base, service_scope },
+        'token-admin',
+      );
+      expect(created.status).toBe(201);
+      expect(subscribers.create).toHaveBeenLastCalledWith(
+        expect.objectContaining({ service_scope }),
+        expect.objectContaining({ id: 'id-token-admin' }),
+      );
+      const edited = await call(
+        'patch',
+        `/subscribers/${SUBSCRIBER}`,
+        { service_scope },
+        'token-admin',
+      );
+      expect(edited.status).toBe(200);
+      expect(subscribers.update).toHaveBeenLastCalledWith(
+        SUBSCRIBER,
+        expect.objectContaining({ service_scope }),
+        expect.objectContaining({ id: 'id-token-admin' }),
+      );
+    }
+  });
 
   it('resend: no body (older admin builds), {} and false never confirm; true does', async () => {
     const path = `/subscribers/${SUBSCRIBER}/deliveries/${DELIVERY}/resend`;

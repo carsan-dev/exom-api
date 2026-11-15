@@ -1,8 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
+import { BaseServiceScope } from '@prisma/client';
 import {
   IsBoolean,
   IsEmail,
+  IsEnum,
   IsIn,
   IsInt,
   IsOptional,
@@ -69,6 +71,17 @@ export class BaseSubscriberFieldsDto {
   @Max(7)
   days_per_week?: number;
 
+  @ApiPropertyOptional({
+    enum: BaseServiceScope,
+    enumName: 'BaseServiceScope',
+    description:
+      'What the subscriber contracted: TRAINING (training block only), NUTRITION (nutrition guide and, in month 1, the start guide) or BOTH. Applies to deliveries requested afterwards; existing deliveries keep their snapshot_service_scope.',
+  })
+  @Provided()
+  @RawInput()
+  @IsEnum(BaseServiceScope)
+  service_scope?: BaseServiceScope;
+
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 })
   @ValidateIf(
     (_object: unknown, value: unknown) => value !== undefined && value !== null,
@@ -109,6 +122,18 @@ export class CreateBaseSubscriberDto {
   @Min(1)
   @Max(7)
   days_per_week!: number;
+
+  @ApiPropertyOptional({
+    enum: BaseServiceScope,
+    enumName: 'BaseServiceScope',
+    default: BaseServiceScope.BOTH,
+    description:
+      'What the subscriber contracted: TRAINING (training block only), NUTRITION (nutrition guide and, in month 1, the start guide) or BOTH. Omitted: BOTH.',
+  })
+  @Provided()
+  @RawInput()
+  @IsEnum(BaseServiceScope)
+  service_scope?: BaseServiceScope;
 
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 })
   @ValidateIf(

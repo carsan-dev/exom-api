@@ -306,6 +306,15 @@
         ],
         "type": "object"
       },
+      "BaseServiceScope": {
+        "description": "What the subscriber contracted: TRAINING (training block only), NUTRITION (nutrition guide and, in month 1, the start guide) or BOTH. Omitted: BOTH.",
+        "enum": [
+          "TRAINING",
+          "NUTRITION",
+          "BOTH"
+        ],
+        "type": "string"
+      },
       "BatchAssignDaysDto": {
         "additionalProperties": false,
         "properties": {
@@ -1385,6 +1394,15 @@
             "maxLength": 2000,
             "nullable": true,
             "type": "string"
+          },
+          "service_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BaseServiceScope"
+              }
+            ],
+            "default": "BOTH",
+            "description": "What the subscriber contracted: TRAINING (training block only), NUTRITION (nutrition guide and, in month 1, the start guide) or BOTH. Omitted: BOTH."
           }
         },
         "required": [
@@ -6378,6 +6396,14 @@
             "maxLength": 2000,
             "nullable": true,
             "type": "string"
+          },
+          "service_scope": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BaseServiceScope"
+              }
+            ],
+            "description": "What the subscriber contracted: TRAINING (training block only), NUTRITION (nutrition guide and, in month 1, the start guide) or BOTH. Applies to deliveries requested afterwards; existing deliveries keep their snapshot_service_scope."
           }
         },
         "type": "object"
@@ -10370,6 +10396,13 @@
           "order_code": {
             "type": "string"
           },
+          "service_scope": {
+            "enum": [
+              "BOTH",
+              "TRAINING",
+              "NUTRITION"
+            ]
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
@@ -10382,6 +10415,7 @@
           "email",
           "goal",
           "days_per_week",
+          "service_scope",
           "notes",
           "is_archived",
           "archived_at",
@@ -10498,6 +10532,13 @@
           "snapshot_order_code": {
             "type": "string"
           },
+          "snapshot_service_scope": {
+            "enum": [
+              "BOTH",
+              "TRAINING",
+              "NUTRITION"
+            ]
+          },
           "status": {
             "enum": [
               "FAILED",
@@ -10523,6 +10564,7 @@
           "snapshot_email",
           "snapshot_goal",
           "snapshot_days_per_week",
+          "snapshot_service_scope",
           "snapshot_order_code",
           "files",
           "requested_by_id",

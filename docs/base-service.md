@@ -12,6 +12,22 @@ Suscripción mensual separada del coaching de la App. Cada mes pagado, un admin 
 
 Ambas tablas tienen RLS activado sin políticas de cliente y sin permisos para `anon`/`authenticated`, como el resto de tablas de la API.
 
+## Alcance contratado (migración `20261115120000_base_service_scope`)
+
+`base_subscribers.service_scope` (enum `BaseServiceScope`: `TRAINING`, `NUTRITION`, `BOTH`; `NOT NULL DEFAULT 'BOTH'`) indica qué ha contratado el suscriptor. `base_deliveries.snapshot_service_scope` (mismo enum y default) lo fija al pedir el mes y forma parte de la instantánea inmutable (trigger `exom_base_delivery_snapshot_immutable`, reemplazado por la migración para incluirla). Las filas anteriores quedan en `BOTH`, que selecciona exactamente lo mismo que antes.
+
+| Alcance | PDF del mes N |
+| --- | --- |
+| `BOTH` | Bloque de entrenamiento (objetivo, días, N), guía de nutrición (objetivo, N) y, en el mes 1, la guía de inicio. |
+| `TRAINING` | Solo el bloque de entrenamiento. No necesita la guía de nutrición ni la de inicio. |
+| `NUTRITION` | Guía de nutrición y, en el mes 1, la guía de inicio (`nutricion/`). No necesita el bloque de entrenamiento ni que existan esos días; el objetivo sigue debiendo existir en `entrenamiento/` y `days_per_week` sigue siendo obligatorio y validado al dar de alta o cambiar objetivo/días. |
+
+- API: `service_scope` opcional en `POST .../subscribers` (omitido = `BOTH`) y en `PATCH .../subscribers/:id` (omitido = sin cambio); otro valor o `null`, 400. Las respuestas de suscriptor incluyen `service_scope` y las de entrega `snapshot_service_scope`.
+- Un cambio de alcance solo afecta a los meses pedidos después. Reintentos y reenvíos de una entrega usan su `snapshot_service_scope` (igual que objetivo, días y pedido), nunca el valor actual del suscriptor. Pedir un mes compara el alcance leído antes del bloqueo con el bloqueado (409 `SUBSCRIBER_CHANGED` si cambió).
+- Falta de material: el apartado incluido sin contenido da los errores de siempre (409 `NO_CONTENT_FOR_MONTH`, 503 `AMBIGUOUS_CONTENT`/`MISSING_START_GUIDE`); los apartados no incluidos no se comprueban. Una selección vacía no se envía nunca: 409 `EMPTY_PACKAGE` (inalcanzable con los tres valores del enum; además `base_deliveries_files_check` exige al menos un archivo y el worker no reconstruye un paquete vacío).
+- El email describe cada adjunto a partir de su ruta, así que solo nombra el material que lleva; asunto y cuerpo genéricos («Tu material del mes N») no cambian.
+- `GET .../routes` sigue calculando los meses disponibles para `BOTH` (bloque y guía): para `TRAINING` o `NUTRITION` puede omitir meses que sí se pueden enviar.
+
 ## Flujo
 
 1. Alta/edición: nombre y email se normalizan y se validan contra la tipografía del sello; después, juntos, deben caber en la línea de licencia (regla de longitud del sello, abajo; 400 `STAMP_TOO_LONG`). Una edición de solo uno de los dos se comprueba con el otro tal como está guardado, bajo el bloqueo de la fila. Objetivo y días deben existir en el catálogo. Los cambios solo afectan a entregas futuras.
@@ -126,7 +142,7 @@ Una entrega cuya fila está `PENDING` y cuyo envío ACTUAL (clave `base-delivery
 1. Crear en la cuenta R2 existente un bucket privado nuevo (sin dominio público ni acceso `r2.dev`) y confirmar que las credenciales de la API pueden leerlo (listar y leer objetos).
 2. Subir los 91 PDF de `exom-site/exom-base-pdfs` respetando las carpetas (`entrenamiento/<objetivo>/...`, `nutricion/<objetivo>/...`, `nutricion/EXOM_Nutricion_Guia-de-inicio.pdf`) en la raíz del bucket, y verificar los SHA-256 contra el manifiesto de entrega.
 3. Configurar `R2_BASE_PDF_BUCKET` (y comprobar `RESEND_*`, `SUPPORT_URL`) en el entorno de la API.
-4. Aplicar la migración `20261114120000_base_service` con `prisma migrate deploy` en el entorno autorizado, después de validarla (`node scripts/validate-base-service-migration.cjs` contra la base desechable).
+4. Aplicar la migración `20261114120000_base_service` con `prisma migrate deploy` en el entorno autorizado, después de validarla (`node scripts/validate-base-service-migration.cjs` contra la base desechable). Después, `20261115120000_base_service_scope` (aditiva; `prisma migrate deploy` aplica ambas en orden). `validate-base-service-migration.cjs` exige que su migración sea la última, así que ya no sirve tal cual para validar la segunda.
 5. Desplegar la API y comprobar `GET /api/v1/admin/base-service/routes` antes del primer envío real.
 
 ## Deuda abierta

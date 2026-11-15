@@ -75,6 +75,7 @@ export function mapSourceError(
           ? baseHttp.badRequest(error.code, error.message)
           : baseHttp.conflict(error.code, error.message);
       case 'NO_CONTENT_FOR_MONTH':
+      case 'EMPTY_PACKAGE':
         return baseHttp.conflict(error.code, error.message);
       case 'EMPTY_CATALOG':
       case 'AMBIGUOUS_CONTENT':
