@@ -5833,6 +5833,13 @@
         "days_per_week": {
           "type": "number"
         },
+        "service_scope": {
+          "enum": [
+            "BOTH",
+            "TRAINING",
+            "NUTRITION"
+          ]
+        },
         "notes": {
           "$ref": "#/components/schemas/Wire9"
         },
@@ -5873,6 +5880,7 @@
         "email",
         "goal",
         "days_per_week",
+        "service_scope",
         "notes",
         "is_archived",
         "archived_at",
@@ -5964,6 +5972,13 @@
         "snapshot_days_per_week": {
           "type": "number"
         },
+        "snapshot_service_scope": {
+          "enum": [
+            "BOTH",
+            "TRAINING",
+            "NUTRITION"
+          ]
+        },
         "snapshot_order_code": {
           "type": "string"
         },
@@ -6014,6 +6029,7 @@
         "snapshot_email",
         "snapshot_goal",
         "snapshot_days_per_week",
+        "snapshot_service_scope",
         "snapshot_order_code",
         "files",
         "requested_by_id",
