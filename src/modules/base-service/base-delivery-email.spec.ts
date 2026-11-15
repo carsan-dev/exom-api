@@ -49,6 +49,43 @@ describe('buildBaseDeliveryEmail', () => {
     expect(text).toContain('responde a este correo');
   });
 
+  it('a training-only send mentions only the training block', () => {
+    const { subject, text, html } = buildBaseDeliveryEmail({
+      name: 'Ana',
+      month: 1,
+      daysPerWeek: 3,
+      files: MONTH_1.slice(0, 1),
+    });
+    expect(subject).toBe('EXOM · Tu material del mes 1');
+    expect(text).toContain(
+      'Bloque de entrenamiento del mes 1 (3 días por semana)',
+    );
+    for (const body of [subject, text, html]) {
+      expect(body.toLowerCase()).not.toContain('nutrici');
+      expect(body).not.toContain('Guía de inicio');
+    }
+  });
+
+  it('a nutrition-only send mentions only the nutrition guides', () => {
+    for (const [month, files] of [
+      [1, MONTH_1.slice(1)],
+      [2, MONTH_1.slice(1, 2)],
+    ] as const) {
+      const { subject, text, html } = buildBaseDeliveryEmail({
+        name: 'Ana',
+        month,
+        daysPerWeek: 3,
+        files,
+      });
+      expect(text).toContain(`Guía de nutrición del mes ${month}`);
+      expect(text.includes('Guía de inicio')).toBe(month === 1);
+      for (const body of [subject, text, html]) {
+        expect(body.toLowerCase()).not.toContain('entrenamiento');
+        expect(body).not.toContain('días por semana');
+      }
+    }
+  });
+
   it('does not mention a start guide after month 1', () => {
     const { text } = buildBaseDeliveryEmail({
       name: 'Ana',

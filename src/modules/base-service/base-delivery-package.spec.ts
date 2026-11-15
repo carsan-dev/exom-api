@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { PDFDocument } from '@cantoo/pdf-lib';
+import { BaseServiceScope } from '@prisma/client';
 import { BaseServiceError } from './base-service.error';
 import { BasePdfSource } from './base-pdf-source';
 import { buildDeliveryPackage } from './base-delivery-package';
@@ -53,6 +54,7 @@ describe('buildDeliveryPackage', () => {
       objetivo: 'x',
       dias: 3,
       mes: 1,
+      scope: BaseServiceScope.BOTH,
     });
 
     expect(result.files.map((file) => file.sourceKey)).toEqual([
@@ -87,6 +89,7 @@ describe('buildDeliveryPackage', () => {
       objetivo: 'x',
       dias: 3,
       mes: 2,
+      scope: BaseServiceScope.BOTH,
     });
     expect(result.files.map((file) => file.sourceKey)).toEqual([
       TRAINING_2,
@@ -103,6 +106,7 @@ describe('buildDeliveryPackage', () => {
       objetivo: 'x',
       dias: 3,
       mes: 1,
+      scope: BaseServiceScope.BOTH,
     }).catch((error: unknown) => error);
     const badCode = await buildDeliveryPackage(source, {
       name: 'Ana',
@@ -111,6 +115,7 @@ describe('buildDeliveryPackage', () => {
       objetivo: 'x',
       dias: 3,
       mes: 1,
+      scope: BaseServiceScope.BOTH,
     }).catch((error: unknown) => error);
     const badMonth = await buildDeliveryPackage(source, {
       name: 'Ana',
@@ -119,6 +124,7 @@ describe('buildDeliveryPackage', () => {
       objetivo: 'x',
       dias: 3,
       mes: 4,
+      scope: BaseServiceScope.BOTH,
     }).catch((error: unknown) => error);
     const badEmail = await buildDeliveryPackage(source, {
       name: 'Ana',
@@ -127,6 +133,7 @@ describe('buildDeliveryPackage', () => {
       objetivo: 'x',
       dias: 3,
       mes: 1,
+      scope: BaseServiceScope.BOTH,
     }).catch((error: unknown) => error);
 
     expect(badEmail).toMatchObject({ code: 'INVALID_EMAIL' });
@@ -137,5 +144,45 @@ describe('buildDeliveryPackage', () => {
     expect(badMonth).toBeInstanceOf(BaseServiceError);
     expect(badMonth).toMatchObject({ code: 'NO_CONTENT_FOR_MONTH' });
     expect(source.reads).toEqual([]);
+  });
+
+  it('TRAINING stamps and reads only the training block', async () => {
+    const source = new MemorySource(files);
+    const result = await buildDeliveryPackage(source, {
+      name: 'Ana',
+      email: 'ana@example.test',
+      orderCode: 'EX-1',
+      objetivo: 'x',
+      dias: 3,
+      mes: 1,
+      scope: BaseServiceScope.TRAINING,
+    });
+    expect(result.files.map((file) => file.sourceKey)).toEqual([TRAINING]);
+    expect(source.reads).toEqual([TRAINING]);
+  });
+
+  it('NUTRITION stamps and reads only the nutrition guides', async () => {
+    const source = new MemorySource(files);
+    const month1 = await buildDeliveryPackage(source, {
+      name: 'Ana',
+      email: 'ana@example.test',
+      orderCode: 'EX-1',
+      objetivo: 'x',
+      dias: 3,
+      mes: 1,
+      scope: BaseServiceScope.NUTRITION,
+    });
+    const month2 = await buildDeliveryPackage(source, {
+      name: 'Ana',
+      email: 'ana@example.test',
+      orderCode: 'EX-1',
+      objetivo: 'x',
+      dias: 3,
+      mes: 2,
+      scope: BaseServiceScope.NUTRITION,
+    });
+    expect(month1.files.map((file) => file.sourceKey)).toEqual([GUIDE, START]);
+    expect(month2.files.map((file) => file.sourceKey)).toEqual([GUIDE_2]);
+    expect(source.reads).toEqual([GUIDE, START, GUIDE_2]);
   });
 });

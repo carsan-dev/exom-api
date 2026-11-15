@@ -6,6 +6,7 @@ export type BaseServiceErrorCode =
   | 'NO_CONTENT_FOR_MONTH'
   | 'AMBIGUOUS_CONTENT'
   | 'MISSING_START_GUIDE'
+  | 'EMPTY_PACKAGE'
   | 'INVALID_NAME'
   | 'INVALID_EMAIL'
   | 'STAMP_TOO_LONG'

@@ -1,5 +1,11 @@
+import { BaseServiceScope } from '@prisma/client';
 import { BaseServiceError } from './base-service.error';
-import { listRoutes, selectPackage } from './base-package-selection';
+import {
+  listRoutes,
+  scopeMaterial,
+  selectPackage,
+  selectPackageFor,
+} from './base-package-selection';
 
 const START = 'nutricion/EXOM_Nutricion_Guia-de-inicio.pdf';
 
@@ -192,6 +198,206 @@ describe('selectPackage', () => {
       'EXOM_Nutricion_Guia-de-inicio.pdf',
     );
     expect(selectPackage(keys, 'perder-grasa', 3, 2)).toHaveLength(2);
+  });
+});
+
+describe('selectPackage by service scope', () => {
+  const block = (bloque: string) =>
+    training('perder-grasa', 'Perder-grasa', '3', bloque);
+  const nutritionGuide = (guia: string) =>
+    guide('perder-grasa', 'Perder-grasa', guia);
+
+  it('maps each scope to the material it includes', () => {
+    expect(scopeMaterial(BaseServiceScope.TRAINING)).toEqual({
+      training: true,
+      nutrition: false,
+    });
+    expect(scopeMaterial(BaseServiceScope.NUTRITION)).toEqual({
+      training: false,
+      nutrition: true,
+    });
+    expect(scopeMaterial(BaseServiceScope.BOTH)).toEqual({
+      training: true,
+      nutrition: true,
+    });
+  });
+
+  it('BOTH is the default and selects exactly what was selected before scopes', () => {
+    for (const mes of [1, 2]) {
+      expect(
+        selectPackage(
+          catalogue(),
+          'perder-grasa',
+          3,
+          mes,
+          BaseServiceScope.BOTH,
+        ),
+      ).toEqual(selectPackage(catalogue(), 'perder-grasa', 3, mes));
+    }
+    expect(
+      selectPackage(catalogue(), 'perder-grasa', 3, 1, BaseServiceScope.BOTH),
+    ).toEqual([block('01'), nutritionGuide('01'), START]);
+  });
+
+  it('TRAINING selects only the training block, without the start guide', () => {
+    expect(
+      selectPackage(
+        catalogue(),
+        'perder-grasa',
+        3,
+        1,
+        BaseServiceScope.TRAINING,
+      ),
+    ).toEqual([block('01')]);
+    expect(
+      selectPackage(
+        catalogue(),
+        'perder-grasa',
+        3,
+        2,
+        BaseServiceScope.TRAINING,
+      ),
+    ).toEqual([block('02')]);
+  });
+
+  it('NUTRITION selects the nutrition guide and, in month 1, the start guide', () => {
+    expect(
+      selectPackage(
+        catalogue(),
+        'perder-grasa',
+        3,
+        1,
+        BaseServiceScope.NUTRITION,
+      ),
+    ).toEqual([nutritionGuide('01'), START]);
+    expect(
+      selectPackage(
+        catalogue(),
+        'perder-grasa',
+        3,
+        2,
+        BaseServiceScope.NUTRITION,
+      ),
+    ).toEqual([nutritionGuide('02')]);
+  });
+
+  it('TRAINING does not need the nutrition guide nor the start guide', () => {
+    const keys = catalogue().filter(
+      (key) => key !== START && key !== nutritionGuide('01'),
+    );
+    expect(
+      selectPackage(keys, 'perder-grasa', 3, 1, BaseServiceScope.TRAINING),
+    ).toEqual([block('01')]);
+    expectError(
+      () => selectPackage(keys, 'perder-grasa', 3, 1, BaseServiceScope.BOTH),
+      'NO_CONTENT_FOR_MONTH',
+      'guía de nutrición para el mes 1',
+    );
+  });
+
+  it('NUTRITION does not need the training block of the month nor those days', () => {
+    const keys = [
+      ...catalogue().filter((key) => key !== block('02')),
+      nutritionGuide('04'),
+    ];
+    expect(
+      selectPackage(keys, 'perder-grasa', 3, 2, BaseServiceScope.NUTRITION),
+    ).toEqual([nutritionGuide('02')]);
+    expect(
+      selectPackage(keys, 'perder-grasa', 6, 4, BaseServiceScope.NUTRITION),
+    ).toEqual([nutritionGuide('04')]);
+    expectError(
+      () => selectPackage(keys, 'perder-grasa', 3, 2, BaseServiceScope.BOTH),
+      'NO_CONTENT_FOR_MONTH',
+      'entrenamiento para el mes 2',
+    );
+  });
+
+  it('still validates the goal and the month for every scope', () => {
+    for (const scope of Object.values(BaseServiceScope)) {
+      expectError(
+        () => selectPackage(catalogue(), 'nope', 3, 1, scope),
+        'INVALID_GOAL',
+      );
+      expectError(
+        () => selectPackage(catalogue(), 'perder-grasa', 3, 0, scope),
+        'INVALID_MONTH',
+      );
+    }
+    expectError(
+      () =>
+        selectPackage(
+          catalogue(),
+          'perder-grasa',
+          6,
+          1,
+          BaseServiceScope.TRAINING,
+        ),
+      'INVALID_DAYS',
+    );
+  });
+
+  it('reports missing material of the included area only', () => {
+    expectError(
+      () =>
+        selectPackage(
+          catalogue(),
+          'perder-grasa',
+          3,
+          4,
+          BaseServiceScope.TRAINING,
+        ),
+      'NO_CONTENT_FOR_MONTH',
+      'entrenamiento para el mes 4',
+    );
+    expectError(
+      () =>
+        selectPackage(
+          catalogue(),
+          'perder-grasa',
+          3,
+          4,
+          BaseServiceScope.NUTRITION,
+        ),
+      'NO_CONTENT_FOR_MONTH',
+      'guía de nutrición para el mes 4',
+    );
+    const noStart = catalogue().filter((key) => key !== START);
+    expectError(
+      () =>
+        selectPackage(
+          noStart,
+          'perder-grasa',
+          3,
+          1,
+          BaseServiceScope.NUTRITION,
+        ),
+      'MISSING_START_GUIDE',
+    );
+  });
+
+  it('only an ambiguous slot of the included area is ambiguous', () => {
+    const keys = [...catalogue(), guide('perder-grasa', 'Otro', '2')];
+    expect(
+      selectPackage(keys, 'perder-grasa', 3, 2, BaseServiceScope.TRAINING),
+    ).toEqual([block('02')]);
+    expectError(
+      () =>
+        selectPackage(keys, 'perder-grasa', 3, 2, BaseServiceScope.NUTRITION),
+      'AMBIGUOUS_CONTENT',
+      'encontraron 2 de nutrición',
+    );
+  });
+
+  it('never returns an empty selection: no material at all is EMPTY_PACKAGE', () => {
+    expectError(
+      () =>
+        selectPackageFor(catalogue(), 'perder-grasa', 3, 1, {
+          training: false,
+          nutrition: false,
+        }),
+      'EMPTY_PACKAGE',
+    );
   });
 });
 

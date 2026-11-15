@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import { HttpException } from '@nestjs/common';
 import { PDFDocument } from '@cantoo/pdf-lib';
-import { BaseDelivery, BaseDeliveryStatus, Role } from '@prisma/client';
+import {
+  BaseDelivery,
+  BaseDeliveryStatus,
+  BaseServiceScope,
+  Role,
+} from '@prisma/client';
 import { assertRouteExists, isBaseServiceRole } from './base-service.access';
 import {
   baseDeliveryView,
@@ -37,6 +42,7 @@ import {
   sendPossiblyDelivered,
 } from './base-delivery.payload';
 import { stampPdf } from './base-pdf-stamp';
+import { deliverySendInput } from './base-delivery-package';
 
 const TRAINING_1 =
   'entrenamiento/perder-grasa/EXOM_Entrenamiento_Perder-grasa_3-dias_Bloque-01.pdf';
@@ -128,6 +134,8 @@ describe('mapSourceError', () => {
     ['SOURCE_NOT_FOUND', 'delivery', 503],
     ['STAMP_TOO_LONG', 'subscriber', 400],
     ['STAMP_TOO_LONG', 'delivery', 409],
+    ['EMPTY_PACKAGE', 'delivery', 409],
+    ['EMPTY_PACKAGE', 'subscriber', 409],
   ] as const)('%s in %s -> %i', (code, context, status) => {
     const mapped = mapSourceError(new BaseServiceError(code, 'msg'), context);
     expect(httpOf(mapped)).toEqual({ status, code });
@@ -175,6 +183,7 @@ describe('prepareDeliveryFiles / assertMatchesRecorded', () => {
     objetivo: 'perder-grasa',
     dias: 3,
     mes: 1,
+    scope: BaseServiceScope.BOTH,
   };
 
   beforeAll(async () => {
@@ -689,6 +698,7 @@ describe('read-time state of a send and of its delivery', () => {
       snapshot_email: 'ana@example.test',
       snapshot_goal: 'perder-grasa',
       snapshot_days_per_week: 3,
+      snapshot_service_scope: BaseServiceScope.BOTH,
       snapshot_order_code: 'EXB-000001',
       files: [file],
       requested_by_id: 'admin',
@@ -702,6 +712,18 @@ describe('read-time state of a send and of its delivery', () => {
     });
     const byKey = (...rows: ReturnType<typeof failedRow>[]) =>
       new Map(rows.map((entry) => [entry.key, entry]));
+
+    it('shows the scope of the request snapshot', () => {
+      expect(baseDeliveryView(row(), byKey())).toMatchObject({
+        snapshot_service_scope: 'BOTH',
+      });
+      expect(
+        baseDeliveryView(
+          row({ snapshot_service_scope: BaseServiceScope.NUTRITION }),
+          byKey(),
+        ),
+      ).toMatchObject({ snapshot_service_scope: 'NUTRITION' });
+    });
 
     it('a PENDING delivery whose current send is terminally FAILED reads FAILED SEND_STATE_UNRECORDED', () => {
       expect(
@@ -887,5 +909,40 @@ describe('mapDeliveryPackageError (packages of create and resend)', () => {
         mapDeliveryPackageError(new BaseServiceError('INVALID_NAME', 'x')),
       ),
     ).toEqual({ status: 400, code: 'INVALID_NAME' });
+  });
+});
+
+describe('deliverySendInput (retries and resends use the request snapshot)', () => {
+  const snapshot = {
+    month: 2,
+    snapshot_goal: 'perder-grasa',
+    snapshot_days_per_week: 4,
+    snapshot_service_scope: BaseServiceScope.TRAINING,
+    snapshot_order_code: 'EXB-000007',
+  };
+
+  it('takes route, month, order code and scope from the delivery, the recipient from the send', () => {
+    expect(
+      deliverySendInput(snapshot, { name: 'Bea', email: 'bea@example.test' }),
+    ).toEqual({
+      name: 'Bea',
+      email: 'bea@example.test',
+      orderCode: 'EXB-000007',
+      objetivo: 'perder-grasa',
+      dias: 4,
+      mes: 2,
+      scope: BaseServiceScope.TRAINING,
+    });
+  });
+
+  it('keeps each snapshot scope, whatever the subscriber has now', () => {
+    for (const scope of Object.values(BaseServiceScope)) {
+      expect(
+        deliverySendInput(
+          { ...snapshot, snapshot_service_scope: scope },
+          { name: 'Bea', email: 'bea@example.test' },
+        ).scope,
+      ).toBe(scope);
+    }
   });
 });
