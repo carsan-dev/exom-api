@@ -3,7 +3,12 @@ import {
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { BaseDelivery, BaseDeliveryStatus, Prisma } from '@prisma/client';
+import {
+  BaseDelivery,
+  BaseDeliveryStatus,
+  BaseServiceScope,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { enqueueWork } from '../jobs/jobs.service';
@@ -34,7 +39,10 @@ import {
   RecordedDeliveryFile,
   sameSources,
 } from './base-delivery-files';
-import { DeliveryPackageInput } from './base-delivery-package';
+import {
+  DeliveryPackageInput,
+  deliverySendInput,
+} from './base-delivery-package';
 import { BasePdfSourceProvider } from './base-pdf-source.provider';
 import { BasePdfStamper } from './base-pdf-stamper';
 import { subscriberNotFound } from './base-subscribers.service';
@@ -87,6 +95,8 @@ export interface BaseDeliveryView {
   snapshot_email: string;
   snapshot_goal: string;
   snapshot_days_per_week: number;
+  /** Scope contracted when the delivery was requested; all its sends use it. */
+  snapshot_service_scope: BaseServiceScope;
   snapshot_order_code: string;
   files: RecordedDeliveryFile[];
   requested_by_id: string | null;
@@ -145,6 +155,8 @@ interface SubscriberSnapshot {
   email: string;
   goal: string;
   days_per_week: number;
+  /** Read as text: compared with the value the package was built for. */
+  service_scope: string;
   order_code: string;
   is_archived: boolean;
 }
@@ -253,6 +265,7 @@ export function baseDeliveryView(
     snapshot_email: delivery.snapshot_email,
     snapshot_goal: delivery.snapshot_goal,
     snapshot_days_per_week: delivery.snapshot_days_per_week,
+    snapshot_service_scope: delivery.snapshot_service_scope,
     snapshot_order_code: delivery.snapshot_order_code,
     files: files ?? [],
     requested_by_id: delivery.requested_by_id,
@@ -395,6 +408,7 @@ export class BaseDeliveriesService {
         email: true,
         goal: true,
         days_per_week: true,
+        service_scope: true,
         order_code: true,
         is_archived: true,
       },
@@ -412,6 +426,7 @@ export class BaseDeliveriesService {
       objetivo: subscriber.goal,
       dias: subscriber.days_per_week,
       mes: month,
+      scope: subscriber.service_scope,
     });
 
     let deliveryId: string;
@@ -419,7 +434,8 @@ export class BaseDeliveriesService {
       deliveryId = await this.prisma.$transaction(async (tx) => {
         await lockStaffActor(tx, actor);
         const [locked] = await tx.$queryRaw<SubscriberSnapshot[]>`
-          SELECT name, email, goal, days_per_week, order_code, is_archived
+          SELECT name, email, goal, days_per_week,
+            service_scope::text AS service_scope, order_code, is_archived
           FROM base_subscribers WHERE id = ${subscriberId} FOR UPDATE`;
         if (!locked) throw subscriberNotFound();
         if (locked.is_archived) throw subscriberArchived();
@@ -428,6 +444,7 @@ export class BaseDeliveriesService {
           locked.email !== subscriber.email ||
           locked.goal !== subscriber.goal ||
           locked.days_per_week !== subscriber.days_per_week ||
+          locked.service_scope !== subscriber.service_scope ||
           locked.order_code !== subscriber.order_code
         )
           throw subscriberChanged();
@@ -444,6 +461,8 @@ export class BaseDeliveriesService {
             snapshot_email: locked.email,
             snapshot_goal: locked.goal,
             snapshot_days_per_week: locked.days_per_week,
+            // Equal to the locked value (checked above); typed as the enum.
+            snapshot_service_scope: subscriber.service_scope,
             snapshot_order_code: locked.order_code,
             files: recorded.map((file) => ({ ...file })),
             requested_by_id: actor.id,
@@ -497,8 +516,8 @@ export class BaseDeliveriesService {
    * the delivery must still be in the state the request was prepared
    * against (409 DELIVERY_CHANGED otherwise). The new send goes to the
    * subscriber's CURRENT name and email (re-validated and re-stamped exactly
-   * like a new delivery); goal, days, month and order code stay those of the
-   * delivery. The package is the CURRENT catalogue material of that month and
+   * like a new delivery); goal, days, scope, month and order code stay those
+   * of the delivery. The package is the CURRENT catalogue material of that month and
    * route; if it differs (bytes or file set) from the reference, the material
    * recorded by the delivery's latest send, the resend needs
    * `acceptChangedSource` (409 SOURCE_CHANGED_SINCE_DELIVERY otherwise). The
@@ -553,14 +572,9 @@ export class BaseDeliveriesService {
       deliveryFiles,
     );
 
-    const files = await this.preparePackage({
-      name: subscriber.name,
-      email: subscriber.email,
-      orderCode: delivery.snapshot_order_code,
-      objetivo: delivery.snapshot_goal,
-      dias: delivery.snapshot_days_per_week,
-      mes: delivery.month,
-    });
+    const files = await this.preparePackage(
+      deliverySendInput(delivery, subscriber),
+    );
     const material = compareResendMaterial(deliveryFiles, reference, files);
     if (material.changedSinceReference && options.acceptChangedSource !== true)
       throw sourceChangedSinceDelivery(delivery.month);

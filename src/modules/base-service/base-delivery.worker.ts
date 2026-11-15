@@ -29,6 +29,7 @@ import {
   sameSources,
 } from './base-delivery-files';
 import { buildBaseDeliveryEmail } from './base-delivery-email';
+import { deliverySendInput } from './base-delivery-package';
 import {
   basePayloadJson,
   BaseDeliveryWorkPayload,
@@ -288,7 +289,7 @@ export class BaseDeliveryWorker implements OnModuleInit {
 
   /**
    * Rebuilds the stamped PDFs of THIS send (its recipient, the delivery's
-   * route) and checks them against the hashes the send recorded.
+   * route and scope) and checks them against the hashes the send recorded.
    */
   private async buildAttachments(
     delivery: BaseDelivery,
@@ -298,14 +299,7 @@ export class BaseDeliveryWorker implements OnModuleInit {
     try {
       prepared = await prepareDeliveryFiles(
         this.sources.source(),
-        {
-          name: payload.name,
-          email: payload.email,
-          orderCode: delivery.snapshot_order_code,
-          objetivo: delivery.snapshot_goal,
-          dias: delivery.snapshot_days_per_week,
-          mes: delivery.month,
-        },
+        deliverySendInput(delivery, payload),
         (source, options) => this.stamper.stamp(source, options),
       );
     } catch (error) {

@@ -1,3 +1,4 @@
+import { BaseServiceScope } from '@prisma/client';
 import { BaseServiceError } from './base-service.error';
 
 /**
@@ -111,11 +112,34 @@ function joinOrNone(values: readonly (string | number)[]): string {
   return values.length > 0 ? values.join(', ') : 'ninguno';
 }
 
+/** Areas of the catalogue a package includes. */
+export interface PackageMaterial {
+  /** The training block of the month (entrenamiento/). */
+  training: boolean;
+  /** The nutrition guide of the month and, in month 1, the start guide. */
+  nutrition: boolean;
+}
+
+/** What each contracted scope receives. */
+export function scopeMaterial(scope: BaseServiceScope): PackageMaterial {
+  switch (scope) {
+    case BaseServiceScope.TRAINING:
+      return { training: true, nutrition: false };
+    case BaseServiceScope.NUTRITION:
+      return { training: false, nutrition: true };
+    case BaseServiceScope.BOTH:
+      return { training: true, nutrition: true };
+  }
+}
+
+const BOTH_MATERIAL = scopeMaterial(BaseServiceScope.BOTH);
+
 function selectFromCatalogue(
   catalogue: Catalogue,
   objetivo: string,
   dias: number,
   mes: number,
+  material: PackageMaterial = BOTH_MATERIAL,
 ): string[] {
   if (catalogue.objetivos.length === 0) {
     throw new BaseServiceError(
@@ -130,9 +154,10 @@ function selectFromCatalogue(
     );
   }
 
+  // Days only matter for the training block.
   const training = catalogue.training.get(objetivo) ?? [];
   const diasFound = sortedNumbers(training.map((entry) => entry.dias));
-  if (!diasFound.includes(dias)) {
+  if (material.training && !diasFound.includes(dias)) {
     throw new BaseServiceError(
       'INVALID_DAYS',
       `Días por semana no válidos: ${dias}. Disponibles para ${objetivo}: ${diasFound.join(', ')}.`,
@@ -147,7 +172,7 @@ function selectFromCatalogue(
 
   const blocks = training.filter((entry) => entry.dias === dias);
   const train = blocks.filter((entry) => entry.bloque === mes);
-  if (train.length === 0) {
+  if (material.training && train.length === 0) {
     const blockMonths = sortedNumbers(blocks.map((entry) => entry.bloque));
     throw new BaseServiceError(
       'NO_CONTENT_FOR_MONTH',
@@ -158,7 +183,7 @@ function selectFromCatalogue(
 
   const nutrition = catalogue.nutrition.get(objetivo) ?? [];
   const guide = nutrition.filter((entry) => entry.guia === mes);
-  if (guide.length === 0) {
+  if (material.nutrition && guide.length === 0) {
     const guideMonths = sortedNumbers(nutrition.map((entry) => entry.guia));
     throw new BaseServiceError(
       'NO_CONTENT_FOR_MONTH',
@@ -166,40 +191,78 @@ function selectFromCatalogue(
         `Meses disponibles: ${joinOrNone(guideMonths)}.`,
     );
   }
-  if (train.length !== 1 || guide.length !== 1) {
+  const ambiguous =
+    (material.training && train.length !== 1) ||
+    (material.nutrition && guide.length !== 1);
+  if (ambiguous) {
+    const found = [
+      material.training ? `${train.length} de entrenamiento` : null,
+      material.nutrition ? `${guide.length} de nutrición` : null,
+    ].filter((part): part is string => part !== null);
     throw new BaseServiceError(
       'AMBIGUOUS_CONTENT',
       `Se esperaba un único archivo por apartado para el mes ${mes} y se ` +
-        `encontraron ${train.length} de entrenamiento y ${guide.length} de nutrición.`,
+        `encontraron ${found.join(' y ')}.`,
     );
   }
 
-  const files = [train[0].key, guide[0].key];
-  if (mes === 1) {
-    if (!catalogue.hasStartGuide) {
-      throw new BaseServiceError(
-        'MISSING_START_GUIDE',
-        `Falta la guía de inicio (${START_GUIDE_NAME}).`,
-      );
+  const files: string[] = [];
+  if (material.training) files.push(train[0].key);
+  if (material.nutrition) {
+    files.push(guide[0].key);
+    // The start guide is nutrition material (nutricion/).
+    if (mes === 1) {
+      if (!catalogue.hasStartGuide) {
+        throw new BaseServiceError(
+          'MISSING_START_GUIDE',
+          `Falta la guía de inicio (${START_GUIDE_NAME}).`,
+        );
+      }
+      files.push(START_GUIDE_KEY);
     }
-    files.push(START_GUIDE_KEY);
+  }
+  // Never an email without attachments.
+  if (files.length === 0) {
+    throw new BaseServiceError(
+      'EMPTY_PACKAGE',
+      'Lo contratado no incluye ningún PDF que enviar.',
+    );
   }
   return files;
 }
 
 /**
- * Returns the ordered source keys for (objetivo, dias, mes): training block,
- * nutrition guide and, for month 1, the start guide. Throws
- * {@link BaseServiceError} when the route is invalid or a slot has no content
- * or more than one match.
+ * Returns the ordered source keys for (objetivo, dias, mes) and the scope:
+ * training block, nutrition guide and, for month 1, the start guide (BOTH,
+ * the default), only the block (TRAINING) or only the guides (NUTRITION).
+ * Throws {@link BaseServiceError} when the route is invalid or an included
+ * slot has no content or more than one match.
  */
 export function selectPackage(
   keys: readonly string[],
   objetivo: string,
   dias: number,
   mes: number,
+  scope: BaseServiceScope = BaseServiceScope.BOTH,
 ): string[] {
-  return selectFromCatalogue(parseCatalogue(keys), objetivo, dias, mes);
+  return selectPackageFor(keys, objetivo, dias, mes, scopeMaterial(scope));
+}
+
+/** {@link selectPackage} for explicit material; never returns []. */
+export function selectPackageFor(
+  keys: readonly string[],
+  objetivo: string,
+  dias: number,
+  mes: number,
+  material: PackageMaterial,
+): string[] {
+  return selectFromCatalogue(
+    parseCatalogue(keys),
+    objetivo,
+    dias,
+    mes,
+    material,
+  );
 }
 
 function isDeliverable(
