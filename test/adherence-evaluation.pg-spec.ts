@@ -443,7 +443,7 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
         where: { client_id: client, date: new Date(date) },
       }),
     ).toBe(2);
-    // Six preceding unknown dates now have append-only evaluations too;
+    // Six preceding dates without an original have append-only evaluations too;
     // the accepted late evidence appends only the requested original day's row.
     expect(
       await prisma.adherenceEvaluationRevision.count({
@@ -559,14 +559,19 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
         where: { client_id: client, date: { gte: new Date(today) } },
       }),
     ).toBe(0);
+    // Contract changed by ADH-RESPALDO-PAUTA-ACTUAL (2026-11-17): a closed day
+    // without a published original now uses the current plan of that date.
+    // This date has no assignment, so it is "not assigned", still with no
+    // ratio, instead of the former unknown/insufficient.
     const unknown = await service.get(client, Role.CLIENT, client, {
       start: '2019-12-31',
       end: '2019-12-31',
     });
     expect(unknown.days[0]).toMatchObject({
-      basis: 'unknown',
-      calendar: 'insufficient',
-      evaluation: { global: { ratio: null } },
+      basis: 'current_fallback',
+      calendar: 'not_assigned',
+      schedule: { training: 'not_assigned', nutrition: 'not_assigned' },
+      evaluation: { global: { status: 'not_applicable', ratio: null } },
     });
   });
   it('forces competing evaluation/assignment writes to block until the authorized reader commits', async () => {
@@ -743,6 +748,11 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
       GRANT SELECT ON users,admin_client_assignments,day_progress,
         progress_operations,adherence_config_revisions,weekly_recaps,
         adherence_historical_prescriptions,adherence_evaluation_revisions TO ${role};
+      -- Closed days without an original read the current plan and its
+      -- day snapshots (ADH-RESPALDO-PAUTA-ACTUAL), as today's basis already did.
+      GRANT SELECT ON plan_assignments,plan_assignment_trainings,trainings,
+        training_exercises,diets,meals,meal_ingredients,ingredients,
+        training_day_snapshots,diet_day_snapshots TO ${role};
       GRANT UPDATE ON users,admin_client_assignments TO ${role};
       GRANT INSERT ON adherence_evaluation_revisions TO ${role}`);
     const runtimePool = new Pool({
@@ -1113,6 +1123,225 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     await request(server)
       .get('/adherence?start=2020-01-01&end=2020-02-01')
       .expect(400);
+  }, 30000);
+  // ADH-RESPALDO-PAUTA-ACTUAL (owner decision 2026-11-17): closed days without
+  // a published original are estimated with the current plan of that date.
+  // Dates are far from every window used above so earlier cases stay intact.
+  it('ADH-RESPALDO evaluates proven closed days without an original against the current plan', async () => {
+    const service = app.get(AdherenceEvaluationService);
+    const proven = '2019-11-15';
+    const rewritten = '2019-11-16';
+    const legacy = '2019-11-05';
+    for (const day of [proven, rewritten, legacy])
+      await prisma.planAssignment.create({
+        data: {
+          client_id: client,
+          date: new Date(day),
+          training_id: training,
+          diet_id: food.diet,
+          trainings: { create: { training_id: training, position: 0 } },
+        },
+      });
+    const session = randomUUID();
+    await prisma.dayProgress.create({
+      data: {
+        client_id: client,
+        date: new Date(proven),
+        sync_revision: 1,
+        training_completed: true,
+        trainings_completed: [training],
+        training_sessions: [
+          { training_session_id: session, training_id: training, rpe: 8 },
+        ],
+        exercises_completed: [
+          {
+            training_session_id: session,
+            training_exercise_id: occurrence,
+            exercise_id: 'synthetic',
+            completed_at: proven + 'T12:00:00Z',
+          },
+        ],
+        meals_completed: [food.alternative, food.second],
+      },
+    });
+    // Regression: formerly basis unknown / calendar insufficient.
+    const evaluated = await service.get(client, Role.CLIENT, client, {
+      start: proven,
+      end: proven,
+    });
+    expect(evaluated.days[0]).toMatchObject({
+      basis: 'current_fallback',
+      calendar: 'complete',
+      revision: 1,
+      evaluation: { global: { ratio: 1 } },
+      schedule: { training: 'assigned', nutrition: 'assigned' },
+    });
+    const provenRow = await prisma.adherenceEvaluationRevision.findFirstOrThrow(
+      { where: { client_id: client, date: new Date(proven) } },
+    );
+    expect(provenRow).toMatchObject({
+      original_basis_id: null,
+      cut_binding: null,
+    });
+    expect(provenRow.original_basis_digest).toMatch(
+      /^current_fallback:v1:[0-9a-f]{64}$/,
+    );
+
+    // A row persisted before this decision (missing_original) stays intact;
+    // the fallback appends revision n+1 and a replay restores it.
+    const legacyRow = await prisma.adherenceEvaluationRevision.create({
+      data: {
+        client_id: client,
+        date: new Date(rewritten),
+        revision: 1,
+        idempotency_key: 'pre-fallback-' + randomUUID(),
+        original_basis_digest: 'missing_original',
+        config_digest: 'pre-fallback',
+        evidence_digest: 'pre-fallback',
+        evaluation: {
+          date: rewritten,
+          basis: 'unknown',
+          calendar: 'insufficient',
+          evaluation: {},
+          indicators: {},
+          intake: {},
+        },
+      },
+    });
+    const appended = await service.get(client, Role.CLIENT, client, {
+      start: rewritten,
+      end: rewritten,
+    });
+    expect(appended.days[0]).toMatchObject({
+      basis: 'current_fallback',
+      calendar: 'incomplete',
+      revision: 2,
+    });
+    expect(
+      (
+        await service.get(client, Role.CLIENT, client, {
+          start: rewritten,
+          end: rewritten,
+        })
+      ).days,
+    ).toEqual(appended.days);
+    const rewrittenRows = await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: client, date: new Date(rewritten) },
+      orderBy: { revision: 'asc' },
+    });
+    expect(rewrittenRows).toHaveLength(2);
+    expect(rewrittenRows[0]).toEqual(legacyRow);
+
+    // Fallback days follow the current plan: a later membership edit of the
+    // past assignment appends a new revision on the next read.
+    const extra = await prisma.training.create({
+      data: {
+        name: 'Synthetic extra',
+        type: 'STRENGTH',
+        types: ['STRENGTH'],
+        tags: [],
+        exercises: {
+          create: {
+            exercise_id: (
+              await prisma.exercise.create({
+                data: { name: 'Extra', muscle_groups: [], equipment: [] },
+              })
+            ).id,
+            order: 0,
+            sets: 1,
+            reps_or_duration: '10',
+            request_set_tracking: false,
+          },
+        },
+      },
+    });
+    const assignment = await prisma.planAssignment.findUniqueOrThrow({
+      where: {
+        client_id_date: { client_id: client, date: new Date(rewritten) },
+      },
+    });
+    await prisma.planAssignmentTraining.create({
+      data: {
+        assignment_id: assignment.id,
+        training_id: extra.id,
+        position: 1,
+      },
+    });
+    const followed = await service.get(client, Role.CLIENT, client, {
+      start: rewritten,
+      end: rewritten,
+    });
+    expect(followed.days[0]).toMatchObject({
+      basis: 'current_fallback',
+      revision: 3,
+      evaluation: { training: { denominator: 2, numerator: 0 } },
+    });
+    const followedRows = await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: client, date: new Date(rewritten) },
+      orderBy: { revision: 'asc' },
+    });
+    expect(followedRows.slice(0, 2)).toEqual(rewrittenRows);
+    expect(followedRows[2].original_basis_digest).not.toBe(
+      rewrittenRows[1].original_basis_digest,
+    );
+
+    // Aggregates and the seven-day low-adherence verdict count fallback days.
+    const range = await service.get(client, Role.CLIENT, client, {
+      start: proven,
+      end: rewritten,
+    });
+    expect(range.days.map((day) => day.basis)).toEqual([
+      'current_fallback',
+      'current_fallback',
+    ]);
+    expect(range.aggregate.global.status).toBe('evaluable');
+    expect(range.recentClosed).toMatchObject({
+      start: '2019-11-10',
+      end: rewritten,
+      coverage: {
+        available: 7,
+        evaluable: 2,
+        not_applicable: 5,
+        insufficient: 0,
+      },
+    });
+    // Window global 5/12 (training 1/3, nutrition 1/2) against the 10% policy.
+    expect(range.recentClosed.status).toBe('not_low');
+    expect(range.recentClosed.aggregate.global.ratio).toBeCloseTo(5 / 12);
+
+    // Session-less legacy evidence stays indeterminate on a fallback day.
+    await prisma.dayProgress.create({
+      data: {
+        client_id: client,
+        date: new Date(legacy),
+        sync_revision: 1,
+        training_completed: true,
+        trainings_completed: [training],
+        training_sessions: [],
+        exercises_completed: [],
+        meals_completed: [],
+      },
+    });
+    const indeterminate = await service.get(client, Role.CLIENT, client, {
+      start: legacy,
+      end: legacy,
+    });
+    expect(indeterminate.days[0]).toMatchObject({
+      basis: 'current_fallback',
+      evaluation: {
+        training: { ratio: null, caveats: ['indeterminate_training'] },
+      },
+    });
+
+    // A published original still wins over the current plan.
+    expect(
+      (
+        await service.get(client, Role.CLIENT, client, {
+          start: date,
+          end: date,
+        })
+      ).days[0].basis,
+    ).toBe('original');
   }, 30000);
   it('rejects modification of earlier persisted evaluation rows', async () => {
     await expect(

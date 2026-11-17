@@ -3478,7 +3478,8 @@
           "enum": [
             "unknown",
             "original",
-            "current_provisional"
+            "current_provisional",
+            "current_fallback"
           ]
         },
         "evaluation": {

@@ -49,6 +49,8 @@ const CALENDAR = {
 const BASIS_SOURCE = {
   ORIGINAL: 'original',
   CURRENT: 'current_provisional',
+  /** Closed day without a published original: estimated with the current plan. */
+  CURRENT_FALLBACK: 'current_fallback',
   UNKNOWN: 'unknown',
 } as const;
 const SCHEDULE = {
@@ -231,6 +233,70 @@ const unknownBasis = (): EvaluationBasis => ({
   calories: null,
   protein: null,
 });
+const ingredientContent = (ingredient: Ingredient) => ({
+  quantity: ingredient.quantity,
+  unit: ingredient.unit,
+  grams_equivalent: ingredient.grams_equivalent,
+  calories_per_100g: ingredient.ingredient.calories_per_100g,
+  protein_per_100g: ingredient.ingredient.protein_per_100g,
+});
+const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
+/** Current catalog relations are read without ORDER BY and PostgreSQL row
+ * order can change after unrelated updates. Persisted fallback evaluations
+ * must not depend on it, so occurrences, meal groups, alternatives and
+ * ingredients are put in a canonical order (none of them is positional). */
+function canonicalFallbackBasis(basis: EvaluationBasis): EvaluationBasis {
+  return {
+    ...basis,
+    units: basis.units.map((unit) => ({
+      ...unit,
+      occurrences: [...unit.occurrences].sort(),
+    })),
+    groups: basis.groups
+      .map((group) => ({
+        ...group,
+        alternatives: group.alternatives
+          .map((meal) => ({
+            ...meal,
+            ingredients: [...meal.ingredients].sort((a, b) =>
+              canonical(ingredientContent(a)).localeCompare(
+                canonical(ingredientContent(b)),
+              ),
+            ),
+          }))
+          .sort(byId),
+      }))
+      .sort(byId),
+  };
+}
+/** Revision-key digest of a current-plan fallback basis. Only the typed fields
+ * that drive evaluation enter it, so a later plan change appends a revision
+ * while cosmetic catalog edits (names, timestamps) do not. */
+function fallbackBasisDigest(basis: EvaluationBasis): string {
+  return (
+    'current_fallback:v1:' +
+    digest({
+      trainingKnown: basis.trainingKnown,
+      rest: basis.rest,
+      completionMode: basis.completionMode ?? null,
+      units: basis.units.map((unit) => ({
+        id: unit.id,
+        trainingId: unit.trainingId,
+        occurrences: unit.occurrences,
+      })),
+      nutritionKnown: basis.nutritionKnown,
+      groups: basis.groups.map((group) => ({
+        id: group.id,
+        alternatives: group.alternatives.map((meal) => ({
+          id: meal.id,
+          ingredients: meal.ingredients.map(ingredientContent),
+        })),
+      })),
+      calories: basis.calories,
+      protein: basis.protein,
+    })
+  );
+}
 function frozenBasis(stored: StoredPrescription): EvaluationBasis {
   const p = stored.prescription;
   return {
@@ -760,12 +826,23 @@ export class AdherenceEvaluationService {
         for (const date of collectedDates) {
           const at = new Date(date + 'T00:00:00Z');
           const original = date < today ? closed.get(date) : null;
+          // ADH-RESPALDO-PAUTA-ACTUAL (2026-11-17): a closed day with no
+          // published original row is estimated with that date's current
+          // plan. A published original always wins; an unreadable stored row
+          // stays unknown rather than being silently replaced.
+          const fallback =
+            original?.status === 'unknown' &&
+            original.reason === 'missing_stored_basis';
           const basis =
             original?.status === 'stored'
               ? frozenBasis(original)
               : date === today
                 ? await this.todayBasis(tx, client, at)
-                : unknownBasis();
+                : fallback
+                  ? canonicalFallbackBasis(
+                      await this.todayBasis(tx, client, at),
+                    )
+                  : unknownBasis();
           const progress =
             date > today ? null : (progressByDate.get(date) ?? null);
           const receipts = date > today ? [] : (receiptsByDate.get(date) ?? []);
@@ -820,7 +897,9 @@ export class AdherenceEvaluationService {
                 ? BASIS_SOURCE.ORIGINAL
                 : date === today
                   ? BASIS_SOURCE.CURRENT
-                  : BASIS_SOURCE.UNKNOWN,
+                  : fallback
+                    ? BASIS_SOURCE.CURRENT_FALLBACK
+                    : BASIS_SOURCE.UNKNOWN,
             evaluation,
             indicators,
             intake: evidence.intake,
@@ -847,10 +926,14 @@ export class AdherenceEvaluationService {
             },
           };
           if (date < today) {
+            // The fallback digest differs from 'missing_original', so earlier
+            // append-only rows stay intact and the new key appends n+1.
             const basisDigest =
               original?.status === 'stored'
                 ? original.digest
-                : 'missing_original';
+                : fallback
+                  ? fallbackBasisDigest(basis)
+                  : 'missing_original';
             const configDigest = digest({
               daily: config
                 ? {
