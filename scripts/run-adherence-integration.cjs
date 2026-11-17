@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 const { assertTestDatabase, validateDatabaseUrl } = require('./test-database.cjs');
 const { validateReport } = require('./run-integration.cjs');
 const ROOT = resolve(__dirname, '..');
-const PG_SUITES = ['adherence-commit-ledger', 'adherence-evaluation', 'adherence-history-cut', 'adherence-history-origin', 'adherence-prescription'].map(n => `test/${n}.pg-spec.ts`);
+const PG_SUITES = ['adherence-commit-ledger', 'adherence-day-freeze', 'adherence-evaluation', 'adherence-history-cut', 'adherence-history-origin', 'adherence-prescription'].map(n => `test/${n}.pg-spec.ts`);
 const RESOLVER = 'src/modules/adherence/adherence-commit-resolver.concurrency.spec.ts';
 const LEGACY = 'exom_ci_history_legacy_7f814563';
 function childEnvironment(url, dotenvPath, source = process.env) {
