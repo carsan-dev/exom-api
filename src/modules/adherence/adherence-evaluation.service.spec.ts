@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdherencePrescriptionService } from './adherence-prescription.service';
 import {
   AdherenceEvaluationService,
+  canonicalFallbackBasis,
   normalizeAdherenceEvidence,
 } from './adherence-evaluation.service';
 import { AdherencePeriodQueryDto } from './dto/adherence-period-query.dto';
@@ -553,6 +554,19 @@ describe('closed-day current-plan fallback', () => {
           ),
         ),
     );
+    // Closed fallback dates load their plans in one batch: a findFirst probe,
+    // then findMany only if some date has a plan. Each returned assignment
+    // carries its own date, as PostgreSQL would.
+    type BatchArgs = { where: { client_id: string; date: { in: Date[] } } };
+    const plansFor = (args: BatchArgs) =>
+      args.where.date.in.flatMap((at) => {
+        const plan = options.plan(at.toISOString().slice(0, 10));
+        return plan ? [{ ...plan, date: at }] : [];
+      });
+    const probe = jest.fn((args: BatchArgs) =>
+      Promise.resolve(plansFor(args)[0] ?? null),
+    );
+    const batch = jest.fn((args: BatchArgs) => Promise.resolve(plansFor(args)));
     const create = jest.fn().mockResolvedValue({});
     const tx = {
       $queryRaw: jest.fn((query: unknown) =>
@@ -576,7 +590,11 @@ describe('closed-day current-plan fallback', () => {
           },
         ]),
       },
-      planAssignment: { findUnique: current },
+      planAssignment: {
+        findUnique: current,
+        findMany: batch,
+        findFirst: probe,
+      },
       weeklyRecap: { findMany: jest.fn().mockResolvedValue([]) },
       dayProgress: {
         findMany: jest.fn().mockResolvedValue(options.dayProgress ?? []),
@@ -613,7 +631,7 @@ describe('closed-day current-plan fallback', () => {
       const result = await module
         .get(AdherenceEvaluationService)
         .get('client', 'CLIENT', 'client', { start: day, end: day });
-      return { result, create, current };
+      return { result, create, current, probe, batch, raw: tx.$queryRaw };
     } finally {
       read.mockRestore();
       await module.close();
@@ -630,14 +648,20 @@ describe('closed-day current-plan fallback', () => {
     (create.mock.calls as Array<[{ data: CreatedRow }]>)
       .map(([args]) => args.data)
       .find((data) => data.date.toISOString().slice(0, 10) === at);
-  const planned = (current: jest.Mock) =>
-    (
+  // Dates whose current plan was resolved, whether one by one (today) or in
+  // the closed fallback batch (every batch starts with its probe).
+  const planned = (current: jest.Mock, probe: jest.Mock) => [
+    ...(
       current.mock.calls as Array<
         [{ where: { client_id_date: { date: Date } } }]
       >
     ).map(([args]) =>
       args.where.client_id_date.date.toISOString().slice(0, 10),
-    );
+    ),
+    ...(probe.mock.calls as Array<[{ where: { date: { in: Date[] } } }]>)
+      .flatMap(([args]) => args.where.date.in)
+      .map((at) => at.toISOString().slice(0, 10)),
+  ];
 
   it('evaluates a proven closed day without an original row with the current plan', async () => {
     const { result, create } = await harness({
@@ -665,14 +689,25 @@ describe('closed-day current-plan fallback', () => {
   });
 
   it('marks closed dates without an assignment as not assigned, not insufficient', async () => {
-    const { result, current } = await harness({ plan: () => null });
+    const { result, current, probe, batch, raw } = await harness({
+      plan: () => null,
+    });
     expect(result.days[0]).toMatchObject({
       basis: 'current_fallback',
       calendar: 'not_assigned',
       schedule: { training: 'not_assigned', nutrition: 'not_assigned' },
     });
-    // Every collected closed date resolves the current plan of that date.
-    expect(planned(current).sort()).toEqual(window);
+    // Every collected closed date resolves the current plan of that date, in
+    // a single batched read rather than one read per date.
+    expect(planned(current, probe).sort()).toEqual(window);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(current).not.toHaveBeenCalled();
+    // No assignment at all: the relation and snapshot/history reads are
+    // skipped.
+    expect(batch).not.toHaveBeenCalled();
+    expect(
+      raw.mock.calls.some(([query]) => /day_snapshots/.test(sqlText(query))),
+    ).toBe(false);
   });
 
   it('lets a published original prescription win over the current plan', async () => {
@@ -693,7 +728,7 @@ describe('closed-day current-plan fallback', () => {
         },
       },
     };
-    const { result, create, current } = await harness({
+    const { result, create, current, probe } = await harness({
       plan: () => assignment(),
       originals: new Map([[day, stored]]),
       dayProgress: [progress],
@@ -706,7 +741,7 @@ describe('closed-day current-plan fallback', () => {
       original_basis_id: `client:${day}`,
       original_basis_digest: 'original-digest',
     });
-    expect(planned(current)).not.toContain(day);
+    expect(planned(current, probe)).not.toContain(day);
   });
 
   it('keeps an unreadable original row unknown instead of replacing it', async () => {
@@ -825,6 +860,29 @@ describe('closed-day current-plan fallback', () => {
     expect(a?.original_basis_digest).toBe(b?.original_basis_digest);
     expect(a?.evidence_digest).toBe(b?.evidence_digest);
     expect(runs[1].result.days[0]).toEqual(runs[0].result.days[0]);
+  });
+
+  it('orders a fallback basis by UTF-16 code units, not by ICU collation', () => {
+    const meal = (id: string) => ({ id, ingredients: [] });
+    const ordered = canonicalFallbackBasis({
+      ...basis,
+      groups: ['b', 'B', 'a', 'Z'].map((id) => ({
+        id,
+        alternatives: ['é', 'e', 'E'].map(meal),
+      })),
+    });
+    // localeCompare would give a, b, B, Z and e, E, é.
+    expect(ordered.groups.map((group) => group.id)).toEqual([
+      'B',
+      'Z',
+      'a',
+      'b',
+    ]);
+    expect(ordered.groups[0].alternatives.map((alt) => alt.id)).toEqual([
+      'E',
+      'e',
+      'é',
+    ]);
   });
 
   it('counts fallback days in aggregates and the low-adherence verdict', async () => {

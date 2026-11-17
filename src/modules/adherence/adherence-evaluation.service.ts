@@ -25,7 +25,10 @@ import {
   lockClientDayProgress,
   DAY_PROGRESS_TRANSACTION_OPTIONS,
 } from '../../common/progress/day-progress-lock';
-import { loadTrainingHistory } from '../../common/progress/training-history';
+import {
+  loadTrainingHistory,
+  type HistoricalTraining,
+} from '../../common/progress/training-history';
 import {
   loadDietHistory,
   indexDietHistory,
@@ -240,12 +243,17 @@ const ingredientContent = (ingredient: Ingredient) => ({
   calories_per_100g: ingredient.ingredient.calories_per_100g,
   protein_per_100g: ingredient.ingredient.protein_per_100g,
 });
-const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id);
+/** UTF-16 code unit order: independent of the runtime's ICU/locale data, so a
+ * Node upgrade cannot reorder a basis and append a spurious revision. */
+const byCode = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const byId = (a: { id: string }, b: { id: string }) => byCode(a.id, b.id);
 /** Current catalog relations are read without ORDER BY and PostgreSQL row
  * order can change after unrelated updates. Persisted fallback evaluations
  * must not depend on it, so occurrences, meal groups, alternatives and
  * ingredients are put in a canonical order (none of them is positional). */
-function canonicalFallbackBasis(basis: EvaluationBasis): EvaluationBasis {
+export function canonicalFallbackBasis(
+  basis: EvaluationBasis,
+): EvaluationBasis {
   return {
     ...basis,
     units: basis.units.map((unit) => ({
@@ -259,7 +267,8 @@ function canonicalFallbackBasis(basis: EvaluationBasis): EvaluationBasis {
           .map((meal) => ({
             ...meal,
             ingredients: [...meal.ingredients].sort((a, b) =>
-              canonical(ingredientContent(a)).localeCompare(
+              byCode(
+                canonical(ingredientContent(a)),
                 canonical(ingredientContent(b)),
               ),
             ),
@@ -272,7 +281,7 @@ function canonicalFallbackBasis(basis: EvaluationBasis): EvaluationBasis {
 /** Revision-key digest of a current-plan fallback basis. Only the typed fields
  * that drive evaluation enter it, so a later plan change appends a revision
  * while cosmetic catalog edits (names, timestamps) do not. */
-function fallbackBasisDigest(basis: EvaluationBasis): string {
+export function fallbackBasisDigest(basis: EvaluationBasis): string {
   return (
     'current_fallback:v1:' +
     digest({
@@ -296,6 +305,80 @@ function fallbackBasisDigest(basis: EvaluationBasis): string {
       protein: basis.protein,
     })
   );
+}
+/** Plan relations read for a current basis (today and closed fallback days). */
+const PLAN_BASIS_INCLUDE = {
+  trainings: {
+    orderBy: { position: 'asc' },
+    include: { training: { include: { exercises: true } } },
+  },
+  training: { include: { exercises: true } },
+  diet: {
+    include: {
+      meals: {
+        where: { parent_meal_id: null },
+        include: {
+          ingredients: { include: { ingredient: true } },
+          variants: {
+            include: { ingredients: { include: { ingredient: true } } },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.PlanAssignmentInclude;
+type PlanBasisAssignment = Prisma.PlanAssignmentGetPayload<{
+  include: typeof PLAN_BASIS_INCLUDE;
+}>;
+/** A date without an assignment is a known, empty plan (not assigned). */
+const unassignedBasis = (): EvaluationBasis => ({
+  ...unknownBasis(),
+  trainingKnown: true,
+  nutritionKnown: true,
+});
+/** Single builder of a current basis from an assignment and the captured day
+ * snapshots of its date; the same for today and for closed fallback days. */
+function planBasis(
+  assignment: PlanBasisAssignment,
+  trainingHistory: Map<string, HistoricalTraining>,
+  dietHistory: ReturnType<typeof indexDietHistory>,
+): EvaluationBasis {
+  const units = assignment.trainings.length
+    ? assignment.trainings.map((link) => ({
+        id: link.id,
+        trainingId: link.training_id,
+        occurrences: (
+          trainingHistory.get(link.training_id) ?? link.training
+        ).exercises.map((e: { id: string }) => e.id),
+      }))
+    : assignment.training
+      ? [
+          {
+            id: assignment.id,
+            trainingId: assignment.training.id,
+            occurrences: (
+              trainingHistory.get(assignment.training.id) ?? assignment.training
+            ).exercises.map((e: { id: string }) => e.id),
+          },
+        ]
+      : [];
+  const diet = historicalDietFor(dietHistory, assignment) ?? assignment.diet;
+  return {
+    trainingKnown: true,
+    rest: assignment.is_rest_day,
+    units: assignment.is_rest_day ? [] : units,
+    completionMode: assignment.training_completion_mode,
+    nutritionKnown: true,
+    groups:
+      diet?.meals
+        .filter((m) => !m.parent_meal_id)
+        .map((meal) => ({
+          id: meal.id,
+          alternatives: [meal, ...meal.variants],
+        })) ?? [],
+    calories: diet?.total_calories ?? null,
+    protein: diet?.total_protein_g ?? null,
+  };
 }
 function frozenBasis(stored: StoredPrescription): EvaluationBasis {
   const p = stored.prescription;
@@ -602,71 +685,82 @@ export class AdherenceEvaluationService {
   ): Promise<EvaluationBasis> {
     const assignment = await tx.planAssignment.findUnique({
       where: { client_id_date: { client_id: client, date } },
-      include: {
-        trainings: {
-          orderBy: { position: 'asc' },
-          include: { training: { include: { exercises: true } } },
-        },
-        training: { include: { exercises: true } },
-        diet: {
-          include: {
-            meals: {
-              where: { parent_meal_id: null },
-              include: {
-                ingredients: { include: { ingredient: true } },
-                variants: {
-                  include: { ingredients: { include: { ingredient: true } } },
-                },
-              },
-            },
-          },
-        },
-      },
+      include: PLAN_BASIS_INCLUDE,
     });
-    if (!assignment)
-      return { ...unknownBasis(), trainingKnown: true, nutritionKnown: true };
+    if (!assignment) return unassignedBasis();
     const trainingHistory = await loadTrainingHistory(tx, client, date);
-    const units = assignment.trainings.length
-      ? assignment.trainings.map((link) => ({
-          id: link.id,
-          trainingId: link.training_id,
-          occurrences: (
-            trainingHistory.get(link.training_id) ?? link.training
-          ).exercises.map((e: { id: string }) => e.id),
-        }))
-      : assignment.training
-        ? [
-            {
-              id: assignment.id,
-              trainingId: assignment.training.id,
-              occurrences: (
-                trainingHistory.get(assignment.training.id) ??
-                assignment.training
-              ).exercises.map((e: { id: string }) => e.id),
-            },
-          ]
-        : [];
-    const diet =
-      historicalDietFor(
-        indexDietHistory(await loadDietHistory(tx, [client], date)),
-        assignment,
-      ) ?? assignment.diet;
-    return {
-      trainingKnown: true,
-      rest: assignment.is_rest_day,
-      units: assignment.is_rest_day ? [] : units,
-      completionMode: assignment.training_completion_mode,
-      nutritionKnown: true,
-      groups:
-        diet?.meals
-          .filter((m) => !m.parent_meal_id)
-          .map((meal) => ({
-            id: meal.id,
-            alternatives: [meal, ...meal.variants],
-          })) ?? [],
-      calories: diet?.total_calories ?? null,
-      protein: diet?.total_protein_g ?? null,
+    const dietHistory = indexDietHistory(
+      await loadDietHistory(tx, [client], date),
+    );
+    return planBasis(assignment, trainingHistory, dietHistory);
+  }
+
+  /** Current-plan bases of the closed fallback dates, built exactly as
+   * todayBasis builds one date but loaded in one batch: the assignments of all
+   * dates, their training snapshots and the diet history of their span. The
+   * number of statements does not grow with the number of dates. */
+  private async fallbackBases(
+    tx: Prisma.TransactionClient,
+    client: string,
+    dates: readonly string[],
+  ): Promise<Map<string, EvaluationBasis>> {
+    const bases = new Map(dates.map((date) => [date, unassignedBasis()]));
+    if (!dates.length) return bases;
+    const where = {
+      client_id: client,
+      date: { in: dates.map((date) => new Date(date + 'T00:00:00Z')) },
     };
+    // Prisma still issues every relation query of an include when findMany
+    // matches no row; a one-row probe keeps the unassigned case to 1 query.
+    if (!(await tx.planAssignment.findFirst({ where, select: { id: true } })))
+      return bases;
+    const assignments = await tx.planAssignment.findMany({
+      where,
+      include: PLAN_BASIS_INCLUDE,
+    });
+    if (!assignments.length) return bases;
+    const assigned = [
+      ...new Set(assignments.map((assignment) => civil(assignment.date))),
+    ].sort();
+    // Same rows as loadTrainingHistory (owner, date, version 1) per date;
+    // (client_id, date, training_id) is the snapshot primary key.
+    const snapshots = await tx.$queryRaw<
+      Array<{ date: string; training_id: string; payload: HistoricalTraining }>
+    >(Prisma.sql`
+      SELECT to_char(date, 'YYYY-MM-DD') AS date, training_id, payload
+      FROM training_day_snapshots
+      WHERE client_id = ${client}
+        AND date = ANY(ARRAY[${Prisma.join(assigned)}]::date[])
+        AND version = 1
+    `);
+    const trainingHistory = new Map<string, Map<string, HistoricalTraining>>();
+    for (const row of snapshots) {
+      const day =
+        trainingHistory.get(row.date) ?? new Map<string, HistoricalTraining>();
+      day.set(row.training_id, row.payload);
+      trainingHistory.set(row.date, day);
+    }
+    // Keys are client:date:diet_id, so the span only adds unused entries.
+    const dietHistory = indexDietHistory(
+      await loadDietHistory(
+        tx,
+        [client],
+        new Date(assigned[0] + 'T00:00:00Z'),
+        new Date(assigned[assigned.length - 1] + 'T00:00:00Z'),
+      ),
+    );
+    for (const assignment of assignments) {
+      const date = civil(assignment.date);
+      bases.set(
+        date,
+        planBasis(
+          assignment,
+          trainingHistory.get(date) ?? new Map<string, HistoricalTraining>(),
+          dietHistory,
+        ),
+      );
+    }
+    return bases;
   }
 
   async get(
@@ -823,25 +917,36 @@ export class AdherenceEvaluationService {
             }),
           });
         }
+        // ADH-RESPALDO-PAUTA-ACTUAL (2026-11-17): a closed day with no
+        // published original row is estimated with that date's current plan.
+        // A published original always wins; an unreadable stored row stays
+        // unknown rather than being silently replaced.
+        const isFallback = (date: string) => {
+          const original = date < today ? closed.get(date) : null;
+          return (
+            original?.status === 'unknown' &&
+            original.reason === 'missing_stored_basis'
+          );
+        };
+        const fallbackBases = await this.fallbackBases(
+          tx,
+          client,
+          collectedDates.filter(isFallback),
+        );
         for (const date of collectedDates) {
           const at = new Date(date + 'T00:00:00Z');
           const original = date < today ? closed.get(date) : null;
-          // ADH-RESPALDO-PAUTA-ACTUAL (2026-11-17): a closed day with no
-          // published original row is estimated with that date's current
-          // plan. A published original always wins; an unreadable stored row
-          // stays unknown rather than being silently replaced.
-          const fallback =
-            original?.status === 'unknown' &&
-            original.reason === 'missing_stored_basis';
+          const fallback = isFallback(date);
+          const fallbackBasis = fallback ? fallbackBases.get(date) : undefined;
+          if (fallback && !fallbackBasis)
+            throw new Error('Missing fallback basis');
           const basis =
             original?.status === 'stored'
               ? frozenBasis(original)
               : date === today
                 ? await this.todayBasis(tx, client, at)
-                : fallback
-                  ? canonicalFallbackBasis(
-                      await this.todayBasis(tx, client, at),
-                    )
+                : fallbackBasis
+                  ? canonicalFallbackBasis(fallbackBasis)
                   : unknownBasis();
           const progress =
             date > today ? null : (progressByDate.get(date) ?? null);
@@ -970,6 +1075,10 @@ export class AdherenceEvaluationService {
               configDigest,
               evidenceDigest,
             });
+            // The key is idempotent per (basis, config, evidence) state, not a
+            // change log: if a fallback plan goes A -> B -> A, the return to A
+            // restores A's existing revision instead of appending another one
+            // (same semantics as originals and missing_original).
             const existing = await tx.adherenceEvaluationRevision.findUnique({
               where: {
                 client_id_date_idempotency_key: {

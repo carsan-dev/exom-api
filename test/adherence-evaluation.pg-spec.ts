@@ -12,8 +12,14 @@ import { aggregateClosedAdherence } from '../src/common/progress/closed-adherenc
 import { PrismaModule } from '../src/prisma/prisma.module';
 import { RolesGuard } from '../src/common/guards/roles.guard';
 import { AdherenceConfigModule } from '../src/modules/adherence/adherence-config.module';
-import { AdherenceEvaluationService } from '../src/modules/adherence/adherence-evaluation.service';
+import {
+  AdherenceEvaluationService,
+  canonicalFallbackBasis,
+  fallbackBasisDigest,
+  type EvaluationBasis,
+} from '../src/modules/adherence/adherence-evaluation.service';
 import { AdherenceConfigService } from '../src/modules/adherence/adherence-config.service';
+import { AdherencePeriodQueryDto } from '../src/modules/adherence/dto/adherence-period-query.dto';
 import {
   AdherencePrescriptionService,
   PrismaPrescriptionPublisher,
@@ -1343,6 +1349,370 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
       ).days[0].basis,
     ).toBe('original');
   }, 30000);
+  // ADH-RESPALDO cost guard: a client with a plan on every closed day (REPS and
+  // timed trainings, a diet switch mid-range) and captured day snapshots that
+  // keep earlier catalog content after later edits.
+  async function fallbackClient() {
+    const owner = randomUUID();
+    await prisma.user.create({
+      data: {
+        id: owner,
+        email: owner + '@example.test',
+        firebase_uid: owner,
+        role: Role.CLIENT,
+      },
+    });
+    return owner;
+  }
+  async function fallbackPlans(
+    owner: string,
+    assigned: string[],
+    rest: string[] = [],
+  ) {
+    const exercise = await prisma.exercise.create({
+      data: { name: 'Fallback', muscle_groups: [], equipment: [] },
+    });
+    const reps = await prisma.training.create({
+      data: {
+        name: 'Fallback reps',
+        type: 'STRENGTH',
+        types: ['STRENGTH'],
+        tags: [],
+        exercises: {
+          create: [0, 1].map((order) => ({
+            exercise_id: exercise.id,
+            order,
+            sets: 3,
+            reps_or_duration: '10',
+            request_set_tracking: false,
+          })),
+        },
+      },
+    });
+    const timed = await prisma.training.create({
+      data: {
+        name: 'Fallback timed',
+        type: 'STRENGTH',
+        types: ['STRENGTH'],
+        tags: [],
+        exercises: {
+          create: {
+            exercise_id: exercise.id,
+            order: 0,
+            sets: 1,
+            reps_or_duration: '30s',
+            measure_type: 'SECONDS',
+            target_value: 30,
+            request_set_tracking: false,
+          },
+        },
+      },
+    });
+    const ingredients: string[] = [];
+    for (const name of ['Fallback rice', 'Fallback egg'])
+      ingredients.push(
+        (
+          await prisma.ingredient.create({
+            data: {
+              name,
+              calories_per_100g: 130,
+              protein_per_100g: 7,
+              carbs_per_100g: 0,
+              fat_per_100g: 0,
+            },
+          })
+        ).id,
+      );
+    const diets: { id: string; root: string }[] = [];
+    for (const [index, name] of ['Fallback A', 'Fallback B'].entries()) {
+      const diet = await prisma.diet.create({
+        data: {
+          name,
+          total_calories: 1800 + index * 200,
+          total_protein_g: 90 + index * 10,
+          meals: {
+            create: [0, 1].map((order) => ({
+              name: name + ' ' + order,
+              type: 'BREAKFAST',
+              order,
+              nutritional_badges: [],
+              ingredients: {
+                create: [
+                  { ingredient_id: ingredients[0], quantity: 50 + order },
+                  {
+                    ingredient_id: ingredients[1],
+                    quantity: 1,
+                    unit: 'piece',
+                    grams_equivalent: 60,
+                  },
+                ],
+              },
+            })),
+          },
+        },
+        include: { meals: { orderBy: { order: 'asc' } } },
+      });
+      await prisma.meal.create({
+        data: {
+          diet_id: diet.id,
+          parent_meal_id: diet.meals[0].id,
+          type: 'BREAKFAST',
+          name: name + ' alternative',
+          order: 1,
+          nutritional_badges: [],
+          ingredients: {
+            create: { ingredient_id: ingredients[0], quantity: 70 },
+          },
+        },
+      });
+      diets.push({ id: diet.id, root: diet.meals[0].id });
+    }
+    const sorted = [...assigned].sort();
+    for (const [index, day] of sorted.entries()) {
+      const isRest = rest.includes(day);
+      await prisma.planAssignment.create({
+        data: {
+          client_id: owner,
+          date: new Date(day),
+          is_rest_day: isRest,
+          training_id: isRest ? null : reps.id,
+          diet_id: diets[index < sorted.length / 2 ? 0 : 1].id,
+          trainings: isRest
+            ? undefined
+            : {
+                create: [
+                  { training_id: reps.id, position: 0 },
+                  { training_id: timed.id, position: 1 },
+                ],
+              },
+        },
+      });
+    }
+    // Later catalog edits: the UPDATE triggers capture the protected (past)
+    // days' diet and timed training snapshots with the earlier content, then
+    // the timed training gains an occurrence that only the current plan has.
+    await prisma.mealIngredient.updateMany({
+      where: { meal: { diet_id: diets[0].id } },
+      data: { quantity: 80 },
+    });
+    await prisma.trainingExercise.updateMany({
+      where: { training_id: timed.id },
+      data: { reps_or_duration: '40s', target_value: 40 },
+    });
+    await prisma.trainingExercise.create({
+      data: {
+        training_id: timed.id,
+        exercise_id: exercise.id,
+        order: 1,
+        sets: 1,
+        reps_or_duration: '45s',
+        measure_type: 'SECONDS',
+        target_value: 45,
+        request_set_tracking: false,
+      },
+    });
+    return { reps: reps.id, timed: timed.id, diets };
+  }
+  async function countingModule() {
+    const countingPool = new Pool({
+      connectionString: process.env.TEST_DATABASE_URL,
+    });
+    const counting = new PrismaClient({
+      adapter: new PrismaPg(countingPool),
+      log: [{ emit: 'event', level: 'query' }],
+    });
+    const statements: string[] = [];
+    counting.$on('query', (event) => statements.push(event.query));
+    const module = await Test.createTestingModule({
+      imports: [PrismaModule, AdherenceConfigModule],
+    })
+      .overrideProvider(PrismaService)
+      .useValue(counting)
+      .compile();
+    const service = module.get(AdherenceEvaluationService);
+    return {
+      statements,
+      async measure(owner: string, start: string, end: string) {
+        statements.length = 0;
+        const started = performance.now();
+        const result = await service.get(owner, Role.CLIENT, owner, {
+          start,
+          end,
+        });
+        return {
+          result,
+          queries: statements.length,
+          ms: performance.now() - started,
+        };
+      },
+      async close() {
+        await module.close();
+        await counting.$disconnect();
+        if (!countingPool.ended) await countingPool.end();
+      },
+    };
+  }
+  it('ADH-RESPALDO bounds the fallback basis queries per GET independently of the closed days', async () => {
+    const owner = await fallbackClient();
+    const week = AdherencePeriodQueryDto.dates('2019-07-01', '2019-07-07');
+    const month = AdherencePeriodQueryDto.dates('2019-08-01', '2019-08-31');
+    await fallbackPlans(owner, week);
+    await fallbackPlans(owner, month);
+    const today = new Date().toISOString().slice(0, 10);
+    await fallbackPlans(owner, [today]);
+    const counting = await countingModule();
+    try {
+      const revisions = () =>
+        prisma.adherenceEvaluationRevision.count({
+          where: { client_id: owner },
+        });
+      const current = await counting.measure(owner, today, today);
+      // Today keeps its own per-date current basis.
+      expect(current.result.days[0]).toMatchObject({
+        basis: 'current_provisional',
+        schedule: { training: 'assigned', nutrition: 'assigned' },
+      });
+      const weekFirst = await counting.measure(owner, week[0], week[6]);
+      const weekReread = await counting.measure(owner, week[0], week[6]);
+      const monthFirst = await counting.measure(owner, month[0], month[30]);
+      const afterFirst = await revisions();
+      const monthReread = await counting.measure(owner, month[0], month[30]);
+      // Rereading a multi-day fallback range appends no revision.
+      expect(await revisions()).toBe(afterFirst);
+      expect(monthReread.result.days).toEqual(monthFirst.result.days);
+      expect(
+        monthFirst.result.days.every(
+          (day) =>
+            day.basis === 'current_fallback' &&
+            day.schedule.training === 'assigned' &&
+            day.schedule.nutrition === 'assigned',
+        ),
+      ).toBe(true);
+      // 24 more closed days cost exactly their revision lookup (plus the
+      // n+1 lookup and insert on the first read); the plan basis is loaded
+      // once per GET, not once per day.
+      expect(monthReread.queries - weekReread.queries).toBe(24);
+      expect(monthFirst.queries - weekFirst.queries).toBe(24 * 3);
+    } finally {
+      await counting.close();
+    }
+  }, 120000);
+  it('ADH-RESPALDO batched fallback bases equal the per-date current basis day by day', async () => {
+    const owner = await fallbackClient();
+    const range = AdherencePeriodQueryDto.dates('2019-06-01', '2019-06-21');
+    const unassigned = ['2019-06-03', '2019-06-12'];
+    const rest = ['2019-06-05', '2019-06-15'];
+    const legacy = '2019-06-21';
+    const plan = await fallbackPlans(
+      owner,
+      range.filter((day) => !unassigned.includes(day) && day !== legacy),
+      rest,
+    );
+    // Legacy single-training assignment (no membership links).
+    await prisma.planAssignment.create({
+      data: {
+        client_id: owner,
+        date: new Date(legacy),
+        training_id: plan.timed,
+        diet_id: plan.diets[1].id,
+      },
+    });
+    const captured = await pool.query<{ training: number; diet: number }>(
+      `SELECT (SELECT count(*) FROM training_day_snapshots WHERE client_id=$1)::int training,
+        (SELECT count(*) FROM diet_day_snapshots WHERE client_id=$1)::int diet`,
+      [owner],
+    );
+    expect(captured.rows[0].training).toBeGreaterThan(0);
+    expect(captured.rows[0].diet).toBeGreaterThan(0);
+    const service = app.get(AdherenceEvaluationService);
+    const singles: EvaluationBasis[] = [];
+    await prisma.$transaction(
+      async (tx) => {
+        const batch = await service['fallbackBases'](tx, owner, range);
+        expect([...batch.keys()]).toEqual(range);
+        for (const day of range) {
+          const single = canonicalFallbackBasis(
+            await service['todayBasis'](
+              tx,
+              owner,
+              new Date(day + 'T00:00:00Z'),
+            ),
+          );
+          const found = batch.get(day);
+          if (!found) throw new Error('Missing batched basis ' + day);
+          const batched = canonicalFallbackBasis(found);
+          expect({ day, basis: batched }).toEqual({ day, basis: single });
+          expect(fallbackBasisDigest(batched)).toBe(
+            fallbackBasisDigest(single),
+          );
+          singles.push(single);
+        }
+      },
+      { timeout: 60000 },
+    );
+    // The fixture exercises every shape the batch must reproduce.
+    const at = (day: string) => singles[range.indexOf(day)];
+    for (const day of unassigned)
+      expect(at(day)).toMatchObject({ rest: false, units: [], groups: [] });
+    for (const day of rest)
+      expect(at(day)).toMatchObject({ rest: true, units: [] });
+    expect(new Set(singles.map((basis) => basis.calories))).toEqual(
+      new Set([null, 1800, 2000]),
+    );
+    const timedOccurrences = singles.flatMap((basis) =>
+      basis.units
+        .filter((unit) => unit.trainingId === plan.timed)
+        .map((unit) => unit.occurrences.length),
+    );
+    // Captured timed snapshots (1 occurrence) and the current content (2).
+    expect(new Set(timedOccurrences)).toEqual(new Set([1, 2]));
+    expect(at(legacy).units).toEqual([
+      expect.objectContaining({ trainingId: plan.timed }),
+    ]);
+    const quantities = singles
+      .filter((basis) => basis.calories === 1800)
+      .map((basis) => basis.groups[0].alternatives[0].ingredients[0].quantity);
+    // Diet A days read their captured snapshot, not the edited quantity 80.
+    expect(quantities.length).toBeGreaterThan(0);
+    expect(quantities.every((quantity) => quantity !== 80)).toBe(true);
+  }, 120000);
+  it('ADH-RESPALDO keeps a closed day with an unreadable stored original unknown', async () => {
+    const owner = await fallbackClient();
+    const day = '2019-05-10';
+    await fallbackPlans(owner, [day]);
+    // Synthetic unreadable row (no provenance or digests), inserted by the
+    // disposable database owner; readMany reports invalid_stored_basis.
+    await pool.query(
+      'INSERT INTO adherence_historical_prescriptions(client_id,date,payload) VALUES ($1,$2,$3)',
+      [
+        owner,
+        day,
+        JSON.stringify({ prescription: { client_id: owner, date: day } }),
+      ],
+    );
+    const service = app.get(AdherenceEvaluationService);
+    const result = await service.get(owner, Role.CLIENT, owner, {
+      start: day,
+      end: day,
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'unknown',
+      calendar: 'insufficient',
+      schedule: { training: 'unknown', nutrition: 'unknown' },
+    });
+    const rows = await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: owner },
+      orderBy: { date: 'asc' },
+    });
+    // The six other window days have no row at all and use the fallback.
+    expect(
+      rows.map((row) =>
+        row.original_basis_digest.startsWith('current_fallback:v1:')
+          ? 'fallback'
+          : row.original_basis_digest,
+      ),
+    ).toEqual([...Array<string>(6).fill('fallback'), 'missing_original']);
+  }, 60000);
   it('rejects modification of earlier persisted evaluation rows', async () => {
     await expect(
       pool.query(
