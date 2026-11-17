@@ -176,6 +176,7 @@ enum CatalogColorType {
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
+  adherence_day_bases    AdherenceDayBasis[]
   training_day_snapshots TrainingDaySnapshot[]
   rir_protected_days     RirProtectedDay[]
   rir_cycles             RirCycleVersion[]
@@ -914,6 +915,21 @@ model TrainingDaySnapshot {
 
   @@id([client_id, date, training_id])
   @@map("training_day_snapshots")
+}
+
+// Immutable structural evaluation basis of a closed UTC day, written only by
+// exom_freeze_adherence_day_bases(); the diet is referenced, not copied.
+model AdherenceDayBasis {
+  client_id   String
+  date        DateTime @db.Date
+  version     Int      @default(1)
+  provenance  String
+  captured_at DateTime @default(now()) @db.Timestamptz(6)
+  basis       Json
+  client      User     @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@id([client_id, date])
+  @@map("adherence_day_bases")
 }
 
 model RirProtectedDay {
