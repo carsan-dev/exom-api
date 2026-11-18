@@ -17,6 +17,7 @@ import {
 } from '../src/modules/adherence/adherence-history-cut';
 import { persistAdherenceCommitEvidence } from '../src/modules/adherence/adherence-commit-ledger';
 import type { AdherenceCommitSql } from '../src/modules/adherence/adherence-commit-resolver';
+import { enableAdherenceJournalTriggers } from './adherence-journal-triggers';
 
 class RawPromise<T> extends Promise<T> {
   get [Symbol.toStringTag]() {
@@ -187,6 +188,8 @@ describe('actual complete immutable history cut on PG17', () => {
       '20261011120000_training_completion_mode',
       '20261114120000_base_service',
       '20261115120000_base_service_scope',
+      '20261117120000_adherence_day_bases',
+      '20261118120000_disable_adherence_journal_triggers',
     ]);
     const databaseUrl = url.toString();
     execFileSync(
@@ -227,6 +230,9 @@ describe('actual complete immutable history cut on PG17', () => {
           .digest('hex'),
       })),
     );
+    // Journal / history-cut machinery under test, in this suite's own
+    // database: journals are written only while the 16 triggers are enabled.
+    await enableAdherenceJournalTriggers(pool);
     await pool.query(`INSERT INTO users(id,email,firebase_uid,updated_at)
       VALUES ('cut-user','cut@example.test','cut-user',now());
       INSERT INTO training_groups(id,name,normalized_name,updated_at)

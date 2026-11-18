@@ -8,6 +8,7 @@ import {
 } from '../src/modules/adherence/adherence-prescription.service';
 import type { AdherenceCommitSql } from '../src/modules/adherence/adherence-commit-resolver';
 import type { AdherenceHistoryCutKey } from '../src/modules/adherence/adherence-history-cut';
+import { enableAdherenceJournalTriggers } from './adherence-journal-triggers';
 
 class RawPromise<T> extends Promise<T> {
   get [Symbol.toStringTag]() {
@@ -219,13 +220,23 @@ describe('historical prescription consumer on fresh owned PG17', () => {
     }
     throw new Error('Forced blocking PID not observed');
   }
-  beforeAll(() => {
+  let restoreJournalTriggers: (() => Promise<void>) | undefined;
+  beforeAll(async () => {
     if (!process.env.EXOM_PRESCRIPTION_OWNED_RUN)
       throw new Error('Own identity-guarded launcher required');
     pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
     service = new AdherencePrescriptionService(sql(pool), publisher(pool));
+    // Journal / history-cut machinery under test: journals are written only
+    // while the 16 capture triggers (disabled by 20261118120000) are enabled.
+    restoreJournalTriggers = await enableAdherenceJournalTriggers(pool);
   });
-  afterAll(() => pool?.end());
+  afterAll(async () => {
+    try {
+      await restoreJournalTriggers?.();
+    } finally {
+      await pool?.end();
+    }
+  });
 
   it('captures actual committed DML from ALL three effective-reader sources', async () => {
     const f = await fixture();

@@ -24,6 +24,7 @@ import {
   AdherencePrescriptionService,
   PrismaPrescriptionPublisher,
 } from '../src/modules/adherence/adherence-prescription.service';
+import { enableAdherenceJournalTriggers } from './adherence-journal-triggers';
 
 const date = '2020-01-01';
 const sources =
@@ -265,8 +266,12 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     };
   }
   let food: Awaited<ReturnType<typeof fixture>>;
+  let restoreJournalTriggers: (() => Promise<void>) | undefined;
   beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    // Fixtures publish originals through the journal / history-cut machinery:
+    // journals are written only while the 16 capture triggers are enabled.
+    restoreJournalTriggers = await enableAdherenceJournalTriggers(pool);
     const module = await Test.createTestingModule({
       imports: [PrismaModule, AdherenceConfigModule],
     }).compile();
@@ -293,8 +298,15 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     );
   }, 30000);
   afterAll(async () => {
-    if (app) await app.close();
-    if (pool) await pool.end();
+    try {
+      if (app) await app.close();
+    } finally {
+      try {
+        await restoreJournalTriggers?.();
+      } finally {
+        if (pool) await pool.end();
+      }
+    }
   });
   it('registers self/staff routes, keeps config route, validates DTO and isolates actors', async () => {
     const server: unknown = app.getHttpServer();
@@ -759,6 +771,8 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
       GRANT SELECT ON plan_assignments,plan_assignment_trainings,trainings,
         training_exercises,diets,meals,meal_ingredients,ingredients,
         training_day_snapshots,diet_day_snapshots TO ${role};
+      -- ... and, before that, their frozen day row (ADH-FREEZE-01 U2).
+      GRANT SELECT ON adherence_day_bases TO ${role};
       GRANT UPDATE ON users,admin_client_assignments TO ${role};
       GRANT INSERT ON adherence_evaluation_revisions TO ${role}`);
     const runtimePool = new Pool({
@@ -779,6 +793,61 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
         end: '2019-12-29',
       });
       expect(result.days[0].revision).toBe(1);
+      // A closed date (not evaluated anywhere else in this suite) without an
+      // original but with a frozen day row: the runtime role really reads
+      // adherence_day_bases and resolves the referenced catalog diet.
+      const frozenDate = '2019-11-15';
+      await pool.query(
+        `INSERT INTO public.adherence_day_bases(client_id, date, provenance, basis)
+         VALUES ($1, $2::date, 'scheduled', $3::jsonb)`,
+        [
+          client,
+          frozenDate,
+          JSON.stringify({
+            version: 1,
+            assigned: true,
+            assignment_id: 'frozen-' + client,
+            rest: false,
+            completion_mode: 'ALL',
+            diet_id: food.diet,
+            units: [
+              {
+                id: 'frozen-unit-' + client,
+                training_id: training,
+                occurrences: [occurrence],
+              },
+            ],
+          }),
+        ],
+      );
+      const frozen = await service.get(client, Role.CLIENT, client, {
+        start: frozenDate,
+        end: frozenDate,
+      });
+      // No diet snapshot exists for that date: the totals are the current
+      // catalog ones (earlier cases of this suite edit the catalog diet).
+      const catalog = await pool.query<{
+        calories: number | null;
+        protein_g: number | null;
+      }>(
+        'SELECT total_calories AS calories, total_protein_g AS protein_g FROM public.diets WHERE id = $1',
+        [food.diet],
+      );
+      expect(frozen.days[0]).toMatchObject({
+        basis: 'original',
+        revision: 1,
+        schedule: { training: 'assigned', nutrition: 'assigned' },
+        targets: catalog.rows[0],
+      });
+      const frozenRevisions = await pool.query<{ digest: string }>(
+        `SELECT original_basis_digest AS digest FROM public.adherence_evaluation_revisions
+         WHERE client_id = $1 AND date = $2::date`,
+        [client, frozenDate],
+      );
+      expect(frozenRevisions.rows).toHaveLength(1);
+      expect(frozenRevisions.rows[0].digest).toMatch(
+        /^frozen_day:v1:[0-9a-f]{64}$/,
+      );
       const permissions = await runtimePool.query<{
         journal: boolean;
         baseline: boolean;

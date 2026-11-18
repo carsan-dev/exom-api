@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool, PoolClient } from 'pg';
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
+import { enableAdherenceJournalTriggers } from '../../../test/adherence-journal-triggers';
 
 const SOURCE = {
   ASSIGNMENT: 'plan_assignments',
@@ -47,6 +48,7 @@ function reverse(state: State, events: Event[]): State {
 describe('assignment row journal on actual PostgreSQL tables', () => {
   let pool: Pool;
   let fixture: Fixture;
+  let restoreJournalTriggers: (() => Promise<void>) | undefined;
   const restrictedRole = `journal_writer_${randomUUID().replaceAll('-', '')}`;
   const hostileSchema = `journal_hostile_${randomUUID().replaceAll('-', '')}`;
 
@@ -63,6 +65,9 @@ describe('assignment row journal on actual PostgreSQL tables', () => {
       statement_timeout: 10000,
     });
     await assertTestDatabase(pool);
+    // Journal under test: written only while the 16 capture triggers
+    // (disabled by migration 20261118120000) are enabled.
+    restoreJournalTriggers = await enableAdherenceJournalTriggers(pool);
     // Fixture-only permissions on an explicitly isolated server, never runtime grants.
     await pool.query(`CREATE ROLE ${restrictedRole} NOSUPERUSER NOCREATEDB
       NOCREATEROLE NOINHERIT NOBYPASSRLS`);
@@ -89,7 +94,11 @@ describe('assignment row journal on actual PostgreSQL tables', () => {
     );
   });
   afterAll(async () => {
-    await pool?.end();
+    try {
+      await restoreJournalTriggers?.();
+    } finally {
+      await pool?.end();
+    }
   });
 
   beforeEach(async () => {

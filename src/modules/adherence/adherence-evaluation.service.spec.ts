@@ -7,8 +7,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AdherencePrescriptionService } from './adherence-prescription.service';
 import {
   AdherenceEvaluationService,
+  BASIS_DIGEST_PREFIX,
+  basisDigest,
   canonicalFallbackBasis,
+  fallbackBasisDigest,
+  frozenDay,
   normalizeAdherenceEvidence,
+  type EvaluationBasis,
 } from './adherence-evaluation.service';
 import { AdherencePeriodQueryDto } from './dto/adherence-period-query.dto';
 
@@ -68,6 +73,169 @@ function receipt() {
     },
   ];
 }
+describe('basis digests (ADH-FREEZE-01 U2)', () => {
+  const assigned: EvaluationBasis = {
+    trainingKnown: true,
+    rest: false,
+    completionMode: 'ALL',
+    units: [{ id: 'link', trainingId: 'training', occurrences: ['a', 'b'] }],
+    nutritionKnown: true,
+    groups: [
+      {
+        id: 'root',
+        alternatives: [
+          {
+            id: 'alt',
+            ingredients: [
+              {
+                quantity: 50,
+                unit: 'g',
+                grams_equivalent: null,
+                ingredient: { calories_per_100g: 130, protein_per_100g: 7 },
+              },
+            ],
+          },
+          { id: 'root', ingredients: [] },
+        ],
+      },
+    ],
+    calories: 1800,
+    protein: 90,
+  };
+  const unassigned: EvaluationBasis = {
+    trainingKnown: true,
+    rest: false,
+    units: [],
+    nutritionKnown: true,
+    groups: [],
+    calories: null,
+    protein: null,
+  };
+  const rest: EvaluationBasis = {
+    ...unassigned,
+    rest: true,
+    completionMode: 'ANY',
+    calories: 2000,
+    protein: 100.5,
+  };
+  // Values computed with the code of develop 905a0b7, before U2: persisted
+  // current_fallback revision keys must not change byte for byte.
+  it.each([
+    [
+      'assigned ALL',
+      assigned,
+      '55490098ef8f2c4379c7106fd99b6e3b656814664c23b22e7aaa3db71c52d563',
+    ],
+    [
+      'unassigned',
+      unassigned,
+      'a531ec2f3962ce9e714f3d7d9788a724367b32920045b9dbd357f8e4c337049c',
+    ],
+    [
+      'rest ANY',
+      rest,
+      '07e0b1ef187e9927c59326c0760c4d225e73f8461069f85ff357e50ab59d5726',
+    ],
+  ])('keeps the current_fallback digest of %s', (_name, value, hash) => {
+    expect(fallbackBasisDigest(value)).toBe('current_fallback:v1:' + hash);
+    expect(basisDigest(BASIS_DIGEST_PREFIX.CURRENT_FALLBACK, value)).toBe(
+      'current_fallback:v1:' + hash,
+    );
+    expect(basisDigest(BASIS_DIGEST_PREFIX.FROZEN_DAY, value)).toBe(
+      'frozen_day:v1:' + hash,
+    );
+  });
+});
+
+describe('frozen day row validation (ADH-FREEZE-01 U2)', () => {
+  const unit = { id: 'link', training_id: 'training', occurrences: ['b', 'a'] };
+  const valid = {
+    version: 1,
+    assigned: true,
+    assignment_id: 'assignment',
+    rest: false,
+    completion_mode: 'ANY',
+    diet_id: 'diet',
+    units: [unit],
+  };
+  const row = (basis: unknown, extra: Record<string, unknown> = {}) => ({
+    version: 1,
+    provenance: 'scheduled',
+    basis,
+    ...extra,
+  });
+  it('reads an assigned row with its mode, diet and units', () => {
+    expect(frozenDay(row(valid))).toEqual({
+      provenance: 'scheduled',
+      plan: {
+        assigned: true,
+        rest: false,
+        completionMode: 'ANY',
+        dietId: 'diet',
+        units: [
+          { id: 'link', trainingId: 'training', occurrences: ['b', 'a'] },
+        ],
+      },
+    });
+  });
+  it('reads "not assigned", a rest day with its mode, a null diet and a late row', () => {
+    expect(frozenDay(row({ version: 1, assigned: false }))).toEqual({
+      provenance: 'scheduled',
+      plan: { assigned: false },
+    });
+    expect(
+      frozenDay(
+        row(
+          { ...valid, rest: true, units: [], diet_id: null },
+          { provenance: 'late' },
+        ),
+      ),
+    ).toEqual({
+      provenance: 'late',
+      plan: {
+        assigned: true,
+        rest: true,
+        completionMode: 'ANY',
+        dietId: null,
+        units: [],
+      },
+    });
+  });
+  it.each([
+    ['row version 2', row(valid, { version: 2 })],
+    ['row version as text', row(valid, { version: '1' })],
+    ['unknown provenance', row(valid, { provenance: 'manual' })],
+    ['null basis', row(null)],
+    ['array basis', row([valid])],
+    ['basis version 2', row({ ...valid, version: 2 })],
+    ['missing assigned', row({ version: 1 })],
+    ['assigned as text', row({ ...valid, assigned: 'true' })],
+    ['missing rest', row({ ...valid, rest: undefined })],
+    ['completion mode SOME', row({ ...valid, completion_mode: 'SOME' })],
+    ['lowercase completion mode', row({ ...valid, completion_mode: 'any' })],
+    ['missing diet id', row({ ...valid, diet_id: undefined })],
+    ['numeric diet id', row({ ...valid, diet_id: 3 })],
+    ['units not an array', row({ ...valid, units: {} })],
+    ['unit without id', row({ ...valid, units: [{ ...unit, id: undefined }] })],
+    [
+      'unit without training',
+      row({ ...valid, units: [{ ...unit, training_id: null }] }),
+    ],
+    [
+      'occurrences not an array',
+      row({ ...valid, units: [{ ...unit, occurrences: 'a' }] }),
+    ],
+    [
+      'non-text occurrence',
+      row({ ...valid, units: [{ ...unit, occurrences: ['a', 2] }] }),
+    ],
+    ['unit not an object', row({ ...valid, units: ['link'] })],
+    ['rest day with units', row({ ...valid, rest: true })],
+  ])('rejects a row with %s', (_name, value) => {
+    expect(frozenDay(value)).toBeNull();
+  });
+});
+
 describe('recent closed service collection', () => {
   it.each([
     ['2020-01-01', '2020-01-01', 7],
@@ -523,11 +691,29 @@ describe('closed-day current-plan fallback', () => {
     }
     return '';
   }
+  function sqlValues(value: unknown): unknown[] {
+    if (value && typeof value === 'object' && 'values' in value) {
+      const values = (value as { values: unknown }).values;
+      return Array.isArray(values) ? (values as unknown[]) : [];
+    }
+    return [];
+  }
   async function harness(options: {
     plan: (at: string) => Assignment;
     originals?: Map<string, unknown>;
     dayProgress?: unknown[];
     latest?: number | null;
+    /** adherence_day_bases rows by date (ADH-FREEZE-01 U2). */
+    frozen?: Map<
+      string,
+      { version: unknown; provenance: unknown; basis: unknown }
+    >;
+    /** diet_day_snapshots rows returned to loadDietHistory. */
+    dietHistory?: unknown[];
+    /** Catalog diets returned to diet.findMany by id. */
+    diets?: Array<{ id: string } & Record<string, unknown>>;
+    /** Requested period; defaults to the single closed fixture day. */
+    range?: { start: string; end: string };
   }) {
     const read = jest
       .spyOn(AdherencePrescriptionService.prototype, 'readMany')
@@ -568,16 +754,42 @@ describe('closed-day current-plan fallback', () => {
     );
     const batch = jest.fn((args: BatchArgs) => Promise.resolve(plansFor(args)));
     const create = jest.fn().mockResolvedValue({});
-    const tx = {
-      $queryRaw: jest.fn((query: unknown) =>
+    // Like PostgreSQL, an is_active filter (if the service ever sent one)
+    // would hide inactive catalog diets.
+    const dietCatalog = jest.fn(
+      (args: { where: { id: { in: string[] }; is_active?: boolean } }) =>
         Promise.resolve(
-          sqlText(query).includes('adherence_config_revisions')
-            ? AdherencePeriodQueryDto.dates('2019-12-23', '2020-01-05').map(
-                policy,
-              )
-            : [],
+          (options.diets ?? []).filter(
+            (diet) =>
+              args.where.id.in.includes(diet.id) &&
+              (args.where.is_active === undefined ||
+                diet.is_active === args.where.is_active),
+          ),
         ),
-      ),
+    );
+    const tx = {
+      $queryRaw: jest.fn((query: unknown) => {
+        const text = sqlText(query);
+        if (text.includes('adherence_config_revisions'))
+          return Promise.resolve(
+            AdherencePeriodQueryDto.dates('2019-12-23', '2020-01-05').map(
+              policy,
+            ),
+          );
+        // Like PostgreSQL, only the requested dates' rows come back.
+        if (text.includes('adherence_day_bases')) {
+          const requested = sqlValues(query);
+          return Promise.resolve(
+            [...(options.frozen?.entries() ?? [])]
+              .filter(([at]) => requested.includes(at))
+              .map(([at, row]) => ({ date: at, ...row })),
+          );
+        }
+        if (text.includes('diet_day_snapshots'))
+          return Promise.resolve(options.dietHistory ?? []);
+        return Promise.resolve([]);
+      }),
+      diet: { findMany: dietCatalog },
       user: {
         findMany: jest.fn().mockResolvedValue([
           {
@@ -630,8 +842,21 @@ describe('closed-day current-plan fallback', () => {
     try {
       const result = await module
         .get(AdherenceEvaluationService)
-        .get('client', 'CLIENT', 'client', { start: day, end: day });
-      return { result, create, current, probe, batch, raw: tx.$queryRaw };
+        .get(
+          'client',
+          'CLIENT',
+          'client',
+          options.range ?? { start: day, end: day },
+        );
+      return {
+        result,
+        create,
+        current,
+        probe,
+        batch,
+        raw: tx.$queryRaw,
+        dietCatalog,
+      };
     } finally {
       read.mockRestore();
       await module.close();
@@ -933,5 +1158,468 @@ describe('closed-day current-plan fallback', () => {
       },
     });
     expect(result.recentClosed.status).toBe('insufficient');
+  });
+
+  // ADH-FREEZE-01 U2: a closed day without a published original reads its
+  // frozen adherence_day_bases row before falling back to the current plan.
+  const frozenRow = (
+    basis: Record<string, unknown> = {},
+    row: Record<string, unknown> = {},
+  ): { version: unknown; provenance: unknown; basis: unknown } => ({
+    version: 1,
+    provenance: 'scheduled',
+    basis: {
+      version: 1,
+      assigned: true,
+      assignment_id: 'assignment',
+      rest: false,
+      completion_mode: 'ALL',
+      diet_id: 'diet',
+      units: [
+        { id: 'link', training_id: 'training', occurrences: ['occurrence'] },
+      ],
+      ...basis,
+    },
+    // Row-level overrides last, including a whole replacement basis.
+    ...row,
+  });
+  const catalogDiet = () => ({ id: 'diet', ...assignment().diet });
+  const frozenQueries = (raw: jest.Mock) =>
+    (raw.mock.calls as Array<[unknown]>).filter(([query]) =>
+      sqlText(query).includes('adherence_day_bases'),
+    );
+  const withoutSource = (value: Record<string, unknown>) => {
+    const copy = { ...value };
+    delete copy.basis;
+    delete copy.revision;
+    return copy;
+  };
+
+  it('reads the frozen row in one batch instead of the current plan', async () => {
+    const { result, create, current, probe, raw } = await harness({
+      plan: () => assignment('ALL', ['occurrence', 'edited-later']),
+      frozen: new Map([[day, frozenRow()]]),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'original',
+      calendar: 'complete',
+      revision: 1,
+      evaluation: { global: { ratio: 1 } },
+      targets: { calories: 100, protein_g: 10 },
+    });
+    const row = createdFor(create, day);
+    expect(row).toMatchObject({ original_basis_id: null, cut_binding: null });
+    expect(row?.original_basis_digest).toMatch(/^frozen_day:v1:[0-9a-f]{64}$/);
+    // The frozen date never resolves the (later edited) current plan.
+    expect(planned(current, probe)).not.toContain(day);
+    // One statement for every closed date without an original.
+    const queries = frozenQueries(raw);
+    expect(queries).toHaveLength(1);
+    expect(sqlValues(queries[0][0])).toEqual(['client', ...window]);
+  });
+
+  it('keeps the frozen completion mode: ANY with one proven training is 1/1', async () => {
+    const units = [
+      { id: 'link', training_id: 'training', occurrences: ['occurrence'] },
+      { id: 'link-2', training_id: 'other', occurrences: ['other-occurrence'] },
+    ];
+    const run = (mode: string) =>
+      harness({
+        plan: () => null,
+        frozen: new Map([[day, frozenRow({ completion_mode: mode, units })]]),
+        diets: [catalogDiet()],
+        // Session-proven evidence only: no legacy day/training flags.
+        dayProgress: [
+          { ...progress, training_completed: false, trainings_completed: [] },
+        ],
+      });
+    const any = await run('ANY');
+    expect(any.result.days[0]).toMatchObject({
+      basis: 'original',
+      calendar: 'complete',
+      evaluation: { training: { numerator: 1, denominator: 1 } },
+    });
+    const all = await run('ALL');
+    expect(all.result.days[0]).toMatchObject({
+      calendar: 'partial',
+      evaluation: { training: { numerator: 1, denominator: 2 } },
+    });
+  });
+
+  it('labels a late frozen row as an estimate (current_fallback) with the frozen key', async () => {
+    const { result, create } = await harness({
+      plan: () => null,
+      frozen: new Map([[day, frozenRow({}, { provenance: 'late' })]]),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'current_fallback',
+      calendar: 'complete',
+    });
+    expect(createdFor(create, day)?.original_basis_digest).toMatch(
+      /^frozen_day:v1:/,
+    );
+  });
+
+  it('freezes "not assigned" even if the current plan assigns the date later', async () => {
+    const { result, current, probe } = await harness({
+      plan: () => assignment(),
+      frozen: new Map([
+        [day, frozenRow({}, { basis: { version: 1, assigned: false } })],
+      ]),
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'original',
+      calendar: 'not_assigned',
+      schedule: { training: 'not_assigned', nutrition: 'not_assigned' },
+    });
+    expect(planned(current, probe)).not.toContain(day);
+  });
+
+  it.each([
+    ['basis version', frozenRow({ version: 2 })],
+    ['row version', frozenRow({}, { version: 2 })],
+    ['provenance', frozenRow({}, { provenance: 'manual' })],
+    ['rest', frozenRow({ rest: 'no' })],
+    ['completion mode', frozenRow({ completion_mode: 'SOME' })],
+    ['diet id', frozenRow({ diet_id: 7 })],
+    [
+      'unit id',
+      frozenRow({ units: [{ training_id: 'training', occurrences: [] }] }),
+    ],
+    [
+      'occurrence',
+      frozenRow({
+        units: [{ id: 'link', training_id: 'training', occurrences: [1] }],
+      }),
+    ],
+    ['rest with units', frozenRow({ rest: true })],
+    ['basis shape', frozenRow({}, { basis: 'not an object' })],
+  ])(
+    'keeps a frozen row with an invalid %s unknown without falling back',
+    async (_field, row) => {
+      const { result, create, current, probe } = await harness({
+        plan: () => assignment(),
+        frozen: new Map([[day, row]]),
+        dayProgress: [progress],
+      });
+      expect(result.days[0]).toMatchObject({
+        basis: 'unknown',
+        calendar: 'insufficient',
+        schedule: { training: 'unknown', nutrition: 'unknown' },
+      });
+      expect(createdFor(create, day)?.original_basis_digest).toBe(
+        'missing_original',
+      );
+      expect(planned(current, probe)).not.toContain(day);
+    },
+  );
+
+  it('lets a published original win over a frozen row, which is not even read', async () => {
+    const stored = {
+      status: 'stored',
+      digest: 'original-digest',
+      manifest_digest: 'manifest',
+      provenance: { epochId: 'epoch', origin: 'origin', cutoffUtc: 'cut' },
+      prescription: {
+        client_id: 'client',
+        date: day,
+        training: { rest: true, units: [] },
+        nutrition: {
+          basis: 'known',
+          groups: [],
+          total_calories: null,
+          total_protein_g: null,
+        },
+      },
+    };
+    const { result, create, raw } = await harness({
+      plan: () => assignment(),
+      originals: new Map([[day, stored]]),
+      frozen: new Map([[day, frozenRow()]]),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'original',
+      calendar: 'rest',
+    });
+    expect(createdFor(create, day)).toMatchObject({
+      original_basis_id: `client:${day}`,
+      original_basis_digest: 'original-digest',
+    });
+    expect(sqlValues(frozenQueries(raw)[0][0])).not.toContain(day);
+  });
+
+  it('gives a frozen row the same basis hash and evaluation as the fallback of the same plan', async () => {
+    const fallback = await harness({
+      plan: (at) => (at === day ? assignment() : null),
+      dayProgress: [progress],
+    });
+    const frozen = await harness({
+      plan: () => null,
+      frozen: new Map([[day, frozenRow()]]),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+    });
+    const before = createdFor(fallback.create, day)?.original_basis_digest;
+    const after = createdFor(frozen.create, day)?.original_basis_digest;
+    expect(before).toMatch(/^current_fallback:v1:[0-9a-f]{64}$/);
+    expect(after).toMatch(/^frozen_day:v1:[0-9a-f]{64}$/);
+    expect(after?.slice('frozen_day:v1:'.length)).toBe(
+      before?.slice('current_fallback:v1:'.length),
+    );
+    expect(fallback.result.days[0].basis).toBe('current_fallback');
+    expect(frozen.result.days[0].basis).toBe('original');
+    expect(withoutSource({ ...frozen.result.days[0] })).toEqual(
+      withoutSource({ ...fallback.result.days[0] }),
+    );
+  });
+
+  it('resolves the frozen diet from its day snapshot before the catalog', async () => {
+    const snapshot = {
+      ...assignment().diet,
+      total_calories: 500,
+      total_protein_g: 50,
+    };
+    const { result, dietCatalog } = await harness({
+      plan: () => null,
+      frozen: new Map([[day, frozenRow()]]),
+      diets: [catalogDiet()],
+      dietHistory: [
+        {
+          client_id: 'client',
+          date,
+          diet_id: 'diet',
+          version: 1,
+          provenance: 'observed',
+          captured_at: date,
+          diet: snapshot,
+        },
+      ],
+      dayProgress: [progress],
+    });
+    expect(result.days[0].targets).toEqual({ calories: 500, protein_g: 50 });
+    expect(dietCatalog).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the frozen diet has neither a day snapshot nor a catalog row', async () => {
+    const { result } = await harness({
+      plan: () => null,
+      frozen: new Map([[day, frozenRow({ diet_id: 'gone' })]]),
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'original',
+      schedule: { training: 'assigned', nutrition: 'unknown' },
+      targets: { calories: null, protein_g: null },
+      evaluation: {
+        nutrition: {
+          status: 'insufficient',
+          caveats: ['unknown_nutrition_basis'],
+        },
+      },
+    });
+  });
+
+  it('keeps a frozen null diet as a known day without nutrition', async () => {
+    const { result, dietCatalog } = await harness({
+      plan: () => null,
+      frozen: new Map([[day, frozenRow({ diet_id: null })]]),
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      schedule: { training: 'assigned', nutrition: 'not_assigned' },
+      targets: { calories: null, protein_g: null },
+    });
+    expect(dietCatalog).not.toHaveBeenCalled();
+  });
+
+  const storedOriginal = (at: string) => ({
+    status: 'stored',
+    digest: 'original-digest-' + at,
+    manifest_digest: 'manifest',
+    provenance: { epochId: 'epoch', origin: 'origin', cutoffUtc: 'cut' },
+    prescription: {
+      client_id: 'client',
+      date: at,
+      training: { rest: true, units: [] },
+      nutrition: {
+        basis: 'known',
+        groups: [],
+        total_calories: null,
+        total_protein_g: null,
+      },
+    },
+  });
+
+  it('reads frozen rows only for closed dates: today and future dates are never queried', async () => {
+    // The fixed clock is 2020-01-02T12:00Z: 2020-01-02 is today and
+    // 2020-01-03 is in the future. Both have a frozen row available.
+    const today = '2020-01-02';
+    const future = '2020-01-03';
+    const { result, raw } = await harness({
+      plan: (at) => (at === today ? assignment() : null),
+      frozen: new Map([
+        ['2019-12-31', frozenRow()],
+        [today, frozenRow({ diet_id: null })],
+        [future, frozenRow({ diet_id: null })],
+      ]),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+      range: { start: '2019-12-31', end: future },
+    });
+    const queries = frozenQueries(raw);
+    expect(queries).toHaveLength(1);
+    // Client plus exactly the closed collected dates without an original.
+    expect(sqlValues(queries[0][0])).toEqual(['client', ...window]);
+    expect(sqlValues(queries[0][0])).not.toContain(today);
+    expect(sqlValues(queries[0][0])).not.toContain(future);
+    const byDate = new Map(result.days.map((d) => [d.date, d]));
+    expect(byDate.get('2019-12-31')?.basis).toBe('original');
+    expect(byDate.get(today)?.basis).toBe('current_provisional');
+    expect(byDate.get(future)).toMatchObject({ calendar: 'future' });
+    expect(byDate.get(future)?.basis).not.toBe('original');
+  });
+
+  it('keeps an unreadable original unknown even with a valid frozen row, which is not read', async () => {
+    const { result, create, current, probe, raw } = await harness({
+      plan: () => assignment(),
+      originals: new Map([
+        [day, { status: 'unknown', reason: 'invalid_stored_basis' }],
+      ]),
+      frozen: new Map([[day, frozenRow()]]),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+    });
+    expect(result.days[0]).toMatchObject({
+      basis: 'unknown',
+      calendar: 'insufficient',
+    });
+    expect(createdFor(create, day)?.original_basis_digest).toBe(
+      'missing_original',
+    );
+    expect(planned(current, probe)).not.toContain(day);
+    // The other closed dates still go through the single frozen read.
+    const queries = frozenQueries(raw);
+    expect(queries).toHaveLength(1);
+    expect(sqlValues(queries[0][0])).not.toContain(day);
+    expect(sqlValues(queries[0][0])).toEqual([
+      'client',
+      ...window.filter((at) => at !== day),
+    ]);
+  });
+
+  it('does not query adherence_day_bases when every closed date has a published original', async () => {
+    const { result, create, raw } = await harness({
+      plan: () => assignment(),
+      originals: new Map(window.map((at) => [at, storedOriginal(at)])),
+      frozen: new Map(window.map((at) => [at, frozenRow()])),
+      diets: [catalogDiet()],
+      dayProgress: [progress],
+    });
+    expect(frozenQueries(raw)).toHaveLength(0);
+    expect(result.days[0].basis).toBe('original');
+    expect(createdFor(create, day)?.original_basis_digest).toBe(
+      'original-digest-' + day,
+    );
+  });
+
+  it('resolves several frozen dates with distinct diets in one snapshot read and one catalog read', async () => {
+    const dates = ['2019-12-29', '2019-12-30', '2019-12-31', day];
+    const diet = (id: string, calories: number) => ({
+      ...assignment().diet,
+      id,
+      total_calories: calories,
+      total_protein_g: calories / 10,
+    });
+    const { result, raw, dietCatalog } = await harness({
+      plan: () => null,
+      frozen: new Map(
+        dates.map((at, index) => [at, frozenRow({ diet_id: 'diet-' + index })]),
+      ),
+      diets: [diet('diet-1', 200), diet('diet-2', 300), diet('diet-3', 400)],
+      dietHistory: [
+        {
+          client_id: 'client',
+          date: new Date(dates[0] + 'T00:00:00Z'),
+          diet_id: 'diet-0',
+          version: 1,
+          provenance: 'observed',
+          captured_at: date,
+          diet: diet('diet-0', 900),
+        },
+      ],
+      dayProgress: [progress],
+      range: { start: dates[0], end: day },
+    });
+    expect(result.days.map((d) => [d.date, d.basis, d.targets])).toEqual([
+      [dates[0], 'original', { calories: 900, protein_g: 90 }],
+      [dates[1], 'original', { calories: 200, protein_g: 20 }],
+      [dates[2], 'original', { calories: 300, protein_g: 30 }],
+      [dates[3], 'original', { calories: 400, protein_g: 40 }],
+    ]);
+    // No N+1: one diet_day_snapshots statement and one catalog read for
+    // exactly the diets without a day snapshot.
+    expect(
+      (raw.mock.calls as Array<[unknown]>).filter(([query]) =>
+        sqlText(query).includes('diet_day_snapshots'),
+      ),
+    ).toHaveLength(1);
+    expect(dietCatalog).toHaveBeenCalledTimes(1);
+    const [[catalogArgs]] = dietCatalog.mock.calls;
+    expect([...catalogArgs.where.id.in].sort()).toEqual([
+      'diet-1',
+      'diet-2',
+      'diet-3',
+    ]);
+  });
+
+  it('resolves an inactive catalog diet of a frozen row like an active one and like the fallback', async () => {
+    const run = (active: boolean) =>
+      harness({
+        plan: () => null,
+        frozen: new Map([[day, frozenRow()]]),
+        diets: [{ ...catalogDiet(), is_active: active }],
+        dayProgress: [progress],
+      });
+    const active = await run(true);
+    const inactive = await run(false);
+    expect(inactive.result.days[0]).toMatchObject({
+      basis: 'original',
+      schedule: { training: 'assigned', nutrition: 'assigned' },
+      targets: { calories: 100, protein_g: 10 },
+    });
+    expect(inactive.result.days[0]).toEqual(active.result.days[0]);
+    const frozenDigest = createdFor(
+      inactive.create,
+      day,
+    )?.original_basis_digest;
+    expect(frozenDigest).toBe(
+      createdFor(active.create, day)?.original_basis_digest,
+    );
+    // The fallback path reads the same inactive diet through the assignment.
+    const fallback = await harness({
+      plan: (at) =>
+        at === day
+          ? {
+              ...assignment(),
+              diet: { ...assignment().diet, is_active: false },
+            }
+          : null,
+      dayProgress: [progress],
+    });
+    expect(withoutSource({ ...fallback.result.days[0] })).toEqual(
+      withoutSource({ ...inactive.result.days[0] }),
+    );
+    expect(frozenDigest?.slice('frozen_day:v1:'.length)).toBe(
+      createdFor(fallback.create, day)?.original_basis_digest.slice(
+        'current_fallback:v1:'.length,
+      ),
+    );
   });
 });

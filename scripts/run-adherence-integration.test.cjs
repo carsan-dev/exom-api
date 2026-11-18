@@ -33,7 +33,7 @@ test('tracking must be observed, not inferred from launcher variables', () => {
   assert.throws(() => assertTracking('on', undefined));
 });
 test('suite receipts reject missing, duplicate, skipped and failing suites', () => {
-  assert.equal(PG_SUITES.length, 5);
+  assert.equal(PG_SUITES.length, 7);
   const inventory = require('node:fs').readdirSync('test').filter(n => n.endsWith('.pg-spec.ts')).map(n => 'test/' + n).sort();
   assert.deepEqual([...PG_SUITES].sort(), inventory);
   const report = { success: true, numPendingTests: 0, numTodoTests: 0, numPendingTestSuites: 0, openHandles: [], testResults: PG_SUITES.map(name => ({ name, status: 'passed', assertionResults: [{ status: 'passed' }] })) };
@@ -41,7 +41,7 @@ test('suite receipts reject missing, duplicate, skipped and failing suites', () 
   for (const change of [{ testResults: report.testResults.slice(1) }, { testResults: [...report.testResults, report.testResults[0]] }, { numPendingTests: 1 }, { numTodoTests: 1 }, { openHandles: [{}] }, { success: false },
     { testResults: report.testResults.map(r => ({ ...r, assertionResults: [{ status: 'pending' }] })) }, { testResults: report.testResults.map(r => ({ ...r, status: 'failed' })) }]) assert.throws(() => validateSelection({ ...report, ...change }, PG_SUITES));
 });
-test('actual Jest discovery includes all five external suites and the ON resolver', () => {
+test('actual Jest discovery includes all seven external suites and the ON resolver', () => {
   const { spawnSync } = require('node:child_process');
   const { resolve } = require('node:path');
   const expected = [...PG_SUITES, 'src/modules/adherence/adherence-commit-resolver.concurrency.spec.ts'];
@@ -88,7 +88,7 @@ test('OFF generates required suite flags only after isolated preparation', async
   assert.equal(env.FOLLOWUP_SERVICE_PG, '1');
   assert.equal(env.EXOM_RESOLVER_TRACKING, 'off');
   assert.equal(env.EXOM_LEDGER_OWNED_RUN, undefined);
-  assert.equal(PG_SUITES.length, 5);
+  assert.equal(PG_SUITES.length, 7);
 });
 test('failed isolated preparation cannot activate OFF suites', async () => {
   const env = { ...childEnvironment(url, '/owned/empty', {}), EXOM_RESOLVER_TRACKING: 'off' };
