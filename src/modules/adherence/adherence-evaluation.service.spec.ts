@@ -714,6 +714,8 @@ describe('closed-day current-plan fallback', () => {
     diets?: Array<{ id: string } & Record<string, unknown>>;
     /** Requested period; defaults to the single closed fixture day. */
     range?: { start: string; end: string };
+    /** Persisted revisions by idempotency key, shared across reads. */
+    store?: Map<string, { evaluation: unknown; revision: number }>;
   }) {
     const read = jest
       .spyOn(AdherencePrescriptionService.prototype, 'readMany')
@@ -753,7 +755,26 @@ describe('closed-day current-plan fallback', () => {
       Promise.resolve(plansFor(args)[0] ?? null),
     );
     const batch = jest.fn((args: BatchArgs) => Promise.resolve(plansFor(args)));
-    const create = jest.fn().mockResolvedValue({});
+    type RevisionWrite = {
+      data: { idempotency_key: string; evaluation: unknown; revision: number };
+    };
+    const create = jest.fn((args: RevisionWrite) => {
+      options.store?.set(args.data.idempotency_key, {
+        evaluation: args.data.evaluation,
+        revision: args.data.revision,
+      });
+      return Promise.resolve({});
+    });
+    type RevisionLookup = {
+      where: { client_id_date_idempotency_key: { idempotency_key: string } };
+    };
+    const findUnique = jest.fn((args: RevisionLookup) =>
+      Promise.resolve(
+        options.store?.get(
+          args.where.client_id_date_idempotency_key.idempotency_key,
+        ) ?? null,
+      ),
+    );
     // Like PostgreSQL, an is_active filter (if the service ever sent one)
     // would hide inactive catalog diets.
     const dietCatalog = jest.fn(
@@ -813,7 +834,7 @@ describe('closed-day current-plan fallback', () => {
       },
       progressOperation: { findMany: jest.fn().mockResolvedValue([]) },
       adherenceEvaluationRevision: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique,
         findFirst: jest
           .fn()
           .mockResolvedValue(
@@ -851,6 +872,7 @@ describe('closed-day current-plan fallback', () => {
       return {
         result,
         create,
+        findUnique,
         current,
         probe,
         batch,
@@ -1621,5 +1643,256 @@ describe('closed-day current-plan fallback', () => {
         'current_fallback:v1:'.length,
       ),
     );
+  });
+
+  // Owner decisions of 2026-11-18 (alternative a2): an informative training
+  // activity overlaid on read, outside the persisted revision, and a neutral
+  // "pending" calendar state for today at 0 %.
+  describe('training activity overlay and pending calendar', () => {
+    const today = '2020-01-02';
+    const threeExercises = (at: string) =>
+      at === day || at === today ? assignment('ALL', ['a', 'b', 'c']) : null;
+    const sessionEntries = (occurrences: string[]) =>
+      occurrences.map((occurrence) => ({
+        training_session_id: 'session',
+        training_exercise_id: occurrence,
+        exercise_id: 'exercise',
+        completed_at: '2020-01-01T12:00:00Z',
+      }));
+    const dayOf = (
+      at: string,
+      occurrences: string[],
+      meals: string[] = [],
+    ) => ({
+      ...progress,
+      date: new Date(at + 'T00:00:00Z'),
+      training_completed: false,
+      trainings_completed: [],
+      training_sessions: occurrences.length
+        ? [
+            {
+              training_session_id: 'session',
+              training_id: 'training',
+              rpe: null,
+              note: null,
+            },
+          ]
+        : [],
+      exercises_completed: sessionEntries(occurrences),
+      meals_completed: meals,
+    });
+    const keyFor = (findUnique: jest.Mock, at: string) =>
+      (
+        findUnique.mock.calls as Array<
+          [
+            {
+              where: {
+                client_id_date_idempotency_key: {
+                  date: Date;
+                  idempotency_key: string;
+                };
+              };
+            },
+          ]
+        >
+      )
+        .map(([args]) => args.where.client_id_date_idempotency_key)
+        .find((where) => where.date.toISOString().slice(0, 10) === at)
+        ?.idempotency_key;
+    const storedFor = (create: jest.Mock, at: string) =>
+      (
+        create.mock.calls as Array<
+          [{ data: { date: Date; evaluation: Record<string, unknown> } }]
+        >
+      ).find(([args]) => args.data.date.toISOString().slice(0, 10) === at)?.[0]
+        .data.evaluation;
+
+    it('keeps a closed day with partial session exercises incomplete and adds n of m', async () => {
+      const partial = await harness({
+        plan: threeExercises,
+        dayProgress: [dayOf(day, ['a', 'b'])],
+      });
+      const empty = await harness({
+        plan: threeExercises,
+        dayProgress: [dayOf(day, [])],
+      });
+      // Evaluation and calendar are exactly those of the empty day.
+      expect(partial.result.days[0].calendar).toBe('incomplete');
+      expect(empty.result.days[0].calendar).toBe('incomplete');
+      expect(partial.result.days[0].evaluation).toEqual(
+        empty.result.days[0].evaluation,
+      );
+      expect(partial.result.days[0].evaluation).toMatchObject({
+        period: 'closed',
+        training: { numerator: 0, denominator: 1, ratio: 0 },
+        global: { ratio: 0 },
+      });
+      // Only the informative overlay tells them apart.
+      expect(partial.result.days[0].training_activity).toEqual({
+        recorded: true,
+        unverified: false,
+        units: [
+          { unit_id: 'link', training_id: 'training', recorded: 2, total: 3 },
+        ],
+      });
+      expect(empty.result.days[0].training_activity).toEqual({
+        recorded: false,
+        unverified: false,
+        units: [
+          { unit_id: 'link', training_id: 'training', recorded: 0, total: 3 },
+        ],
+      });
+    });
+
+    it('keeps the activity out of the revision key and the stored JSON', async () => {
+      const partial = await harness({
+        plan: threeExercises,
+        dayProgress: [dayOf(day, ['a', 'b'])],
+      });
+      const empty = await harness({
+        plan: threeExercises,
+        dayProgress: [dayOf(day, [])],
+      });
+      const key = keyFor(partial.findUnique, day);
+      // Value computed with the code of develop f997ea2, before the overlay:
+      // the revision key of this evidence must not change byte for byte.
+      expect(key).toBe(
+        '4aa14c60b27b73009494bff183ed40d9f33155aa5815a88f44999402edf5b4bd',
+      );
+      // Same sync_revision and same normalized evidence: the partial activity
+      // itself does not reach the key.
+      expect(keyFor(empty.findUnique, day)).toBe(key);
+      // A proven day (execution proofs in the evidence digest) keeps its key
+      // too: the shared session helpers did not change the normalization.
+      const proven = await harness({
+        plan: (at) => (at === day ? assignment() : null),
+        dayProgress: [progress],
+      });
+      expect(keyFor(proven.findUnique, day)).toBe(
+        '58ae379361de53846ab740974ec5c79a99bb914a647b36b892c13c45f605d257',
+      );
+      const stored = storedFor(partial.create, day);
+      expect(stored).toBeDefined();
+      expect(stored).not.toHaveProperty('training_activity');
+      const response: Record<string, unknown> = { ...partial.result.days[0] };
+      delete response.training_activity;
+      expect(stored).toEqual(JSON.parse(JSON.stringify(response)));
+    });
+
+    it('restores a stored revision without the field and still overlays the activity', async () => {
+      const store = new Map<
+        string,
+        { evaluation: unknown; revision: number }
+      >();
+      const options = {
+        plan: threeExercises,
+        dayProgress: [dayOf(day, ['a', 'b'])],
+        store,
+      };
+      const first = await harness(options);
+      expect(createdFor(first.create, day)).toMatchObject({ revision: 1 });
+      const second = await harness(options);
+      // A second read appends nothing and restores the stored JSON.
+      expect(second.create).not.toHaveBeenCalled();
+      expect(second.result.days[0].revision).toBe(1);
+      for (const stored of store.values())
+        expect(stored.evaluation).not.toHaveProperty('training_activity');
+      expect(second.result.days[0]).toEqual(first.result.days[0]);
+      expect(second.result.days[0].training_activity).toMatchObject({
+        recorded: true,
+        units: [{ recorded: 2, total: 3 }],
+      });
+    });
+
+    it('marks today at 0 % pending while closed days at 0 % stay incomplete', async () => {
+      const { result, create } = await harness({
+        plan: threeExercises,
+        dayProgress: [dayOf(day, []), dayOf(today, ['a'])],
+        range: { start: day, end: today },
+      });
+      const byDate = new Map(result.days.map((d) => [d.date, d]));
+      expect(byDate.get(day)).toMatchObject({
+        calendar: 'incomplete',
+        evaluation: { period: 'closed', global: { ratio: 0 } },
+      });
+      expect(byDate.get(today)).toMatchObject({
+        basis: 'current_provisional',
+        calendar: 'pending',
+        revision: null,
+        evaluation: { period: 'provisional', global: { ratio: 0 } },
+        training_activity: {
+          recorded: true,
+          units: [{ unit_id: 'link', recorded: 1, total: 3 }],
+        },
+      });
+      // Provisional days never persist a revision, so "pending" is never
+      // stored.
+      expect(createdFor(create, today)).toBeUndefined();
+      expect(
+        (create.mock.calls as Array<[{ data: { date: Date } }]>).every(
+          ([args]) => args.data.date.toISOString().slice(0, 10) < today,
+        ),
+      ).toBe(true);
+    });
+
+    it.each([
+      ['partial', [] as string[], ['root'], 'partial'],
+      ['complete', ['a', 'b', 'c'], ['root'], 'complete'],
+    ])(
+      'keeps today %s as before',
+      async (_name, occurrences, meals, expected) => {
+        const { result } = await harness({
+          plan: threeExercises,
+          dayProgress: [dayOf(today, occurrences, meals)],
+          range: { start: today, end: today },
+        });
+        expect(result.days[0]).toMatchObject({
+          calendar: expected,
+          evaluation: { period: 'provisional' },
+        });
+      },
+    );
+
+    it('omits the activity on rest, unassigned and future days', async () => {
+      const future = '2020-01-03';
+      const { result } = await harness({
+        plan: (at) =>
+          at === day
+            ? { ...assignment(), is_rest_day: true, diet_id: null, diet: null }
+            : at === future
+              ? assignment()
+              : null,
+        dayProgress: [dayOf(day, ['a'])],
+        range: { start: day, end: future },
+      });
+      const byDate = new Map(result.days.map((d) => [d.date, d]));
+      expect(byDate.get(day)).toMatchObject({
+        calendar: 'rest',
+        training_activity: null,
+      });
+      expect(byDate.get(today)).toMatchObject({
+        calendar: 'not_assigned',
+        training_activity: null,
+      });
+      expect(byDate.get(future)).toMatchObject({
+        calendar: 'future',
+        training_activity: null,
+      });
+    });
+
+    it('keeps only the marks on a day whose plan is unknown', async () => {
+      const { result } = await harness({
+        plan: () => assignment(),
+        originals: new Map([
+          [day, { status: 'unknown', reason: 'invalid_stored_basis' }],
+        ]),
+        dayProgress: [dayOf(day, ['a'])],
+      });
+      expect(result.days[0]).toMatchObject({
+        basis: 'unknown',
+        calendar: 'insufficient',
+        training_activity: { recorded: true, unverified: false, units: null },
+      });
+    });
   });
 });

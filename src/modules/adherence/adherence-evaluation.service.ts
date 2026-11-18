@@ -49,6 +49,8 @@ const CALENDAR = {
   COMPLETE: 'complete',
   INCOMPLETE: 'incomplete',
   PARTIAL: 'partial',
+  /** Today at 0 %: still open, neither a failure nor partial credit. */
+  PENDING: 'pending',
 } as const;
 const BASIS_SOURCE = {
   ORIGINAL: 'original',
@@ -150,6 +152,31 @@ export interface AdherenceDayResult {
   targets: NutritionTargets;
   configuration: EvaluationConfiguration;
   schedule: EvaluationSchedule;
+}
+/** Exercises (distinct occurrences) of one planned training recorded in its
+ * most advanced session, out of the training's occurrences. */
+export interface TrainingActivityUnit {
+  unit_id: string;
+  training_id: string;
+  recorded: number;
+  total: number;
+}
+/** Informative training activity of a day (owner decision 2026-11-18,
+ * alternative a2). It never changes the evaluation, ratios or calendar. */
+export interface TrainingActivity {
+  /** Some exercise is recorded in a session of a planned training. */
+  recorded: boolean;
+  /** Some session-less entry claims the day's training (not verifiable). */
+  unverified: boolean;
+  /** Per planned training; under ANY only the most advanced alternative.
+   * Null when the plan of the day is unknown (only the marks are given). */
+  units: TrainingActivityUnit[] | null;
+}
+/** Public day: the persisted result plus read-only overlays computed on each
+ * read. Overlays never enter a revision, its JSON or its idempotency key. */
+export interface AdherenceDayReport extends AdherenceDayResult {
+  /** Null on rest, unassigned-training and future days. */
+  training_activity?: TrainingActivity | null;
 }
 interface EvaluationSchedule {
   training: ScheduleStatus;
@@ -522,6 +549,78 @@ function frozenBasis(stored: StoredPrescription): EvaluationBasis {
     protein: p.nutrition.total_protein_g ?? null,
   };
 }
+// Session ownership rules shared by the evaluation and the informative
+// training activity, so both read day progress exactly the same way.
+type JsonRecord = Record<string, unknown>;
+/** The progress row of the client's civil day; any other row proves nothing. */
+function ownProgress(
+  progress: ProgressEvidence | null,
+  client: string,
+  date: string,
+): ProgressEvidence | null {
+  return progress?.client_id === client && civil(progress.date) === date
+    ? progress
+    : null;
+}
+/** An entry records its occurrence only with a parseable completed_at. */
+const completedEntry = (entry: JsonRecord) =>
+  typeof entry.completed_at === 'string' &&
+  Number.isFinite(Date.parse(entry.completed_at));
+/** Non-empty session ids listed with the training, in stored order. */
+function candidateSessionIds(
+  trainingId: string,
+  sessions: JsonRecord[],
+): string[] {
+  return sessions.flatMap((session) =>
+    session.training_id === trainingId &&
+    typeof session.training_session_id === 'string' &&
+    session.training_session_id.length > 0
+      ? [session.training_session_id]
+      : [],
+  );
+}
+/** A session id also listed with another training proves nothing for it. */
+const claimedByOtherTraining = (
+  id: string,
+  trainingId: unknown,
+  sessions: JsonRecord[],
+) =>
+  sessions.some(
+    (other) =>
+      other.training_session_id === id && other.training_id !== trainingId,
+  );
+/** Occurrences of the unit recorded (valid completed_at) in one candidate
+ * session, in unit order. Null when the session cannot prove anything for the
+ * unit: another training claims it or it holds entries outside the unit. */
+function sessionOccurrences(
+  unit: EvidenceUnit,
+  id: string,
+  sessions: JsonRecord[],
+  entries: JsonRecord[],
+): string[] | null {
+  if (claimedByOtherTraining(id, unit.trainingId, sessions)) return null;
+  const scoped = entries.filter((entry) => entry.training_session_id === id);
+  if (
+    scoped.some(
+      (entry) =>
+        typeof entry.training_exercise_id !== 'string' ||
+        !unit.occurrences.includes(entry.training_exercise_id),
+    )
+  )
+    return null;
+  return unit.occurrences.filter((occurrence) =>
+    scoped.some(
+      (entry) =>
+        entry.training_exercise_id === occurrence && completedEntry(entry),
+    ),
+  );
+}
+/** A session-less entry touching the unit: an unproven claim of execution. */
+const sessionlessClaim = (entry: JsonRecord, unit: EvidenceUnit) =>
+  !entry.training_session_id &&
+  (typeof entry.training_exercise_id === 'string'
+    ? unit.occurrences.includes(entry.training_exercise_id)
+    : typeof entry.exercise_id === 'string');
 /** DayProgress itself supplies owner/date scope; session and occurrence keys
  * prove explicit execution. Legacy flags alone do not prove that execution.
  * Receipts are immutable ACKs, never commands replayed by this read endpoint. */
@@ -532,10 +631,7 @@ export function normalizeAdherenceEvidence(
   client: string,
   date: string,
 ): NormalizedEvidence {
-  const own =
-    progress?.client_id === client && civil(progress.date) === date
-      ? progress
-      : null;
+  const own = ownProgress(progress, client, date);
   const sessions = objects(own?.training_sessions);
   const entries = objects(own?.exercises_completed);
   const supportedReceipts = receipts.filter(
@@ -564,63 +660,28 @@ export function normalizeAdherenceEvidence(
     basis.completionMode === TrainingCompletionMode.ANY &&
     basis.units.length > 1;
   const perUnit = basis.units.map((unit): PlannedUnit => {
-    const candidates = sessions.filter(
-      (session) =>
-        session.training_id === unit.trainingId &&
-        typeof session.training_session_id === 'string' &&
-        session.training_session_id.length > 0,
+    const complete = candidateSessionIds(unit.trainingId, sessions).some(
+      (id) => {
+        const recorded = sessionOccurrences(unit, id, sessions, entries);
+        const supported =
+          recorded !== null &&
+          unit.occurrences.length > 0 &&
+          unit.occurrences.every((occurrence) => recorded.includes(occurrence));
+        if (supported)
+          executions.push({
+            unit: unit.id,
+            session: id,
+            occurrences: [...unit.occurrences].sort(),
+          });
+        return supported;
+      },
     );
-    const complete = candidates.some((session) => {
-      const id = session.training_session_id;
-      if (
-        sessions.some(
-          (other) =>
-            other.training_session_id === id &&
-            other.training_id !== unit.trainingId,
-        )
-      )
-        return false;
-      const scoped = entries.filter(
-        (entry) => entry.training_session_id === id,
-      );
-      if (
-        scoped.some(
-          (entry) =>
-            typeof entry.training_exercise_id !== 'string' ||
-            !unit.occurrences.includes(entry.training_exercise_id),
-        )
-      )
-        return false;
-      const supported =
-        unit.occurrences.length > 0 &&
-        unit.occurrences.every((occurrence) =>
-          scoped.some(
-            (entry) =>
-              entry.training_exercise_id === occurrence &&
-              typeof entry.completed_at === 'string' &&
-              Number.isFinite(Date.parse(entry.completed_at)),
-          ),
-        );
-      if (supported && typeof id === 'string')
-        executions.push({
-          unit: unit.id,
-          session: id,
-          occurrences: [...unit.occurrences].sort(),
-        });
-      return supported;
-    });
     // The legacy day flag is a per-unit claim only under ALL. Under ANY it is
     // judged once for the collapsed day below, never spread over every unit.
     const unsupported =
       own?.trainings_completed.includes(unit.trainingId) ||
       (!chooseOne && own?.training_completed) ||
-      entries.some(
-        (entry) =>
-          !entry.training_session_id &&
-          (typeof entry.training_exercise_id === 'string'
-            ? unit.occurrences.includes(entry.training_exercise_id)
-            : typeof entry.exercise_id === 'string'),
-      );
+      entries.some((entry) => sessionlessClaim(entry, unit));
     return {
       id: unit.id,
       completion: complete
@@ -719,6 +780,110 @@ export function normalizeAdherenceEvidence(
     },
   };
 }
+/** Most advanced alternative: highest recorded fraction (exact, by
+ * cross-multiplication; no occurrences counts as 0), then the larger count,
+ * then plan order. */
+function mostAdvanced(units: TrainingActivityUnit[]): TrainingActivityUnit {
+  const share = (unit: TrainingActivityUnit) =>
+    unit.total ? [unit.recorded, unit.total] : [0, 1];
+  return units.reduce((best, unit) => {
+    const [n, d] = share(unit);
+    const [bestN, bestD] = share(best);
+    const order = n * bestD - bestN * d;
+    return order > 0 || (order === 0 && unit.recorded > best.recorded)
+      ? unit
+      : best;
+  });
+}
+/** Informative training activity of a day, read from the same progress row
+ * and basis as its evaluation and with the same session ownership rules. It
+ * is overlaid on the public day after the revision is created or restored and
+ * never enters the revision, its JSON or its idempotency key.
+ * - Null when no training is planned (rest, not assigned) or the day is in
+ *   the future, matching schedule.training rest/not_assigned and the
+ *   future calendar.
+ * - recorded: an exercise entry with a valid completed_at in a candidate
+ *   session of a planned training, for one of its occurrences. A session the
+ *   evaluation rejects as proof (claimed by another training, or holding
+ *   entries outside the unit) conservatively counts as no verified activity.
+ * - unverified: a session-less entry touching a planned training (the same
+ *   claim that makes a unit indeterminate); never counted as recorded.
+ * - units: distinct occurrences of the most advanced session (sessions are
+ *   never summed) out of the distinct occurrences of the training; under ANY
+ *   only the most advanced alternative.
+ * - Unknown plan: occurrences cannot be checked, so units is null and only
+ *   the marks remain, with the ownership rules that can still be applied. */
+export function trainingActivity(
+  basis: EvaluationBasis,
+  progress: ProgressEvidence | null,
+  client: string,
+  date: string,
+  today: string,
+): TrainingActivity | null {
+  if (
+    date > today ||
+    basis.rest ||
+    (basis.trainingKnown && !basis.units.length)
+  )
+    return null;
+  const own = ownProgress(progress, client, date);
+  const sessions = objects(own?.training_sessions);
+  const entries = objects(own?.exercises_completed);
+  if (!basis.trainingKnown) {
+    // A session no other training claims, of one of the day's trainings when
+    // they are known, holding an exercise entry with a valid completed_at.
+    const trainings = basis.units.map((unit) => unit.trainingId);
+    return {
+      recorded: sessions.some((session) => {
+        const id = session.training_session_id;
+        return (
+          typeof id === 'string' &&
+          id.length > 0 &&
+          (!trainings.length ||
+            trainings.some((training) => training === session.training_id)) &&
+          !claimedByOtherTraining(id, session.training_id, sessions) &&
+          entries.some(
+            (entry) =>
+              entry.training_session_id === id &&
+              typeof entry.training_exercise_id === 'string' &&
+              completedEntry(entry),
+          )
+        );
+      }),
+      unverified: entries.some(
+        (entry) =>
+          !entry.training_session_id &&
+          (typeof entry.training_exercise_id === 'string' ||
+            typeof entry.exercise_id === 'string'),
+      ),
+      units: null,
+    };
+  }
+  const units = basis.units.map(
+    (unit): TrainingActivityUnit => ({
+      unit_id: unit.id,
+      training_id: unit.trainingId,
+      recorded: Math.max(
+        0,
+        ...candidateSessionIds(unit.trainingId, sessions).map(
+          (id) =>
+            new Set(sessionOccurrences(unit, id, sessions, entries) ?? []).size,
+        ),
+      ),
+      total: new Set(unit.occurrences).size,
+    }),
+  );
+  const chooseOne =
+    basis.completionMode === TrainingCompletionMode.ANY &&
+    basis.units.length > 1;
+  return {
+    recorded: units.some((unit) => unit.recorded > 0),
+    unverified: basis.units.some((unit) =>
+      entries.some((entry) => sessionlessClaim(entry, unit)),
+    ),
+    units: chooseOne ? [mostAdvanced(units)] : units,
+  };
+}
 function weekStart(date: string): string {
   const at = new Date(date + 'T00:00:00Z');
   at.setUTCDate(at.getUTCDate() - ((at.getUTCDay() + 6) % 7));
@@ -733,8 +898,12 @@ function calendar(
   if (evaluation.global.status === 'not_applicable')
     return basis.rest ? CALENDAR.REST : CALENDAR.NOT_ASSIGNED;
   if (evaluation.global.ratio === 1) return CALENDAR.COMPLETE;
-  if (evaluation.global.ratio === 0 && evaluation.period === 'closed')
-    return CALENDAR.INCOMPLETE;
+  // Today (provisional) at 0 % is pending, not partial (owner decision
+  // 2026-11-18). Only closed days persist revisions, so it is never stored.
+  if (evaluation.global.ratio === 0)
+    return evaluation.period === 'closed'
+      ? CALENDAR.INCOMPLETE
+      : CALENDAR.PENDING;
   return CALENDAR.PARTIAL;
 }
 @Injectable()
@@ -991,7 +1160,7 @@ export class AdherenceEvaluationService {
             );
           },
         });
-        const days: AdherenceDayResult[] = [];
+        const days: AdherenceDayReport[] = [];
         const requestedStarts = new Set(dates.map(weekStart));
         const starts = [...new Set(collectedDates.map(weekStart))];
         const policyDates = starts.flatMap((start) =>
@@ -1354,7 +1523,19 @@ export class AdherenceEvaluationService {
               });
             }
           }
-          days.push(result);
+          // Read-only overlay, after the revision was created or restored: a
+          // restored revision without it still shows the activity of the
+          // progress row its key was computed from (sync_revision).
+          days.push({
+            ...result,
+            training_activity: trainingActivity(
+              basis,
+              progress,
+              client,
+              date,
+              today,
+            ),
+          });
         }
         const reportDays = days.filter(
           (day) => day.date >= query.start && day.date <= query.end,
