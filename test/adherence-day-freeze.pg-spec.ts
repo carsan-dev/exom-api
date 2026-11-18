@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseError, Pool, type PoolClient } from 'pg';
@@ -117,6 +118,21 @@ async function backendPid(client: PoolClient): Promise<number> {
   return rows[0].pid;
 }
 
+// pool.end() resolves as soon as the pool forgets its idle clients, before
+// their sockets close. A DROP DATABASE ... WITH (FORCE) issued right after it
+// races their Terminate message: a backend signalled first sends FATAL 57P01,
+// which the ended pool re-emits as an 'error' nobody listens to. The returned
+// closer ends the pool and waits until every client it opened has closed.
+function poolCloser(pool: Pool): () => Promise<void> {
+  const open = new Set<PoolClient>();
+  pool.on('connect', (client) => open.add(client));
+  pool.on('remove', (client) => open.delete(client));
+  return async () => {
+    if (!pool.ending) await pool.end();
+    while (open.size) await once(pool, 'remove');
+  };
+}
+
 async function waitForLock(monitor: Db, pid: number): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt++) {
     const { rows } = await monitor.query<{ waiting: boolean }>(
@@ -132,6 +148,7 @@ async function waitForLock(monitor: Db, pid: number): Promise<void> {
 describe('adherence day freeze on fresh owned PG17', () => {
   let main: Pool;
   let scratch: Pool;
+  let closeScratch: (() => Promise<void>) | undefined;
   let scratchName: string;
   const createdRoles: string[] = [];
   const users: string[] = [];
@@ -384,6 +401,7 @@ describe('adherence day freeze on fresh owned PG17', () => {
       ssl: false,
       max: 8,
     });
+    closeScratch = poolCloser(scratch);
     const scratchIdentity = await scratch.query<{
       db: string;
       role: string;
@@ -487,7 +505,7 @@ describe('adherence day freeze on fresh owned PG17', () => {
   }, 300000);
 
   afterAll(async () => {
-    await scratch?.end();
+    await closeScratch?.();
     if (scratchName && main) {
       await main.query(`DROP DATABASE IF EXISTS ${scratchName} WITH (FORCE)`);
     }
@@ -1396,6 +1414,7 @@ describe('adherence day freeze on fresh owned PG17', () => {
   // cascades to their frozen rows and keeps every freeze range independent.
   describe('U2 evaluation of frozen days', () => {
     let prismaPool: Pool;
+    let closePrismaPool: (() => Promise<void>) | undefined;
     let prisma: PrismaClient;
     let module: TestingModule;
     let service: AdherenceEvaluationService;
@@ -1409,6 +1428,7 @@ describe('adherence day freeze on fresh owned PG17', () => {
         connectionString: target.toString(),
         ssl: false,
       });
+      closePrismaPool = poolCloser(prismaPool);
       prisma = new PrismaClient({ adapter: new PrismaPg(prismaPool) });
       module = await Test.createTestingModule({
         imports: [PrismaModule, AdherenceConfigModule],
@@ -1425,7 +1445,7 @@ describe('adherence day freeze on fresh owned PG17', () => {
     afterAll(async () => {
       await module?.close();
       await prisma?.$disconnect();
-      if (prismaPool && !prismaPool.ended) await prismaPool.end();
+      await closePrismaPool?.();
     });
 
     const nextDay = (day: string) => {
