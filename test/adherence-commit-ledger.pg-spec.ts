@@ -10,6 +10,7 @@ import type {
   AdherenceCommitRequest,
   AdherenceCommitSessionProvider,
 } from '../src/modules/adherence/adherence-commit-resolver';
+import { enableAdherenceJournalTriggers } from './adherence-journal-triggers';
 
 type Payload = Omit<
   AdherenceCommitProof,
@@ -40,6 +41,7 @@ describe('owner-controlled immutable PG commit evidence', () => {
   let activationXid: string;
   let fullXid: string;
   let initialImages: ImageRow[];
+  let restoreJournalTriggers: (() => Promise<void>) | undefined;
   const fixtureNonce = randomUUID();
   const legacyClient = 'ledger-client-' + fixtureNonce;
   const legacyGroup = 'ledger-legacy-group-' + fixtureNonce;
@@ -88,6 +90,9 @@ describe('owner-controlled immutable PG commit evidence', () => {
       dir: '/var/lib/postgresql/exom-ci-data',
       tracking: 'on',
     });
+    // Journal machinery under test: journals are written only while the 16
+    // capture triggers (disabled by migration 20261118120000) are enabled.
+    restoreJournalTriggers = await enableAdherenceJournalTriggers(pool);
     // This namespace is a fixture authority, never a production capability.
     // Other ON suites may retain epochs/source rows: seed our own preactivation
     // legacy data without clearing or adopting anyone else's append-only history.
@@ -197,8 +202,15 @@ describe('owner-controlled immutable PG commit evidence', () => {
     }
   });
   afterAll(async () => {
-    await db?.$disconnect();
-    await pool?.end();
+    try {
+      await restoreJournalTriggers?.();
+    } finally {
+      try {
+        await db?.$disconnect();
+      } finally {
+        await pool?.end();
+      }
+    }
   });
   async function payload(xid = fullXid, sql: Pool | PoolClient = pool) {
     return (

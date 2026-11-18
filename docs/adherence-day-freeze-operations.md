@@ -2,7 +2,7 @@
 
 **Esta guía prepara la operación; NO autoriza ejecutarla.** Cada conexión requiere autorización para el destino, la acción y la sesión que se utilizará. Cada paso que cambie producción requiere autorización expresa del propietario para la acción, el entorno y la población. No reutilizar credenciales o sesiones por su mera disponibilidad. No registrar secretos, cadenas de conexión ni identificadores de clientes.
 
-Alcance: U3 / PR-3 de ADH-FREEZE-01, §§9–10, con las decisiones P1–P6 de §12 bis. La instalación del esquema (PR-1), el despliegue del lector (PR-2) y la activación operativa (U6) son acciones distintas. La medición y posterior desactivación de los 16 triggers de journals pertenecen a U0/U5 / PR-4: **fuera de este alcance**. No se eliminan journals, épocas, snapshots ni código heredado.
+Alcance: U3 / PR-3 de ADH-FREEZE-01, §§9–10, con las decisiones P1–P6 de §12 bis. La instalación del esquema (PR-1), el despliegue del lector (PR-2) y la activación operativa (U6) son acciones distintas. La medición y posterior desactivación de los 16 triggers de journals pertenecen a U0/U5 / PR-4: **fuera del alcance de U3**; la migración de PR-4 se documenta aparte en «Desactivación de los triggers de journals (PR-4 / U5)». No se eliminan journals, épocas, snapshots ni código heredado.
 
 ## Puertas previas obligatorias
 
@@ -121,9 +121,48 @@ Cada acción siguiente **requiere autorización expresa del propietario** para a
 - **Reversión de lectura:** desplegar una API sin U2 mediante el procedimiento autorizado. Ignora las bases diarias; la precedencia heredada v1 publicada permanece y los demás días vuelven al respaldo actual. Las revisiones append-only y las filas congeladas permanecen. Detener los jobs requiere la acción separada anterior.
 - No ejecutar `DROP EXTENSION`, borrar bases congeladas, desactivar triggers de snapshots ni retirar tablas. Son acciones destructivas o de otro alcance, no una reversión prevista aquí.
 
+## Desactivación de los triggers de journals (PR-4 / U5)
+
+Esta sección documenta la migración `20261118120000_disable_adherence_journal_triggers` de PR-4; el resto de la guía mantiene su alcance U3. La migración desactiva (no elimina) los 16 triggers de captura de `adherence_assignment_journal` y `adherence_catalog_journal` y hace que `activate_adherence_history_origin()` rechace con `55000` abrir una época si alguno no está habilitado. Funciones, journals y sus filas se conservan. **Aplicarla y revertirla requieren autorización expresa del propietario** para acción, entorno y población, igual que el resto de pasos de escritura.
+
+1. **Rol del despliegue:** el rol que aplica la migración debe ser propietario de las 16 tablas y de `activate_adherence_history_origin()`. Comprobarlo antes; no conceder privilegios para superarlo.
+2. **Tráfico bajo:** la migración bloquea las 16 tablas en `SHARE ROW EXCLUSIVE` con `lock_timeout = '5s'`. El límite se aplica a cada adquisición, no al total: las escrituras de la API sobre ellas pueden quedar en cola hasta 5 s por cada tabla que la migración tenga que esperar (varias esperas consecutivas se suman), y una transacción de la API que toque varias de esas tablas puede recibir `40P01` (interbloqueo). Desplegar en una ventana de escritura baja.
+3. **Fallo por bloqueo y `P3009`:** si la migración aborta por `lock_timeout` (`55P03`), Prisma muestra `25P02` y oculta el `55P03`, deja la fila de `_prisma_migrations` sin terminar y el siguiente `migrate deploy` falla con `P3009`. No cambió nada. Recuperar, con la misma autorización, con:
+
+   ```bash
+   npx prisma migrate resolve --rolled-back 20261118120000_disable_adherence_journal_triggers
+   ```
+
+   y volver a desplegar. Lo mismo ocurre, con el mismo `25P02` visible, si aborta porque el operador de historial tiene el bloqueo consultivo `(60309,31)` (`55P03`, `Adherence history operator running …`, también oculto por Prisma).
+4. **Reversión:** reactiva la captura en los journals; las escrituras hechas mientras estuvieron desactivados no se recuperan. Ejecutar en una sola transacción, precedidas de `SET LOCAL lock_timeout = '5s';` para no encolar escrituras sin límite, las 16 sentencias:
+
+   ```sql
+   ALTER TABLE public.plan_assignments ENABLE TRIGGER adherence_assignment_event;
+   ALTER TABLE public.plan_assignment_trainings ENABLE TRIGGER adherence_assignment_training_event;
+   ALTER TABLE public.trainings ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.training_blocks ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.training_exercises ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.exercises ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.training_groups ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.diet_groups ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.catalog_colors ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.diets ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.meals ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.meal_ingredients ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.ingredients ENABLE TRIGGER adherence_catalog_event;
+   ALTER TABLE public.diet_day_snapshots ENABLE TRIGGER adherence_effective_event;
+   ALTER TABLE public.rir_day_targets ENABLE TRIGGER adherence_effective_event;
+   ALTER TABLE public.training_day_snapshots ENABLE TRIGGER adherence_effective_event;
+   ```
+
+   La guarda de la función permanece y vuelve a permitir activar en cuanto los 16 están habilitados.
+5. **Sin operador durante el despliegue:** no ejecutar `scripts/adherence-history-operator.cjs` mientras se aplica la migración. Si el operador ya tiene su bloqueo `(60309,31)`, la migración aborta sin cambios (punto 3); si la migración adquirió el bloqueo primero, `run` no lo obtiene y termina sin activar (`status` `unknown`, `reasonCode` `operation_unknown`). Esta exclusión solo vale si el operador usa una conexión directa o con afinidad de sesión: a través de un pooler en modo transacción o sentencia el bloqueo de sesión no se conserva y la exclusión no está garantizada. Una llamada directa a la función que no tome ese bloqueo (SQL manual, SDK o scripts) no queda excluida: no activar fuera del operador durante el despliegue.
+6. **Limitación aceptada (decisión del propietario, 2026-11-18):** la guarda solo cubre épocas NUEVAS. Un corte manual nuevo sobre una época activada antes de la migración no está soportado y quedaría incompleto sin error, porque omitiría las escrituras hechas con los triggers desactivados. Seguimiento: ADH-JOURNAL-EPOCH-01.
+7. **Preflight del operador:** `preflight` no comprueba los triggers; puede devolver `ready` y después `run` fallar cerrado en la activación (`55000`) mientras sigan desactivados. Es el comportamiento esperado, no un fallo de permisos.
+
 ## Límites y verificación pendiente
 
-Se acepta la ventana 00:00 UTC → captura: una edición confirmada antes de la sentencia puede entrar en la base. Las dietas se guardan por referencia; **conservar los triggers y filas de `diet_day_snapshots`** de los días referenciados. No confundirlos con los triggers de journals que PR-4 podrá deshabilitar tras medición y autorización.
+Se acepta la ventana 00:00 UTC → captura: una edición confirmada antes de la sentencia puede entrar en la base. Las dietas se guardan por referencia; **conservar los triggers y filas de `diet_day_snapshots`** de los días referenciados. No confundirlos con los triggers de journals que la migración de PR-4 deshabilita (sección anterior).
 
 El SQL real de PR-1 prevalece sobre el esbozo del plan: `lock_timeout='35s'`, no 10 s; el bloqueo FK puede esperar al mutex por cliente de la API (`FOR UPDATE`, hasta 30 s), no solo al borrado. La etiqueta puntual usa `GREATEST(p_now, transaction_timestamp())`, evitando que un reloj inyectado antiguo fabrique `scheduled`. También valida margen no nulo y no negativo. El `CHECK` del payload usa `IS NOT DISTINCT FROM` para rechazar claves ausentes. No se cambian funciones en U3.
 

@@ -24,6 +24,7 @@ import {
   AdherencePrescriptionService,
   PrismaPrescriptionPublisher,
 } from '../src/modules/adherence/adherence-prescription.service';
+import { enableAdherenceJournalTriggers } from './adherence-journal-triggers';
 
 const date = '2020-01-01';
 const sources =
@@ -265,8 +266,12 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     };
   }
   let food: Awaited<ReturnType<typeof fixture>>;
+  let restoreJournalTriggers: (() => Promise<void>) | undefined;
   beforeAll(async () => {
     pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+    // Fixtures publish originals through the journal / history-cut machinery:
+    // journals are written only while the 16 capture triggers are enabled.
+    restoreJournalTriggers = await enableAdherenceJournalTriggers(pool);
     const module = await Test.createTestingModule({
       imports: [PrismaModule, AdherenceConfigModule],
     }).compile();
@@ -293,8 +298,15 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     );
   }, 30000);
   afterAll(async () => {
-    if (app) await app.close();
-    if (pool) await pool.end();
+    try {
+      if (app) await app.close();
+    } finally {
+      try {
+        await restoreJournalTriggers?.();
+      } finally {
+        if (pool) await pool.end();
+      }
+    }
   });
   it('registers self/staff routes, keeps config route, validates DTO and isolates actors', async () => {
     const server: unknown = app.getHttpServer();

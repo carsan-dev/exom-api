@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool, PoolClient } from 'pg';
 import { assertTestDatabase } from '../../../scripts/test-database.cjs';
+import { enableAdherenceJournalTriggers } from '../../../test/adherence-journal-triggers';
 
 // SQL identifiers below are fixed fixtures, never caller-supplied identifiers.
 const SOURCES = {
@@ -56,6 +57,7 @@ describe('catalog row journal on actual PostgreSQL tables', () => {
   let pool: Pool;
   let prefix: string;
   let seedXid: string;
+  let restoreJournalTriggers: (() => Promise<void>) | undefined;
   const role = `catalog_writer_${randomUUID().replaceAll('-', '')}`;
   const hostile = `catalog_hostile_${randomUUID().replaceAll('-', '')}`;
   const id = (table: string) => `${prefix}-${table}`;
@@ -68,6 +70,9 @@ describe('catalog row journal on actual PostgreSQL tables', () => {
       statement_timeout: 10000,
     });
     await assertTestDatabase(pool);
+    // Journal under test: written only while the 16 capture triggers
+    // (disabled by migration 20261118120000) are enabled.
+    restoreJournalTriggers = await enableAdherenceJournalTriggers(pool);
     await pool.query(
       `CREATE ROLE ${role} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`,
     );
@@ -99,8 +104,12 @@ describe('catalog row journal on actual PostgreSQL tables', () => {
     await pool.query(`ALTER TABLE ${hostile}.trainings OWNER TO ${role}`);
   });
   afterAll(async () => {
-    // Journals/fixtures retained until exclusive owned-server disposal.
-    await pool?.end();
+    try {
+      await restoreJournalTriggers?.();
+    } finally {
+      // Journals/fixtures retained until exclusive owned-server disposal.
+      await pool?.end();
+    }
   });
   async function transaction(
     mutate: (c: PoolClient) => Promise<void>,
