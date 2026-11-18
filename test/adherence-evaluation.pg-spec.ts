@@ -432,6 +432,21 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
       },
     });
     expect(results[1].days).toEqual(results[0].days);
+    // Informative training activity (2026-11-18): overlaid on every read,
+    // restored revisions included, and never stored in the revision JSON.
+    expect(first.days[0].training_activity).toMatchObject({
+      recorded: false,
+      unverified: false,
+    });
+    expect(results[0].days[0].training_activity).toMatchObject({
+      recorded: true,
+      unverified: false,
+      units: [{ training_id: training, recorded: 1 }],
+    });
+    for (const row of await prisma.adherenceEvaluationRevision.findMany({
+      where: { client_id: client },
+    }))
+      expect(row.evaluation).not.toHaveProperty('training_activity');
     expect(
       await prisma.adherenceEvaluationRevision.findMany({
         where: { client_id: client, revision: before[0].revision },
@@ -569,9 +584,18 @@ describe('registered adherence HTTP and immutable evaluations on owned PG17', ()
     expect(result.days[0]).toMatchObject({
       basis: 'current_provisional',
       evaluation: { training: { denominator: 1, numerator: 0 } },
+      // Today at 0 % is pending, never partial (2026-11-18), and as a
+      // provisional day it is not persisted (count below).
+      calendar: 'pending',
+      training_activity: {
+        recorded: false,
+        unverified: false,
+        units: [{ training_id: training, recorded: 0 }],
+      },
     });
     expect(result.aggregate.global.ratio).toBeNull();
     expect(result.days[1].calendar).toBe('future');
+    expect(result.days[1].training_activity).toBeNull();
     expect(
       await prisma.adherenceEvaluationRevision.count({
         where: { client_id: client, date: { gte: new Date(today) } },
