@@ -33,6 +33,7 @@ import {
   loadDietHistory,
   indexDietHistory,
   historicalDietFor,
+  type HistoricalDiet,
 } from '../../common/progress/diet-history';
 import {
   AdherencePrescriptionService,
@@ -278,12 +279,23 @@ export function canonicalFallbackBasis(
       .sort(byId),
   };
 }
-/** Revision-key digest of a current-plan fallback basis. Only the typed fields
- * that drive evaluation enter it, so a later plan change appends a revision
- * while cosmetic catalog edits (names, timestamps) do not. */
-export function fallbackBasisDigest(basis: EvaluationBasis): string {
+/** Revision-key prefixes of the bases built in this service. The prefix names
+ * the source; the hash after it depends only on the basis. */
+export const BASIS_DIGEST_PREFIX = {
+  CURRENT_FALLBACK: 'current_fallback:v1:',
+  FROZEN_DAY: 'frozen_day:v1:',
+} as const;
+type BasisDigestPrefix =
+  (typeof BASIS_DIGEST_PREFIX)[keyof typeof BASIS_DIGEST_PREFIX];
+/** Revision-key digest of a basis. Only the typed fields that drive evaluation
+ * enter it, so a later plan change appends a revision while cosmetic catalog
+ * edits (names, timestamps) do not. */
+export function basisDigest(
+  prefix: BasisDigestPrefix,
+  basis: EvaluationBasis,
+): string {
   return (
-    'current_fallback:v1:' +
+    prefix +
     digest({
       trainingKnown: basis.trainingKnown,
       rest: basis.rest,
@@ -306,6 +318,22 @@ export function fallbackBasisDigest(basis: EvaluationBasis): string {
     })
   );
 }
+/** Revision-key digest of a current-plan fallback basis (unchanged bytes). */
+export function fallbackBasisDigest(basis: EvaluationBasis): string {
+  return basisDigest(BASIS_DIGEST_PREFIX.CURRENT_FALLBACK, basis);
+}
+/** Catalog diet relations of a basis: current plans and frozen days alike. */
+const DIET_BASIS_INCLUDE = {
+  meals: {
+    where: { parent_meal_id: null },
+    include: {
+      ingredients: { include: { ingredient: true } },
+      variants: {
+        include: { ingredients: { include: { ingredient: true } } },
+      },
+    },
+  },
+} satisfies Prisma.DietInclude;
 /** Plan relations read for a current basis (today and closed fallback days). */
 const PLAN_BASIS_INCLUDE = {
   trainings: {
@@ -313,23 +341,31 @@ const PLAN_BASIS_INCLUDE = {
     include: { training: { include: { exercises: true } } },
   },
   training: { include: { exercises: true } },
-  diet: {
-    include: {
-      meals: {
-        where: { parent_meal_id: null },
-        include: {
-          ingredients: { include: { ingredient: true } },
-          variants: {
-            include: { ingredients: { include: { ingredient: true } } },
-          },
-        },
-      },
-    },
-  },
+  diet: { include: DIET_BASIS_INCLUDE },
 } satisfies Prisma.PlanAssignmentInclude;
 type PlanBasisAssignment = Prisma.PlanAssignmentGetPayload<{
   include: typeof PLAN_BASIS_INCLUDE;
 }>;
+type CatalogBasisDiet = Prisma.DietGetPayload<{
+  include: typeof DIET_BASIS_INCLUDE;
+}>;
+/** Nutrition of a basis from the diet of its day (snapshot first, then the
+ * catalog), shared by current plans and frozen days. */
+function dietNutrition(
+  diet: HistoricalDiet | CatalogBasisDiet | null | undefined,
+): Pick<EvaluationBasis, 'groups' | 'calories' | 'protein'> {
+  return {
+    groups:
+      diet?.meals
+        .filter((m) => !m.parent_meal_id)
+        .map((meal) => ({
+          id: meal.id,
+          alternatives: [meal, ...meal.variants],
+        })) ?? [],
+    calories: diet?.total_calories ?? null,
+    protein: diet?.total_protein_g ?? null,
+  };
+}
 /** A date without an assignment is a known, empty plan (not assigned). */
 const unassignedBasis = (): EvaluationBasis => ({
   ...unknownBasis(),
@@ -337,7 +373,11 @@ const unassignedBasis = (): EvaluationBasis => ({
   nutritionKnown: true,
 });
 /** Single builder of a current basis from an assignment and the captured day
- * snapshots of its date; the same for today and for closed fallback days. */
+ * snapshots of its date; the same for today and for closed fallback days.
+ * Its structural part (units, occurrences, rest, completion mode, diet id) is
+ * mirrored by the SQL constructor public.exom_adherence_day_basis (migration
+ * 20261117120000): change both together; the frozen/fallback equivalence
+ * suite (test/adherence-day-freeze.pg-spec.ts) guards the pair. */
 function planBasis(
   assignment: PlanBasisAssignment,
   trainingHistory: Map<string, HistoricalTraining>,
@@ -369,15 +409,96 @@ function planBasis(
     units: assignment.is_rest_day ? [] : units,
     completionMode: assignment.training_completion_mode,
     nutritionKnown: true,
-    groups:
-      diet?.meals
-        .filter((m) => !m.parent_meal_id)
-        .map((meal) => ({
-          id: meal.id,
-          alternatives: [meal, ...meal.variants],
-        })) ?? [],
-    calories: diet?.total_calories ?? null,
-    protein: diet?.total_protein_g ?? null,
+    ...dietNutrition(diet),
+  };
+}
+/** Validated payload v1 of an adherence_day_bases row (ADH-FREEZE-01). */
+export type FrozenDayPlan =
+  | { assigned: false }
+  | {
+      assigned: true;
+      rest: boolean;
+      completionMode: TrainingCompletionMode;
+      dietId: string | null;
+      units: EvidenceUnit[];
+    };
+export interface FrozenDay {
+  provenance: 'scheduled' | 'late';
+  plan: FrozenDayPlan;
+}
+const strings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+/** Strict reader of one adherence_day_bases row: null when any field the
+ * evaluation needs is missing or malformed. The caller keeps such a day
+ * unknown and never replaces it with the current plan. */
+export function frozenDay(row: {
+  version: unknown;
+  provenance: unknown;
+  basis: unknown;
+}): FrozenDay | null {
+  const { basis } = row;
+  if (
+    row.version !== 1 ||
+    (row.provenance !== 'scheduled' && row.provenance !== 'late') ||
+    !object(basis) ||
+    basis.version !== 1 ||
+    typeof basis.assigned !== 'boolean'
+  )
+    return null;
+  const provenance = row.provenance;
+  if (!basis.assigned) return { provenance, plan: { assigned: false } };
+  const mode = basis.completion_mode;
+  if (
+    typeof basis.rest !== 'boolean' ||
+    (mode !== TrainingCompletionMode.ALL &&
+      mode !== TrainingCompletionMode.ANY) ||
+    (basis.diet_id !== null && typeof basis.diet_id !== 'string') ||
+    !Array.isArray(basis.units) ||
+    (basis.rest && basis.units.length > 0)
+  )
+    return null;
+  const units: EvidenceUnit[] = [];
+  for (const unit of basis.units) {
+    if (
+      !object(unit) ||
+      typeof unit.id !== 'string' ||
+      typeof unit.training_id !== 'string' ||
+      !strings(unit.occurrences)
+    )
+      return null;
+    units.push({
+      id: unit.id,
+      trainingId: unit.training_id,
+      occurrences: [...unit.occurrences],
+    });
+  }
+  return {
+    provenance,
+    plan: {
+      assigned: true,
+      rest: basis.rest,
+      completionMode: mode,
+      dietId: basis.diet_id,
+      units,
+    },
+  };
+}
+/** Basis of a frozen day: structure from the row, nutrition resolved like
+ * planBasis (day snapshot first, then catalog). A diet id that resolves to
+ * neither leaves nutrition unknown, never "no diet". */
+function frozenDayBasis(
+  plan: FrozenDayPlan,
+  diet: HistoricalDiet | CatalogBasisDiet | undefined,
+): EvaluationBasis {
+  if (!plan.assigned) return unassignedBasis();
+  const nutritionKnown = plan.dietId === null || diet !== undefined;
+  return {
+    trainingKnown: true,
+    rest: plan.rest,
+    units: plan.rest ? [] : plan.units,
+    completionMode: plan.completionMode,
+    nutritionKnown,
+    ...dietNutrition(nutritionKnown ? diet : null),
   };
 }
 function frozenBasis(stored: StoredPrescription): EvaluationBasis {
@@ -763,6 +884,90 @@ export class AdherenceEvaluationService {
     return bases;
   }
 
+  /** Frozen day rows (adherence_day_bases) of the closed dates, one statement
+   * for all of them. A present but malformed row maps to null. */
+  private async frozenDays(
+    tx: Prisma.TransactionClient,
+    client: string,
+    dates: readonly string[],
+  ): Promise<Map<string, FrozenDay | null>> {
+    const days = new Map<string, FrozenDay | null>();
+    if (!dates.length) return days;
+    const rows = await tx.$queryRaw<
+      Array<{
+        date: string;
+        version: unknown;
+        provenance: unknown;
+        basis: unknown;
+      }>
+    >(Prisma.sql`
+      SELECT to_char(date, 'YYYY-MM-DD') AS date, version, provenance, basis
+      FROM public.adherence_day_bases
+      WHERE client_id = ${client}
+        AND date = ANY(ARRAY[${Prisma.join(dates)}]::date[])
+    `);
+    // (client_id, date) is the primary key: at most one row per date.
+    for (const row of rows) days.set(row.date, frozenDay(row));
+    return days;
+  }
+
+  /** Bases of the valid frozen days. Their diets are resolved in one batch:
+   * the diet history of their span and, only for diets without a day
+   * snapshot, one catalog read with the same relations as planBasis. */
+  private async frozenBases(
+    tx: Prisma.TransactionClient,
+    client: string,
+    days: ReadonlyMap<string, FrozenDay>,
+  ): Promise<Map<string, EvaluationBasis>> {
+    const withDiet = [...days].flatMap(([date, day]) =>
+      day.plan.assigned && day.plan.dietId !== null
+        ? [{ date, dietId: day.plan.dietId }]
+        : [],
+    );
+    const dietByDate = new Map<string, HistoricalDiet | CatalogBasisDiet>();
+    if (withDiet.length) {
+      const dates = withDiet.map((entry) => entry.date).sort();
+      // Keys are client:date:diet_id, so the span only adds unused entries.
+      const history = indexDietHistory(
+        await loadDietHistory(
+          tx,
+          [client],
+          new Date(dates[0] + 'T00:00:00Z'),
+          new Date(dates[dates.length - 1] + 'T00:00:00Z'),
+        ),
+      );
+      const missing: typeof withDiet = [];
+      for (const entry of withDiet) {
+        const diet = historicalDietFor(history, {
+          client_id: client,
+          date: new Date(entry.date + 'T00:00:00Z'),
+          diet_id: entry.dietId,
+        });
+        if (diet) dietByDate.set(entry.date, diet);
+        else missing.push(entry);
+      }
+      if (missing.length) {
+        const catalog = await tx.diet.findMany({
+          where: {
+            id: { in: [...new Set(missing.map((entry) => entry.dietId))] },
+          },
+          include: DIET_BASIS_INCLUDE,
+        });
+        const byId = new Map(catalog.map((diet) => [diet.id, diet]));
+        for (const entry of missing) {
+          const diet = byId.get(entry.dietId);
+          if (diet) dietByDate.set(entry.date, diet);
+        }
+      }
+    }
+    return new Map(
+      [...days].map(([date, day]) => [
+        date,
+        frozenDayBasis(day.plan, dietByDate.get(date)),
+      ]),
+    );
+  }
+
   async get(
     actor: string,
     role: string,
@@ -917,17 +1122,30 @@ export class AdherenceEvaluationService {
             }),
           });
         }
-        // ADH-RESPALDO-PAUTA-ACTUAL (2026-11-17): a closed day with no
-        // published original row is estimated with that date's current plan.
-        // A published original always wins; an unreadable stored row stays
-        // unknown rather than being silently replaced.
-        const isFallback = (date: string) => {
+        // Closed-day precedence (ADH-01 D4, ADH-FREEZE-01 §6.3): a published
+        // original always wins and an unreadable one stays unknown. Without
+        // an original, the frozen day row is read (ADH-FREEZE-01): valid ->
+        // frozen basis, malformed -> unknown, never silently replaced. Only
+        // dates without either are estimated with the current plan
+        // (ADH-RESPALDO-PAUTA-ACTUAL, 2026-11-17).
+        const missingOriginal = (date: string) => {
           const original = date < today ? closed.get(date) : null;
           return (
             original?.status === 'unknown' &&
             original.reason === 'missing_stored_basis'
           );
         };
+        const frozenDays = await this.frozenDays(
+          tx,
+          client,
+          collectedDates.filter(missingOriginal),
+        );
+        const validFrozen = new Map<string, FrozenDay>();
+        for (const [date, day] of frozenDays)
+          if (day) validFrozen.set(date, day);
+        const frozenBases = await this.frozenBases(tx, client, validFrozen);
+        const isFallback = (date: string) =>
+          missingOriginal(date) && !frozenDays.has(date);
         const fallbackBases = await this.fallbackBases(
           tx,
           client,
@@ -940,6 +1158,10 @@ export class AdherenceEvaluationService {
           const fallbackBasis = fallback ? fallbackBases.get(date) : undefined;
           if (fallback && !fallbackBasis)
             throw new Error('Missing fallback basis');
+          const frozen = validFrozen.get(date);
+          const frozenOfDay = frozen ? frozenBases.get(date) : undefined;
+          if (frozen && !frozenOfDay)
+            throw new Error('Missing frozen day basis');
           const basis =
             original?.status === 'stored'
               ? frozenBasis(original)
@@ -947,7 +1169,9 @@ export class AdherenceEvaluationService {
                 ? await this.todayBasis(tx, client, at)
                 : fallbackBasis
                   ? canonicalFallbackBasis(fallbackBasis)
-                  : unknownBasis();
+                  : frozenOfDay
+                    ? canonicalFallbackBasis(frozenOfDay)
+                    : unknownBasis();
           const progress =
             date > today ? null : (progressByDate.get(date) ?? null);
           const receipts = date > today ? [] : (receiptsByDate.get(date) ?? []);
@@ -1004,7 +1228,13 @@ export class AdherenceEvaluationService {
                   ? BASIS_SOURCE.CURRENT
                   : fallback
                     ? BASIS_SOURCE.CURRENT_FALLBACK
-                    : BASIS_SOURCE.UNKNOWN,
+                    : frozen
+                      ? // P2/P3 (2026-11-17): frozen on time is the day's
+                        // original plan; a late freeze stays an estimate.
+                        frozen.provenance === 'scheduled'
+                        ? BASIS_SOURCE.ORIGINAL
+                        : BASIS_SOURCE.CURRENT_FALLBACK
+                      : BASIS_SOURCE.UNKNOWN,
             evaluation,
             indicators,
             intake: evidence.intake,
@@ -1031,14 +1261,17 @@ export class AdherenceEvaluationService {
             },
           };
           if (date < today) {
-            // The fallback digest differs from 'missing_original', so earlier
-            // append-only rows stay intact and the new key appends n+1.
-            const basisDigest =
+            // The fallback and frozen digests differ from 'missing_original'
+            // and from each other, so earlier append-only rows stay intact
+            // and a day that becomes frozen appends n+1.
+            const sourceDigest =
               original?.status === 'stored'
                 ? original.digest
                 : fallback
                   ? fallbackBasisDigest(basis)
-                  : 'missing_original';
+                  : frozen
+                    ? basisDigest(BASIS_DIGEST_PREFIX.FROZEN_DAY, basis)
+                    : 'missing_original';
             const configDigest = digest({
               daily: config
                 ? {
@@ -1071,7 +1304,7 @@ export class AdherenceEvaluationService {
               version: 1,
               client,
               date,
-              basisDigest,
+              basisDigest: sourceDigest,
               configDigest,
               evidenceDigest,
             });
@@ -1105,7 +1338,7 @@ export class AdherenceEvaluationService {
                   idempotency_key: key,
                   original_basis_id:
                     original?.status === 'stored' ? `${client}:${date}` : null,
-                  original_basis_digest: basisDigest,
+                  original_basis_digest: sourceDigest,
                   cut_binding:
                     original?.status === 'stored'
                       ? canonical({

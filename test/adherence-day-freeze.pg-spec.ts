@@ -2,6 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseError, Pool, type PoolClient } from 'pg';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { PrismaClient, Role } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaModule } from '../src/prisma/prisma.module';
+import { PrismaService } from '../src/prisma/prisma.service';
+import { AdherenceConfigModule } from '../src/modules/adherence/adherence-config.module';
+import {
+  AdherenceEvaluationService,
+  type AdherenceDayResult,
+} from '../src/modules/adherence/adherence-evaluation.service';
 
 // ADH-FREEZE-01 U1: table, SQL constructor and daily freeze job on a fresh
 // owned PostgreSQL 17. The schema/upgrade checks use a scratch database of the
@@ -1378,5 +1388,649 @@ describe('adherence day freeze on fresh owned PG17', () => {
         expect(await count(scratch)).toBe(0);
       });
     });
+  });
+
+  // ADH-FREEZE-01 U2: the evaluation reads adherence_day_bases for closed
+  // days (plan §3.3 and §8, tests 2 and 7). Same scratch database, so the
+  // freeze job only sees this file's clients; afterEach deletes them, which
+  // cascades to their frozen rows and keeps every freeze range independent.
+  describe('U2 evaluation of frozen days', () => {
+    let prismaPool: Pool;
+    let prisma: PrismaClient;
+    let module: TestingModule;
+    let service: AdherenceEvaluationService;
+
+    beforeAll(async () => {
+      const url = process.env.TEST_DATABASE_URL;
+      if (!url) throw new Error('TEST_DATABASE_URL required');
+      const target = new URL(url);
+      target.pathname = '/' + scratchName;
+      prismaPool = new Pool({
+        connectionString: target.toString(),
+        ssl: false,
+      });
+      prisma = new PrismaClient({ adapter: new PrismaPg(prismaPool) });
+      module = await Test.createTestingModule({
+        imports: [PrismaModule, AdherenceConfigModule],
+      })
+        .overrideProvider(PrismaService)
+        .useValue(prisma)
+        .compile();
+      service = module.get(AdherenceEvaluationService);
+      const identity = await prisma.$queryRaw<{ db: string }[]>`
+        SELECT current_database() AS db`;
+      expect(identity[0].db).toBe(scratchName);
+    });
+
+    afterAll(async () => {
+      await module?.close();
+      await prisma?.$disconnect();
+      if (prismaPool && !prismaPool.ended) await prismaPool.end();
+    });
+
+    const nextDay = (day: string) => {
+      const at = new Date(day + 'T00:00:00Z');
+      at.setUTCDate(at.getUTCDate() + 1);
+      return at.toISOString().slice(0, 10);
+    };
+    const evaluate = (client: string, start: string, end = start) =>
+      service.get(client, Role.CLIENT, client, { start, end });
+    const withoutSource = (day: AdherenceDayResult) => {
+      const copy: Partial<AdherenceDayResult> = { ...day };
+      delete copy.basis;
+      delete copy.revision;
+      return copy;
+    };
+
+    async function revisions(client: string, day: string) {
+      const { rows } = await scratch.query<{
+        revision: number;
+        original_basis_digest: string;
+        original_basis_id: string | null;
+        cut_binding: string | null;
+      }>(
+        `SELECT revision, original_basis_digest, original_basis_id, cut_binding
+         FROM public.adherence_evaluation_revisions
+         WHERE client_id = $1 AND date = $2::date ORDER BY revision`,
+        [client, day],
+      );
+      return rows;
+    }
+
+    async function dietWithVariant(calories: number) {
+      const ingredient = await prisma.ingredient.create({
+        data: {
+          name: 'U2 ' + hex(),
+          calories_per_100g: 100,
+          protein_per_100g: 10,
+          carbs_per_100g: 0,
+          fat_per_100g: 0,
+        },
+      });
+      const diet = await prisma.diet.create({
+        data: {
+          name: 'U2',
+          total_calories: calories,
+          total_protein_g: calories / 20,
+          meals: {
+            create: [0, 1].map((order) => ({
+              name: 'Root ' + order,
+              type: 'BREAKFAST',
+              order,
+              nutritional_badges: [],
+              ingredients: {
+                create: {
+                  ingredient_id: ingredient.id,
+                  quantity: 100,
+                  unit: 'g',
+                },
+              },
+            })),
+          },
+        },
+        include: { meals: { orderBy: { order: 'asc' } } },
+      });
+      const variant = await prisma.meal.create({
+        data: {
+          diet_id: diet.id,
+          parent_meal_id: diet.meals[0].id,
+          type: 'BREAKFAST',
+          name: 'Variant',
+          order: 1,
+          nutritional_badges: [],
+          ingredients: {
+            create: { ingredient_id: ingredient.id, quantity: 70, unit: 'g' },
+          },
+        },
+      });
+      return {
+        id: diet.id,
+        root: diet.meals[0].id,
+        second: diet.meals[1].id,
+        variant: variant.id,
+      };
+    }
+
+    // Session-proven evidence for the given trainings and meal selections.
+    async function progress(
+      client: string,
+      day: string,
+      units: Array<{ training: string; occurrences: string[] }>,
+      meals: string[] = [],
+    ) {
+      const sessions = units.map((unit) => ({
+        training_session_id: randomUUID(),
+        training_id: unit.training,
+        rpe: 8,
+      }));
+      await prisma.dayProgress.create({
+        data: {
+          client_id: client,
+          date: new Date(day),
+          sync_revision: 1,
+          training_completed: false,
+          trainings_completed: [],
+          training_sessions: sessions,
+          exercises_completed: units.flatMap((unit, index) =>
+            unit.occurrences.map((occurrence) => ({
+              training_session_id: sessions[index].training_session_id,
+              training_exercise_id: occurrence,
+              exercise_id: 'u2',
+              completed_at: day + 'T12:00:00Z',
+            })),
+          ),
+          meals_completed: meals,
+        },
+      });
+    }
+
+    async function policy(client: string) {
+      await prisma.adherenceConfigRevision.create({
+        data: {
+          client_id: client,
+          version: 1,
+          effective_date: new Date('2020-01-01'),
+          steps_goal: 1000,
+          calorie_lower_percent: 10,
+          calorie_upper_percent: 10,
+          protein_min_percent: 90,
+          steps_min_percent: 100,
+          low_global_percent: 50,
+        },
+      });
+    }
+
+    // A real time prescription (measure_type SECONDS with its target).
+    async function addTimedExercise(
+      training: string,
+      id: string,
+      order: number,
+    ) {
+      const exercise = 'x-' + hex();
+      await scratch.query(
+        `INSERT INTO public.exercises(id, name, muscle_groups, equipment, updated_at) VALUES ($1, 'Plank', '{}', '{}', now())`,
+        [exercise],
+      );
+      await scratch.query(
+        `INSERT INTO public.training_exercises(id, training_id, exercise_id, "order", sets, reps_or_duration,
+           measure_type, target_value)
+         VALUES ($1, $2, $3, $4, 3, '30 s', 'SECONDS'::"TrainingMeasureType", 30)`,
+        [id, training, exercise, order],
+      );
+    }
+
+    async function timedSnapshots(
+      client: string,
+      day: string,
+      training: string,
+    ) {
+      const { rows } = await scratch.query<{
+        source: string;
+        exercises: Array<{ id: string; measure_type: string }>;
+      }>(
+        `SELECT source, (SELECT jsonb_agg(jsonb_build_object('id', e->>'id', 'measure_type', e->>'measure_type')
+             ORDER BY ordinality) FROM jsonb_array_elements(payload->'exercises') WITH ORDINALITY AS x(e, ordinality)) AS exercises
+         FROM public.training_day_snapshots
+         WHERE client_id = $1 AND date = $2::date AND training_id = $3`,
+        [client, day, training],
+      );
+      return rows;
+    }
+
+    async function dietSnapshotCount(client: string, day: string) {
+      const { rows } = await scratch.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM public.diet_day_snapshots
+         WHERE client_id = $1 AND date = $2::date`,
+        [client, day],
+      );
+      return rows[0].n;
+    }
+
+    it('2. a frozen day keeps the fallback basis hash and evaluation (SQL/TS equivalence matrix, decoy client)', async () => {
+      const client = await createUser(scratch, 'c-' + hex());
+      const decoy = await createUser(scratch, 'decoy-' + hex());
+      await policy(client);
+      const p = hex();
+      const day = (n: number) => '2021-03-' + String(n).padStart(2, '0');
+      const days = Array.from({ length: 12 }, (_, index) => day(index + 1));
+      const reps = await createTraining(scratch, [p + '-r2', p + '-r1']);
+      const other = await createTraining(scratch, [p + '-o1']);
+      const timed = await createTraining(scratch, []);
+      await addTimedExercise(timed, p + '-t2', 0);
+      await addTimedExercise(timed, p + '-t1', 1);
+      const emptied = await createTraining(scratch, [p + '-e-catalog']);
+      const doomed = await createTraining(scratch, [p + '-d1']);
+      const decoyTraining = await createTraining(scratch, [p + '-decoy']);
+      const snapshotDiet = await dietWithVariant(1800);
+      const plainDiet = await dietWithVariant(2000);
+      const decoyDiet = await dietWithVariant(2600);
+      // The decoy has another plan on every fixture date, and its own
+      // training snapshot on the timed date.
+      for (const [index, at] of days.entries()) {
+        const assignment = await createAssignment(scratch, decoy, at, {
+          diet: decoyDiet.id,
+          mode: 'ANY',
+        });
+        await createLink(
+          scratch,
+          `${p}-decoy-${index}`,
+          assignment,
+          decoyTraining,
+          0,
+        );
+      }
+      // 1. Not assigned (the decoy is assigned that date).
+      // 2. Rest day with links and ANY.
+      const rest = await createAssignment(scratch, client, day(2), {
+        rest: true,
+        mode: 'ANY',
+        diet: plainDiet.id,
+      });
+      await createLink(scratch, p + '-rest-1', rest, reps, 0);
+      await createLink(scratch, p + '-rest-2', rest, other, 1);
+      // 3. Inherited unit: training_id without links.
+      await createAssignment(scratch, client, day(3), {
+        training: reps,
+        diet: plainDiet.id,
+      });
+      // 4. Several links whose position order is not their id order, plus
+      // the legacy training_id mirror that links override.
+      const ordered = await createAssignment(scratch, client, day(4), {
+        training: other,
+        diet: plainDiet.id,
+      });
+      await createLink(scratch, p + '-z', ordered, reps, 0);
+      await createLink(scratch, p + '-a', ordered, other, 1);
+      await progress(client, day(4), [
+        { training: reps, occurrences: [p + '-r1', p + '-r2'] },
+      ]);
+      // 5. Timed (SECONDS) training read from its day snapshot (not the
+      // catalog). The snapshot is not inserted by the test: writing the link
+      // of the protected day updates the legacy training_id mirror
+      // (20260904120000), whose timed_consumer_before trigger
+      // (20260913120000) captures the day.
+      const timedDay = await createAssignment(scratch, client, day(5), {
+        diet: plainDiet.id,
+      });
+      expect(await timedSnapshots(client, day(5), timed)).toEqual([]);
+      await createLink(scratch, p + '-timed', timedDay, timed, 0);
+      await createSnapshot(scratch, decoy, day(5), timed, [p + '-t-decoy']);
+      await progress(client, day(5), [
+        { training: timed, occurrences: [p + '-t1', p + '-t2'] },
+      ]);
+      expect(await timedSnapshots(client, day(5), timed)).toEqual([
+        {
+          source: 'captured',
+          exercises: [
+            { id: p + '-t2', measure_type: 'SECONDS' },
+            { id: p + '-t1', measure_type: 'SECONDS' },
+          ],
+        },
+      ]);
+      // A later catalog edit adds an exercise the day never prescribed.
+      await addTimedExercise(timed, p + '-t3', 2);
+      // 6. Day snapshot with exercises: [].
+      const emptyDay = await createAssignment(scratch, client, day(6), {
+        diet: plainDiet.id,
+      });
+      await createLink(scratch, p + '-emptied', emptyDay, emptied, 0);
+      await createSnapshot(scratch, client, day(6), emptied, []);
+      // 7. Repetitions-only training (catalog occurrences).
+      const repsDay = await createAssignment(scratch, client, day(7), {
+        diet: plainDiet.id,
+      });
+      await createLink(scratch, p + '-reps', repsDay, reps, 0);
+      // 8. Inherited training deleted afterwards (SetNull).
+      await createAssignment(scratch, client, day(8), {
+        training: doomed,
+        diet: plainDiet.id,
+      });
+      await scratch.query('DELETE FROM public.trainings WHERE id = $1', [
+        doomed,
+      ]);
+      // 9. Diet with variants and a diet_day_snapshot (captured below).
+      const dietDay = await createAssignment(scratch, client, day(9), {
+        diet: snapshotDiet.id,
+      });
+      await createLink(scratch, p + '-diet', dietDay, reps, 0);
+      await progress(
+        client,
+        day(9),
+        [{ training: reps, occurrences: [p + '-r1', p + '-r2'] }],
+        [snapshotDiet.variant, snapshotDiet.second],
+      );
+      // 10. Diet with variants resolved from the catalog, without any day
+      // snapshot. In production this is a day assigned while it was still in
+      // the future that closed with no progress and no later edit of its
+      // diet: 20260906120000 captures only protected days (past or with
+      // progress), so nothing ever snapshots it. A synthetic 2021 date is
+      // always protected, so the two row capture triggers of plan_assignments
+      // (AFTER INSERT, and BEFORE UPDATE fired by the legacy mirror sync of
+      // the link) are disabled only inside the inserting transaction
+      // (transactional DDL: no other session or statement sees them
+      // disabled). No progress on this day, as in production (progress would
+      // capture it).
+      const captureTriggers = [
+        'diet_history_assignment_after',
+        'diet_history_assignment_before',
+      ];
+      const catalogDiet = await dietWithVariant(2200);
+      const insert = await scratch.connect();
+      try {
+        await insert.query('BEGIN');
+        for (const trigger of captureTriggers)
+          await insert.query(
+            `ALTER TABLE public.plan_assignments DISABLE TRIGGER ${trigger}`,
+          );
+        const plainDay = await createAssignment(insert, client, day(10), {
+          diet: catalogDiet.id,
+        });
+        await createLink(insert, p + '-plain', plainDay, other, 0);
+        // Run the deferred constraint triggers now, still with the capture
+        // disabled (ALTER TABLE refuses pending trigger events).
+        await insert.query('SET CONSTRAINTS ALL IMMEDIATE');
+        for (const trigger of captureTriggers)
+          await insert.query(
+            `ALTER TABLE public.plan_assignments ENABLE TRIGGER ${trigger}`,
+          );
+        await insert.query('COMMIT');
+      } catch (error) {
+        await insert.query('ROLLBACK');
+        throw error;
+      } finally {
+        insert.release();
+      }
+      const triggerState = await scratch.query<{
+        name: string;
+        enabled: string;
+      }>(
+        `SELECT tgname AS name, tgenabled AS enabled FROM pg_trigger
+         WHERE tgrelid = 'public.plan_assignments'::regclass
+           AND tgname = ANY($1::text[]) ORDER BY tgname`,
+        [captureTriggers],
+      );
+      expect(triggerState.rows).toEqual(
+        [...captureTriggers].sort().map((name) => ({ name, enabled: 'O' })),
+      );
+      // 11. Null diet.
+      const noDiet = await createAssignment(scratch, client, day(11), {});
+      await createLink(scratch, p + '-nodiet', noDiet, other, 0);
+      // 12. ANY with a single unit.
+      const single = await createAssignment(scratch, client, day(12), {
+        mode: 'ANY',
+        diet: plainDiet.id,
+      });
+      await createLink(scratch, p + '-single', single, other, 0);
+      await progress(client, day(12), [
+        { training: other, occurrences: [p + '-o1'] },
+      ]);
+      // A later catalog edit: the trigger copies the protected day 9 content
+      // first, so day 9 reads its snapshot and not the edited quantities.
+      await prisma.mealIngredient.updateMany({
+        where: { meal: { diet_id: snapshotDiet.id } },
+        data: { quantity: 80 },
+      });
+      const captured = await scratch.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM public.diet_day_snapshots
+         WHERE client_id = $1 AND date = $2::date AND diet_id = $3`,
+        [client, day(9), snapshotDiet.id],
+      );
+      expect(captured.rows[0].n).toBe(1);
+      // Day 10 really has no diet snapshot at all before the first GET.
+      expect(await dietSnapshotCount(client, day(10))).toBe(0);
+
+      // 1) GET without frozen rows: every day is the current-plan fallback.
+      const fallback = await evaluate(client, day(1), day(12));
+      expect(fallback.days.map((d) => d.basis)).toEqual(
+        days.map(() => 'current_fallback'),
+      );
+      // The fixtures exercise the shapes they claim (fallback side).
+      const on = (n: number) => fallback.days[n - 1];
+      expect(on(1).schedule).toEqual({
+        training: 'not_assigned',
+        nutrition: 'not_assigned',
+      });
+      expect(on(2).schedule.training).toBe('rest');
+      expect(on(4).evaluation.training).toMatchObject({
+        numerator: 1,
+        denominator: 2,
+      });
+      // Proven only against the snapshot occurrences, not the catalog ones.
+      expect(on(5).evaluation.training).toMatchObject({
+        numerator: 1,
+        denominator: 1,
+      });
+      expect(on(6).evaluation.training).toMatchObject({
+        numerator: 0,
+        denominator: 1,
+      });
+      expect(on(8).schedule.training).toBe('not_assigned');
+      // Snapshot quantities 70 g + 100 g, not the edited 80 g + 80 g.
+      expect(on(9).intake.estimated_calories).toBeCloseTo(170);
+      // Catalog diet totals (no snapshot to read them from).
+      expect(on(10).schedule.nutrition).toBe('assigned');
+      expect(on(10).targets).toEqual({ calories: 2200, protein_g: 110 });
+      expect(on(11).schedule.nutrition).toBe('not_assigned');
+      expect(on(12).evaluation.training).toMatchObject({
+        numerator: 1,
+        denominator: 1,
+      });
+      const hashes = new Map<string, string>();
+      for (const at of days) {
+        const rows = await revisions(client, at);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          revision: 1,
+          original_basis_id: null,
+          cut_binding: null,
+        });
+        const match = /^current_fallback:v1:([0-9a-f]{64})$/.exec(
+          rows[0].original_basis_digest,
+        );
+        if (!match) throw new Error('Unexpected fallback digest ' + at);
+        hashes.set(at, match[1]);
+      }
+
+      // 2) The nightly job, on time, for each closed date.
+      for (const at of days) {
+        expect(
+          await freezeOnTime(scratch, nextDay(at) + 'T00:05:00Z', '1 hour', 1),
+        ).toMatchObject({ from: at, to: at, inserted: 2, late: 0 });
+      }
+      const frozenRows = await stored(scratch, [client]);
+      expect(frozenRows.map((row) => [row.date, row.provenance])).toEqual(
+        days.map((at) => [at, 'scheduled']),
+      );
+      const decoyRows = await stored(scratch, [decoy]);
+      expect(decoyRows).toHaveLength(days.length);
+      expect(frozenRows[0].basis).toEqual({ version: 1, assigned: false });
+      expect(decoyRows[0].basis).toMatchObject({
+        assigned: true,
+        completion_mode: 'ANY',
+        diet_id: decoyDiet.id,
+      });
+      // The frozen timed unit holds the captured occurrences, not the
+      // catalog (which now also has t3).
+      expect(frozenRows[4].basis.units).toEqual([
+        {
+          id: p + '-timed',
+          training_id: timed,
+          occurrences: [p + '-t1', p + '-t2'],
+        },
+      ]);
+      expect(frozenRows[9].basis.diet_id).toBe(catalogDiet.id);
+      // Still no diet snapshot for day 10 before the second GET.
+      expect(await dietSnapshotCount(client, day(10))).toBe(0);
+
+      // 3) GET again: frozen_day digest with the same hash, n+1 revision and
+      // the same evaluation; only the source label and revision change.
+      const frozen = await evaluate(client, day(1), day(12));
+      expect(frozen.days.map((d) => d.basis)).toEqual(
+        days.map(() => 'original'),
+      );
+      expect(frozen.days.map((d) => d.revision)).toEqual(days.map(() => 2));
+      expect(frozen.days.map(withoutSource)).toEqual(
+        fallback.days.map(withoutSource),
+      );
+      expect({ ...frozen, evaluated_at: null, days: null }).toEqual({
+        ...fallback,
+        evaluated_at: null,
+        days: null,
+      });
+      for (const at of days) {
+        const rows = await revisions(client, at);
+        expect(rows).toHaveLength(2);
+        expect(rows[1]).toEqual({
+          revision: 2,
+          original_basis_digest: 'frozen_day:v1:' + hashes.get(at),
+          original_basis_id: null,
+          cut_binding: null,
+        });
+      }
+      // Replay: same keys, no new revision.
+      expect((await evaluate(client, day(1), day(12))).days).toEqual(
+        frozen.days,
+      );
+      for (const at of days)
+        expect(await revisions(client, at)).toHaveLength(2);
+    }, 120000);
+
+    it('7. regression: a later plan edit no longer changes the evaluation of a frozen day', async () => {
+      const client = await createUser(scratch, 'c-' + hex());
+      await policy(client);
+      const p = hex();
+      const day = '2021-04-10';
+      const reps = await createTraining(scratch, [p + '-r1']);
+      const extra = await createTraining(scratch, [p + '-x1']);
+      const diet = await dietWithVariant(1800);
+      const otherDiet = await dietWithVariant(2400);
+      const assignment = await createAssignment(scratch, client, day, {
+        diet: diet.id,
+        mode: 'ANY',
+      });
+      await createLink(scratch, p + '-l1', assignment, reps, 0);
+      await createLink(scratch, p + '-l2', assignment, extra, 1);
+      await progress(
+        client,
+        day,
+        [{ training: reps, occurrences: [p + '-r1'] }],
+        [diet.variant, diet.second],
+      );
+      expect(
+        await freezeOnTime(scratch, nextDay(day) + 'T00:05:00Z', '1 hour', 1),
+      ).toMatchObject({ inserted: 1, late: 0 });
+      const before = await evaluate(client, day);
+      // Later edits of the closed day: completion mode, membership, the
+      // repetitions-only training content and the diet.
+      await scratch.query(
+        `UPDATE public.plan_assignments
+         SET training_completion_mode = 'ALL', diet_id = $2 WHERE id = $1`,
+        [assignment, otherDiet.id],
+      );
+      await createLink(
+        scratch,
+        p + '-l3',
+        assignment,
+        await createTraining(scratch, [p + '-y1']),
+        2,
+      );
+      await scratch.query(
+        `INSERT INTO public.training_exercises(id, training_id, exercise_id, "order", sets, reps_or_duration)
+         SELECT $2, training_id, exercise_id, 1, 3, '8-12'
+         FROM public.training_exercises WHERE id = $1`,
+        [p + '-r1', p + '-r2'],
+      );
+      const after = await evaluate(client, day);
+      // Before U2 the fallback followed the edited plan (ALL, three units, an
+      // unproven occurrence, another diet) and appended a revision.
+      expect(after.days).toEqual(before.days);
+      expect(await revisions(client, day)).toHaveLength(1);
+      expect(before.days[0]).toMatchObject({
+        basis: 'original',
+        calendar: 'complete',
+        revision: 1,
+        evaluation: { training: { numerator: 1, denominator: 1 } },
+        targets: { calories: 1800, protein_g: 90 },
+      });
+    }, 60000);
+
+    it('7. a late row is an estimate and stable; an invalid row stays unknown without fallback', async () => {
+      const client = await createUser(scratch, 'c-' + hex());
+      const p = hex();
+      const late = '2021-05-10';
+      const invalid = '2021-05-20';
+      const reps = await createTraining(scratch, [p + '-r1']);
+      const lateDay = await createAssignment(scratch, client, late, {});
+      await createLink(scratch, p + '-late', lateDay, reps, 0);
+      const invalidDay = await createAssignment(scratch, client, invalid, {});
+      await createLink(scratch, p + '-invalid', invalidDay, reps, 0);
+      // Default 2 h grace, real clock years later: frozen 'late'.
+      expect(
+        await freeze(scratch, nextDay(late) + 'T00:05:00Z', 1),
+      ).toMatchObject({ inserted: 1, late: 1 });
+      const first = await evaluate(client, late);
+      expect(first.days[0]).toMatchObject({
+        basis: 'current_fallback',
+        schedule: { training: 'assigned', nutrition: 'not_assigned' },
+      });
+      expect((await revisions(client, late))[0].original_basis_digest).toMatch(
+        /^frozen_day:v1:[0-9a-f]{64}$/,
+      );
+      await createLink(
+        scratch,
+        p + '-late-2',
+        lateDay,
+        await createTraining(scratch, [p + '-x1']),
+        1,
+      );
+      expect((await evaluate(client, late)).days).toEqual(first.days);
+      expect(await revisions(client, late)).toHaveLength(1);
+
+      // A row that passes the table CHECKs but not the reader: unknown, and
+      // the current plan (assigned) is not used in its place.
+      await scratch.query(
+        `INSERT INTO public.adherence_day_bases(client_id, date, provenance, basis)
+         VALUES ($1, $2::date, 'scheduled', $3::jsonb)`,
+        [
+          client,
+          invalid,
+          JSON.stringify({ version: 1, assigned: true, rest: 'no' }),
+        ],
+      );
+      const unknown = await evaluate(client, invalid);
+      expect(unknown.days[0]).toMatchObject({
+        basis: 'unknown',
+        calendar: 'insufficient',
+        schedule: { training: 'unknown', nutrition: 'unknown' },
+      });
+      expect(await revisions(client, invalid)).toEqual([
+        {
+          revision: 1,
+          original_basis_digest: 'missing_original',
+          original_basis_id: null,
+          cut_binding: null,
+        },
+      ]);
+    }, 60000);
   });
 });
