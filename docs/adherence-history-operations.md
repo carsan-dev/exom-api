@@ -1,3 +1,5 @@
+> **En desuso para nuevas operaciones.** La congelación diaria sustituye al operador: consultar [Activar y operar la congelación diaria de adherencia](adherence-day-freeze-operations.md). Se conserva el contenido histórico; esta nota no autoriza ninguna ejecución.
+
 # Publish selected historical adherence days with the owner operator
 
 This **manual, privileged** caller connects the existing origin, cut and prescription SDK. It is not enabled by normal API startup, a public endpoint or a new scheduler. Run it only with explicit permission for the database and selected clients. Implementation/testing does **not** authorize production execution, deployment, migrations or grants. P5/P6 remain cancelled/out of scope.
