@@ -27,6 +27,7 @@ describe('TrainingsService', () => {
     };
     planAssignment: { findUnique: jest.Mock };
     dayProgress: { findUnique: jest.Mock };
+    autoAssignmentRule: { findFirst: jest.Mock };
   };
   let autoAssignmentMaterializer: { reconcile: jest.Mock };
 
@@ -54,6 +55,7 @@ describe('TrainingsService', () => {
       },
       planAssignment: { findUnique: jest.fn() },
       dayProgress: { findUnique: jest.fn() },
+      autoAssignmentRule: { findFirst: jest.fn().mockResolvedValue(null) },
     };
 
     autoAssignmentMaterializer = {
@@ -875,6 +877,9 @@ describe('TrainingsService', () => {
       // Additive field: an assignment without a stored mode reads as ALL.
       training_completion_mode: 'ALL',
       trainings: [],
+      // L4b additive fields: always present, null without a covering rule.
+      program_week: null,
+      program_day: null,
     });
     expect(prisma.planAssignment.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1287,5 +1292,233 @@ describe('TrainingsService', () => {
         });
       },
     );
+  });
+
+  describe('program position on /trainings/day (L4b)', () => {
+    const utc = (value: string) => new Date(`${value}T00:00:00.000Z`);
+    const trainingDay = (weekday: number) => ({
+      weekday,
+      is_rest_day: false,
+      training_id: `rule-training-${weekday}`,
+      training: { is_active: true },
+      trainings: [{ training: { is_active: true } }],
+    });
+    const restDay = (weekday: number) => ({
+      weekday,
+      is_rest_day: true,
+      training_id: null,
+      training: null,
+      trainings: [],
+    });
+    const programRule = (id: string, startsOn: string, isActive = true) => ({
+      id,
+      is_active: isActive,
+      created_at: new Date('2026-10-01T10:00:00.000Z'),
+      starts_on: utc(startsOn),
+      ends_on: null,
+      days: [trainingDay(1), trainingDay(3), trainingDay(5), restDay(7)],
+    });
+    const assignedTraining = (id: string) => ({
+      id: `assignment-${id}`,
+      requires_last_set_video: false,
+      training: {
+        id,
+        name: id,
+        type: 'FUERZA',
+        types: ['FUERZA'],
+        accentColor: null,
+        is_active: true,
+        blocks: [],
+        exercises: [
+          {
+            id: `te-${id}`,
+            exercise_id: `exercise-${id}`,
+            order: 0,
+            block_id: null,
+            exercise: { id: `exercise-${id}` },
+          },
+        ],
+      },
+    });
+    const activeRuleQuery = (target: Date): unknown =>
+      expect.objectContaining({
+        where: {
+          client_id: 'client-1',
+          is_active: true,
+          starts_on: { lte: target },
+          OR: [{ ends_on: null }, { ends_on: { gte: target } }],
+        },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      });
+
+    beforeEach(() => {
+      prisma.dayProgress.findUnique.mockResolvedValue(null);
+    });
+
+    it('returns both fields as null for a client without assignment or rule', async () => {
+      const target = utc('2026-11-18');
+      prisma.planAssignment.findUnique.mockResolvedValue(null);
+
+      const result = await service.findDay('client-1', target);
+
+      expect(result).toEqual({
+        date: '2026-11-18',
+        training_completed: result.training_completed,
+        training_completion_mode: 'ALL',
+        trainings: [],
+        program_week: null,
+        program_day: null,
+      });
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledWith(
+        activeRuleQuery(target),
+      );
+    });
+
+    it('derives the position from the active rule for an unmaterialized date', async () => {
+      const target = utc('2026-11-25');
+      prisma.planAssignment.findUnique.mockResolvedValue(null);
+      prisma.autoAssignmentRule.findFirst.mockResolvedValue(
+        programRule('rule-active', '2026-11-16'),
+      );
+
+      const result = await service.findDay('client-1', target);
+
+      expect(result).toMatchObject({
+        trainings: [],
+        program_week: 2,
+        program_day: 2,
+      });
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledWith(
+        activeRuleQuery(target),
+      );
+    });
+
+    it('reads the materializing rule by id, even if inactive, for a past assignment', async () => {
+      const target = utc('2026-11-06');
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        auto_assignment_rule_id: 'rule-old',
+        training_completion_mode: 'ALL',
+        trainings: [assignedTraining('training-a')],
+        training: null,
+      });
+      prisma.autoAssignmentRule.findFirst.mockResolvedValue(
+        programRule('rule-old', '2026-10-05', false),
+      );
+
+      const result = await service.findDay('client-1', target);
+
+      expect(result).toMatchObject({
+        date: '2026-11-06',
+        training_completed: false,
+        training_completion_mode: 'ALL',
+        trainings: [
+          {
+            id: 'training-a',
+            assignment_training_id: 'assignment-training-a',
+            completed: false,
+          },
+        ],
+        program_week: 5,
+        program_day: 3,
+      });
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rule-old', client_id: 'client-1' },
+        }),
+      );
+    });
+
+    it('keeps the week but no day on a rest day materialized by the rule', async () => {
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        auto_assignment_rule_id: 'rule-active',
+        is_rest_day: true,
+        trainings: [],
+        training: null,
+      });
+      prisma.autoAssignmentRule.findFirst.mockResolvedValue(
+        programRule('rule-active', '2026-11-16'),
+      );
+
+      const result = await service.findDay('client-1', utc('2026-11-22'));
+
+      expect(result).toMatchObject({ trainings: [], program_week: 1 });
+      expect(result).toHaveProperty('program_day', null);
+    });
+
+    it('falls back to the active rule for a manual assignment', async () => {
+      const target = utc('2026-11-23');
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        auto_assignment_rule_id: null,
+        trainings: [assignedTraining('training-manual')],
+        training: null,
+      });
+      prisma.autoAssignmentRule.findFirst.mockResolvedValue(
+        programRule('rule-active', '2026-11-16'),
+      );
+
+      const result = await service.findDay('client-1', target);
+
+      expect(result).toMatchObject({
+        trainings: [{ id: 'training-manual' }],
+        program_week: 2,
+        program_day: 1,
+      });
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledWith(
+        activeRuleQuery(target),
+      );
+    });
+
+    it('returns null without a second query when the assignment rule is not found', async () => {
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        auto_assignment_rule_id: 'rule-foreign',
+        trainings: [assignedTraining('training-a')],
+        training: null,
+      });
+
+      const result = await service.findDay('client-1', utc('2026-11-23'));
+
+      expect(result).toMatchObject({
+        trainings: [{ id: 'training-a' }],
+        program_week: null,
+        program_day: null,
+      });
+      expect(prisma.autoAssignmentRule.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads the rule only after reconcile and the assignment read', async () => {
+      prisma.planAssignment.findUnique.mockResolvedValue(null);
+
+      await service.findDay('client-1', utc('2026-11-18'));
+
+      const [reconcileOrder] =
+        autoAssignmentMaterializer.reconcile.mock.invocationCallOrder;
+      const [assignmentOrder] =
+        prisma.planAssignment.findUnique.mock.invocationCallOrder;
+      const [ruleOrder] =
+        prisma.autoAssignmentRule.findFirst.mock.invocationCallOrder;
+      expect(reconcileOrder).toBeLessThan(assignmentOrder);
+      expect(assignmentOrder).toBeLessThan(ruleOrder);
+    });
+
+    it('does not add the program fields to /trainings/today', async () => {
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        auto_assignment_rule_id: 'rule-active',
+        trainings: [assignedTraining('training-a')],
+        training: null,
+      });
+      prisma.autoAssignmentRule.findFirst.mockResolvedValue(
+        programRule('rule-active', '2026-11-16'),
+      );
+
+      const today = await service.findToday('client-1', utc('2026-11-16'));
+
+      expect(today).toMatchObject({ id: 'training-a' });
+      expect(today).not.toHaveProperty('program_week');
+      expect(today).not.toHaveProperty('program_day');
+    });
   });
 });
