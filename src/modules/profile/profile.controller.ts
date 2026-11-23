@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Post,
   Put,
   Body,
   HttpCode,
@@ -15,8 +16,11 @@ import {
 } from '@nestjs/swagger';
 import { ProfileService } from './profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { MarkOnboardingDto } from './dto/mark-onboarding.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '@prisma/client';
 
 @ApiTags('Profile')
 @ApiBearerAuth()
@@ -37,6 +41,22 @@ export class ProfileController {
     @Body() dto: UpdateProfileDto,
   ) {
     return this.profileService.updateMyProfile(user.id, dto);
+  }
+
+  @Post('me/onboarding')
+  @Roles(Role.CLIENT)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Mark my onboarding as finished (idempotent, first write wins); returns the stored mark',
+  })
+  @ApiResponse({ status: 403, description: 'Only clients have onboarding' })
+  @ApiResponse({ status: 404, description: 'Perfil no encontrado' })
+  markOnboarding(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: MarkOnboardingDto,
+  ) {
+    return this.profileService.markOnboarding(user.id, dto);
   }
 
   @Put('me/avatar')
