@@ -69,7 +69,9 @@ const CLIENT_COMPLETED_AT_EARLIEST_OFFSET_MS = 14 * 60 * 60 * 1000;
 /**
  * Completion time to store for a new entry. The client time is kept when it
  * is plausible for `date`; otherwise, or when absent, the server time is used
- * as before. Never rejects: a 400 would drop an offline completion for good.
+ * as before. The service never rejects an implausible time (a 400 would drop
+ * an offline completion for good); it clamps to the server time. Format
+ * validation (invalid or null) is done by the DTO, which answers 400.
  */
 function effectiveCompletedAt(
   clientValue: string | undefined,

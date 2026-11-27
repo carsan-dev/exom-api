@@ -786,13 +786,39 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
     async (action) => {
       const sessionId = `client-time-${action}-${suffix}`;
       const operationId = `client-time-operation-${action}-${suffix}`;
-      const first = '2099-01-05T13:56:50.120Z';
+      // The client time is only stored when plausible for the day: use a
+      // day close to the real clock, with a time a few minutes in the past.
+      const now = new Date();
+      const day = now.toISOString().slice(0, 10);
+      const dayValue = new Date(`${day}T00:00:00.000Z`);
+      const sent = new Date(now.getTime() - 5 * 60 * 1000);
+      sent.setUTCMilliseconds(120);
+      const first = sent.toISOString();
+      const other = new Date(sent.getTime() + 1000).toISOString();
+      await prismaOne.planAssignment.deleteMany({
+        where: { client_id: clientId, date: dayValue },
+      });
+      await prismaOne.planAssignment.create({
+        data: {
+          client_id: clientId,
+          date: dayValue,
+          diet_id: dietId,
+          training_id: trainingOneId,
+          trainings: {
+            create: [{ training_id: trainingOneId, position: 0 }],
+          },
+        },
+      });
+      const readDay = () =>
+        prismaOne.dayProgress.findUniqueOrThrow({
+          where: { client_id_date: { client_id: clientId, date: dayValue } },
+        });
       const send = (completedAt: string | undefined) => {
         const time =
           completedAt === undefined ? {} : { completed_at: completedAt };
         if (action === 'markExerciseCompleted') {
           const dto = {
-            date,
+            date: day,
             exercise_id: exerciseOneId,
             training_exercise_id: trainingExerciseOneId,
             training_session_id: sessionId,
@@ -804,7 +830,7 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
           );
         }
         const dto = {
-          date,
+          date: day,
           training_id: trainingOneId,
           training_session_id: sessionId,
           ...time,
@@ -815,13 +841,17 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
       };
 
       const applied = await send(first);
-      const stored = await readProgress();
+      const stored = await readDay();
+      // The stored value is the client's one, not the server clock.
+      const entries = completedExercises(stored.exercises_completed);
+      expect(entries.length).toBeGreaterThan(0);
+      expect(entries.every((entry) => entry.completed_at === first)).toBe(true);
       // A lost response is resent with the same ID, revision and body.
       const replay = await send(first);
       expect(replay.operation_revision).toBe(applied.operation_revision);
-      expect(await readProgress()).toEqual(stored);
+      expect(await readDay()).toEqual(stored);
 
-      await expect(send('2099-01-05T13:57:00.000Z')).rejects.toMatchObject({
+      await expect(send(other)).rejects.toMatchObject({
         status: 409,
         response: { code: 'PROGRESS_OPERATION_CONFLICT' },
       });
@@ -829,7 +859,7 @@ describeWithDatabase('ProgressService PostgreSQL concurrency', () => {
         status: 409,
         response: { code: 'PROGRESS_OPERATION_CONFLICT' },
       });
-      expect(await readProgress()).toEqual(stored);
+      expect(await readDay()).toEqual(stored);
       expect(
         await prismaOne.progressOperation.count({
           where: { owner_id: clientId },
