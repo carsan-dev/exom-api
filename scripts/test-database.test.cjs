@@ -22,14 +22,14 @@ test('verifies actual cluster directory before fixture writes', async () => {
   await assert.rejects(assertTestDatabase({query:async()=>({rows:[{...row,directory:'/real-data'}]})}));
 });
 test('integration gate rejects missing, skipped, failed and unclosed cases', () => {
-  const validReport = { success: true, numPassedTests: 232, numPendingTests: 0,
+  const validReport = { success: true, numPassedTests: 236, numPendingTests: 0,
     numTodoTests: 0, numPendingTestSuites: 0, openHandles: [] };
   validateReport(validReport, 'concurrency');
-  validateReport({ ...validReport, numPassedTests: 19 }, 'e2e');
-  for (const change of [{ success: false }, { numPassedTests: 231 },
+  validateReport({ ...validReport, numPassedTests: 32 }, 'e2e');
+  for (const change of [{ success: false }, { numPassedTests: 235 },
     { numPassedTests: undefined }, { numPendingTests: 1 }, { numTodoTests: 1 },
     { numPendingTestSuites: 1 }, { openHandles: [{}] }]) {
     assert.throws(() => validateReport({ ...validReport, ...change }, 'concurrency'));
   }
-  assert.throws(() => validateReport({ ...validReport, numPassedTests: 18 }, 'e2e'));
+  assert.throws(() => validateReport({ ...validReport, numPassedTests: 31 }, 'e2e'));
 });

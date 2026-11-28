@@ -190,6 +190,7 @@ describe('actual complete immutable history cut on PG17', () => {
       '20261115120000_base_service_scope',
       '20261117120000_adherence_day_bases',
       '20261118120000_disable_adherence_journal_triggers',
+      '20261123120000_profile_onboarding_state',
     ]);
     const databaseUrl = url.toString();
     execFileSync(

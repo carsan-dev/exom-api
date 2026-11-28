@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { UsersService } from './users.service';
 import { UpdateClientAssignmentsDto } from './dto/update-client-assignments.dto';
+import { UpdateClientProfileDto } from './dto/update-client-profile.dto';
 import { ChallengesService } from '../challenges/challenges.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { MetricsService } from '../metrics/metrics.service';
@@ -567,6 +568,48 @@ describe('UsersService', () => {
           upsert: {
             create: expectedProfile,
             update: expectedProfile,
+          },
+        },
+      },
+    });
+  });
+
+  it('never copies onboarding state into an admin profile edit (OP-API-09)', async () => {
+    prisma.user.findUnique
+      .mockResolvedValueOnce({
+        id: 'client-1',
+        role: Role.CLIENT,
+        profile: { id: 'profile-1' },
+      })
+      .mockResolvedValueOnce({
+        id: 'client-1',
+        role: Role.CLIENT,
+        profile: { first_name: 'Ada', last_name: 'Rivera' },
+        bodyMetrics: [],
+        streak: null,
+      });
+    prisma.user.update.mockResolvedValue({});
+    // Even if validation were bypassed, the service builds the data field by field.
+    const dto = Object.assign(new UpdateClientProfileDto(), {
+      first_name: 'Ada',
+      onboarding_completed_at: new Date('2020-01-01T00:00:00.000Z'),
+      onboarding_outcome: 'COMPLETED',
+    });
+
+    await service.updateClientProfile(
+      'super-admin-1',
+      Role.SUPER_ADMIN,
+      'client-1',
+      dto,
+    );
+
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'client-1' },
+      data: {
+        profile: {
+          upsert: {
+            create: { first_name: 'Ada', last_name: '' },
+            update: { first_name: 'Ada' },
           },
         },
       },
