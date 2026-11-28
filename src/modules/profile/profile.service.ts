@@ -4,6 +4,7 @@ import { ClientDeletionService } from '../client-deletion/client-deletion.servic
 import { PrismaService } from '../../prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { MarkOnboardingDto } from './dto/mark-onboarding.dto';
 import { ManagedUploadPurpose } from '@prisma/client';
 
 @Injectable()
@@ -126,6 +127,30 @@ export class ProfileService {
     });
 
     return this.buildProfileResponse(userId);
+  }
+
+  /**
+   * First write wins without read-modify-write: one conditional UPDATE (the
+   * predicate is re-checked by PostgreSQL after waiting on a locked row), then
+   * a read of the winning value. Retries and concurrent calls all answer with
+   * the persisted mark. A missing profile is 404 and is never created here.
+   */
+  async markOnboarding(userId: string, dto: MarkOnboardingDto) {
+    await this.prisma.profile.updateMany({
+      where: { user_id: userId, onboarding_completed_at: null },
+      data: {
+        onboarding_completed_at: new Date(),
+        onboarding_outcome: dto.outcome ?? null,
+      },
+    });
+    const mark = await this.prisma.profile.findUnique({
+      where: { user_id: userId },
+      select: { onboarding_completed_at: true, onboarding_outcome: true },
+    });
+    if (!mark) {
+      throw new NotFoundException('Perfil no encontrado');
+    }
+    return mark;
   }
 
   async getAvatarUploadUrl(userId: string, role: string) {

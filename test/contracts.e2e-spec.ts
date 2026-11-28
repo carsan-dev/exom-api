@@ -1182,6 +1182,119 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
       ).toBe(0);
     });
 
+    it('C-O1: stores the client completion time within range and the server time otherwise', async () => {
+      // A real civil date close to the server clock: the 2099 fixtures above
+      // are always in the future, so every client time would be clamped there.
+      const today = new Date().toISOString().slice(0, 10);
+      const dayStart = new Date(`${today}T00:00:00.000Z`).getTime();
+      await prisma.planAssignment.create({
+        data: {
+          client_id: client,
+          date: new Date(today),
+          training_id: trainingId,
+        },
+      });
+      const complete = async (
+        route: 'exercises' | 'trainings',
+        completedAt: string | undefined,
+      ) => {
+        const sessionId = randomUUID();
+        const body =
+          route === 'exercises'
+            ? {
+                date: today,
+                exercise_id: exercise,
+                training_exercise_id: trainingExerciseId,
+                training_session_id: sessionId,
+                sets: [{ set_number: 1, seconds: 30 }],
+              }
+            : {
+                date: today,
+                training_id: trainingId,
+                training_session_id: sessionId,
+              };
+        const before = Date.now();
+        const response = await request(server())
+          .post(`/api/v1/progress/${route}/complete`)
+          .set('x-contract-owner', client)
+          .send(
+            completedAt === undefined
+              ? body
+              : { ...body, completed_at: completedAt },
+          )
+          .expect(201);
+        const after = Date.now();
+        const entries = responseData(response).exercises_completed as Array<{
+          training_session_id?: string;
+          completed_at: string;
+        }>;
+        const stored = entries.find(
+          (entry) => entry.training_session_id === sessionId,
+        )?.completed_at;
+        if (stored === undefined) throw Error('Expected stored completion');
+        return { stored, before, after };
+      };
+      const isServerTime = ({
+        stored,
+        before,
+        after,
+      }: {
+        stored: string;
+        before: number;
+        after: number;
+      }) =>
+        new Date(stored).toISOString() === stored &&
+        Date.parse(stored) >= before &&
+        Date.parse(stored) <= after;
+      try {
+        const clientTime = new Date(
+          Math.max(Date.now() - 5 * 60_000, dayStart - 14 * 3_600_000),
+        ).toISOString();
+        for (const route of ['exercises', 'trainings'] as const) {
+          expect((await complete(route, clientTime)).stored).toBe(clientTime);
+          expect(isServerTime(await complete(route, undefined))).toBe(true);
+          expect(
+            isServerTime(
+              await complete(
+                route,
+                new Date(Date.now() + 3_600_000).toISOString(),
+              ),
+            ),
+          ).toBe(true);
+          expect(
+            isServerTime(
+              await complete(
+                route,
+                new Date(dayStart - 14 * 3_600_000 - 1).toISOString(),
+              ),
+            ),
+          ).toBe(true);
+        }
+        await request(server())
+          .post('/api/v1/progress/exercises/complete')
+          .set('x-contract-owner', client)
+          .send({
+            date: today,
+            exercise_id: exercise,
+            training_exercise_id: trainingExerciseId,
+            training_session_id: randomUUID(),
+            sets: [{ set_number: 1, seconds: 30 }],
+            completed_at: 'not-a-time',
+          })
+          .expect(400);
+      } finally {
+        await prisma.progressOperation.deleteMany({
+          where: { owner_id: client, date: new Date(today) },
+        });
+        await prisma.dayProgress.deleteMany({
+          where: { client_id: client, date: new Date(today) },
+        });
+        await prisma.planAssignment.deleteMany({
+          where: { client_id: client, date: new Date(today) },
+        });
+      }
+    });
+
     describe('owner training read routes', () => {
       const range = 'from=2099-02-13&to=2099-02-16';
       let sessions: string[];

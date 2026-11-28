@@ -173,6 +173,12 @@ enum CatalogColorType {
   diet_nutritional_badge
 }
 
+// NULL outcome on a marked profile means unknown (backfill or legacy local mark).
+enum OnboardingOutcome {
+  COMPLETED
+  SKIPPED
+}
+
 // ─── User & Profile ───────────────────────────────────────────────────────────
 
 model User {
@@ -272,20 +278,23 @@ model AdherenceConfigRevision {
 }
 
 model Profile {
-  id               String    @id @default(uuid())
-  user_id          String    @unique
-  first_name       String
-  last_name        String
-  avatar_url       String?
-  level            Level     @default(PRINCIPIANTE)
-  main_goal        String?
-  muscle_mass_goal Float?
-  target_calories  Int?
-  current_weight   Float?
-  height           Float?
-  birth_date       DateTime?
-  created_at       DateTime  @default(now())
-  updated_at       DateTime  @updatedAt
+  id                      String             @id @default(uuid())
+  user_id                 String             @unique
+  first_name              String
+  last_name               String
+  avatar_url              String?
+  level                   Level              @default(PRINCIPIANTE)
+  main_goal               String?
+  muscle_mass_goal        Float?
+  target_calories         Int?
+  current_weight          Float?
+  height                  Float?
+  birth_date              DateTime?
+  created_at              DateTime           @default(now())
+  updated_at              DateTime           @updatedAt
+  // Server source of truth for the App onboarding; first write wins.
+  onboarding_completed_at DateTime?
+  onboarding_outcome      OnboardingOutcome?
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 

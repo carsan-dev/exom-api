@@ -280,6 +280,122 @@ describe('AuthService', () => {
     });
   });
 
+  describe('persistent onboarding state in session payloads (OP-API-08)', () => {
+    const profile = {
+      first_name: 'Client',
+      last_name: 'User',
+      avatar_url: null,
+      onboarding_completed_at: new Date('2026-11-23T09:00:00.000Z'),
+      onboarding_outcome: 'SKIPPED',
+    };
+    const unmarked = {
+      ...profile,
+      onboarding_completed_at: null,
+      onboarding_outcome: null,
+    };
+    function includeOf(call: unknown): unknown {
+      const args: unknown = Array.isArray(call) ? call[0] : undefined;
+      return args !== null && typeof args === 'object' && 'include' in args
+        ? args.include
+        : undefined;
+    }
+    function profileIncludes(mock: jest.Mock) {
+      const includes = mock.mock.calls.map((call: unknown) => includeOf(call));
+      expect(includes.length).toBeGreaterThan(0);
+      for (const include of includes) {
+        expect(include).toEqual({ profile: true });
+      }
+    }
+
+    it.each([
+      ['marked', profile],
+      ['unmarked', unmarked],
+    ])(
+      'password login returns the full %s profile row',
+      async (_label, row) => {
+        const user = {
+          id: 'user-1',
+          email: 'client@exom.dev',
+          is_active: true,
+          is_locked: false,
+          login_attempts: 0,
+          locked_at: null,
+          firebase_uid: 'firebase-user-1',
+          role: 'CLIENT',
+          profile: row,
+        };
+        prisma.user.findFirst.mockResolvedValue(user);
+        prisma.user.update.mockResolvedValue(user);
+        prisma.user.findUnique.mockResolvedValue({
+          ...user,
+          sessions_revoked_at: null,
+        });
+        (global.fetch as jest.Mock).mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              localId: 'firebase-user-1',
+              email: 'client@exom.dev',
+            }),
+        });
+        createCustomTokenMock.mockResolvedValue('custom-token');
+
+        const result = await service.login({
+          email: 'client@exom.dev',
+          password: 'super-secret',
+        });
+
+        expect(result.user.profile).toEqual(row);
+        expect(result.user.profile).toHaveProperty('onboarding_completed_at');
+        expect(result.user.profile).toHaveProperty('onboarding_outcome');
+        profileIncludes(prisma.user.findFirst);
+      },
+    );
+
+    it.each([
+      ['marked', profile],
+      ['unmarked', unmarked],
+    ])(
+      'social login and getMe return the full %s profile row',
+      async (_label, row) => {
+        verifyIdTokenMock.mockResolvedValue({
+          uid: 'firebase-google-1',
+          email: 'client@exom.dev',
+          firebase: { sign_in_provider: 'google.com' },
+        });
+        prisma.user.findUnique.mockResolvedValue({
+          id: 'user-1',
+          email: 'client@exom.dev',
+          is_active: true,
+          is_locked: false,
+          firebase_uid: 'firebase-google-1',
+          role: 'CLIENT',
+          sessions_revoked_at: null,
+          profile: row,
+        });
+        createCustomTokenMock.mockResolvedValue('custom-social-token');
+
+        const social = await service.socialLogin({
+          token: 'token-1',
+          provider: 'google',
+        });
+        const me = await service.getMe('user-1');
+
+        for (const payload of [social.user, me]) {
+          expect(payload.profile).toEqual(row);
+          expect(payload.profile).toHaveProperty('onboarding_completed_at');
+          expect(payload.profile).toHaveProperty('onboarding_outcome');
+        }
+        const includes = prisma.user.findUnique.mock.calls
+          .map((call: unknown) => includeOf(call))
+          .filter((include) => include !== undefined);
+        expect(includes.length).toBeGreaterThanOrEqual(2);
+        for (const include of includes)
+          expect(include).toEqual({ profile: true });
+      },
+    );
+  });
+
   it('links social login when the verified email belongs to an existing user', async () => {
     verifyIdTokenMock.mockResolvedValue({
       uid: 'firebase-google-2',
