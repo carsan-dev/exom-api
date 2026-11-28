@@ -718,6 +718,11 @@
       "CompleteTrainingDto": {
         "additionalProperties": false,
         "properties": {
+          "completed_at": {
+            "description": "Real completion time on the client, applied only to exercise entries created by this completion. Same range and fallback as exercise completion.",
+            "format": "date-time",
+            "type": "string"
+          },
           "date": {
             "type": "string"
           },
@@ -3864,6 +3869,11 @@
       "MarkExerciseDto": {
         "additionalProperties": false,
         "properties": {
+          "completed_at": {
+            "description": "Real completion time on the client (last logged set). The server keeps it only when it falls between the start of `date` minus 14 h and its own time plus 2 min; otherwise, or when absent, it stores its own time. An existing completion keeps its first time.",
+            "format": "date-time",
+            "type": "string"
+          },
           "date": {
             "type": "string"
           },

@@ -59,6 +59,37 @@ import {
   lockClientDayProgress,
 } from '../../common/progress/day-progress-lock';
 
+// Client completion times are accepted up to this much ahead of the server
+// clock (clock skew); further ahead they are not plausible.
+const CLIENT_COMPLETED_AT_MAX_SKEW_MS = 2 * 60 * 1000;
+// A completion of civil date D happens in local D; the earliest UTC instant of
+// any local D is D 00:00Z - 14 h (UTC+14).
+const CLIENT_COMPLETED_AT_EARLIEST_OFFSET_MS = 14 * 60 * 60 * 1000;
+
+/**
+ * Completion time to store for a new entry. The client time is kept when it
+ * is plausible for `date`; otherwise, or when absent, the server time is used
+ * as before. The service never rejects an implausible time (a 400 would drop
+ * an offline completion for good); it clamps to the server time. Format
+ * validation (invalid or null) is done by the DTO, which answers 400.
+ */
+function effectiveCompletedAt(
+  clientValue: string | undefined,
+  date: Date,
+  now: Date,
+): string {
+  if (clientValue === undefined) return now.toISOString();
+  const instant = Date.parse(clientValue);
+  if (
+    !Number.isFinite(instant) ||
+    instant > now.getTime() + CLIENT_COMPLETED_AT_MAX_SKEW_MS ||
+    instant < date.getTime() - CLIENT_COMPLETED_AT_EARLIEST_OFFSET_MS
+  ) {
+    return now.toISOString();
+  }
+  return new Date(instant).toISOString();
+}
+
 interface ExerciseCompletedEntry {
   training_session_id?: string;
   training_exercise_id?: string;
@@ -781,7 +812,9 @@ export class ProgressService {
           }),
           training_exercise_id: trainingExerciseId,
           exercise_id: exerciseId,
-          completed_at: matchingEntry?.completed_at ?? new Date().toISOString(),
+          completed_at:
+            matchingEntry?.completed_at ??
+            effectiveCompletedAt(dto.completed_at, date, new Date()),
           ...(dto.weight_used !== undefined && {
             weight_used: dto.weight_used,
           }),
@@ -1011,7 +1044,8 @@ export class ProgressService {
               training_exercise_id: trainingExerciseId,
               exercise_id: exerciseId,
               completed_at:
-                existingEntry?.completed_at ?? new Date().toISOString(),
+                existingEntry?.completed_at ??
+                effectiveCompletedAt(dto.completed_at, date, new Date()),
             };
           },
         );

@@ -5,6 +5,7 @@
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
+import { createHash } from 'node:crypto';
 import { Server } from 'node:http';
 import { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
@@ -274,5 +275,104 @@ describe('P4 HTTP offline protocol (real controller/pipes/filter, isolated auth 
       .send(payload)
       .expect(403);
     expect(seen).toHaveLength(1);
+  });
+
+  describe('C-O1 client completion time', () => {
+    const completedAt = '2026-09-06T13:56:50.120Z';
+    const hashOf = (value: unknown) =>
+      createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+    it('forwards completed_at for exercise completion and binds it to the operation hash', async () => {
+      const withTime = { ...payload, completed_at: completedAt };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await request(app.getHttpServer())
+          .post('/api/v1/progress/exercises/complete')
+          .set('x-exom-operation-id', 'stable:time')
+          .set('x-exom-revision', '2')
+          .send(withTime)
+          .expect(201);
+      }
+      await request(app.getHttpServer())
+        .post('/api/v1/progress/exercises/complete')
+        .set('x-exom-operation-id', 'stable:time')
+        .set('x-exom-revision', '2')
+        .send({ ...withTime, completed_at: '2026-09-06T13:57:00.000Z' })
+        .expect(201);
+      expect(seen.map((call) => call.dto)).toEqual([
+        withTime,
+        withTime,
+        { ...withTime, completed_at: '2026-09-06T13:57:00.000Z' },
+      ]);
+      expect(seen[0]?.command?.payloadHash).toBe(
+        hashOf(['markExerciseCompleted', withTime]),
+      );
+      expect(seen[1]?.command?.payloadHash).toBe(seen[0]?.command?.payloadHash);
+      expect(seen[2]?.command?.payloadHash).not.toBe(
+        seen[0]?.command?.payloadHash,
+      );
+    });
+
+    it('forwards completed_at for training completion and binds it to the operation hash', async () => {
+      // DTO declaration order: the hash serializes the validated DTO instance.
+      const training = {
+        training_session_id: 'session-a',
+        date: '2026-09-06',
+        training_id: 'training-a',
+        completed_at: '2026-09-06T14:56:50+01:00',
+      };
+      await request(app.getHttpServer())
+        .post('/api/v1/progress/trainings/complete')
+        .set('x-exom-operation-id', 'complete:time')
+        .set('x-exom-revision', '2')
+        .send(training)
+        .expect(201);
+      expect(trainingSeen).toMatchObject([{ dto: training }]);
+      expect(trainingSeen[0]?.command?.payloadHash).toBe(
+        hashOf(['completeTraining', training]),
+      );
+    });
+
+    it('keeps the legacy payload without completed_at and its operation hash unchanged', async () => {
+      await request(app.getHttpServer())
+        .post('/api/v1/progress/exercises/complete')
+        .set('x-exom-operation-id', 'stable:legacy')
+        .set('x-exom-revision', '2')
+        .send(payload)
+        .expect(201);
+      expect(seen[0]?.dto).toEqual(payload);
+      expect(JSON.stringify(seen[0]?.dto)).not.toContain('completed_at');
+      expect(seen[0]?.command?.payloadHash).toBe(
+        hashOf(['markExerciseCompleted', payload]),
+      );
+    });
+
+    it.each([
+      ['a non-date string', 'yesterday'],
+      ['an empty string', ''],
+      ['a date without time', '2026-09-06'],
+      ['a time without zone', '2026-09-06T13:56:50'],
+      ['an impossible calendar date', '2026-02-30T10:00:00Z'],
+      ['an offset without colon', '2026-09-06T13:56:50+0100'],
+      ['a number', 1_757_166_000_000],
+      ['null', null],
+    ])(
+      'rejects %s as completed_at before service forwarding',
+      async (_label, value) => {
+        await request(app.getHttpServer())
+          .post('/api/v1/progress/exercises/complete')
+          .send({ ...payload, completed_at: value })
+          .expect(400);
+        await request(app.getHttpServer())
+          .post('/api/v1/progress/trainings/complete')
+          .send({
+            date: '2026-09-06',
+            training_id: 'training-a',
+            completed_at: value,
+          })
+          .expect(400);
+        expect(seen).toHaveLength(0);
+        expect(trainingSeen).toHaveLength(0);
+      },
+    );
   });
 });
