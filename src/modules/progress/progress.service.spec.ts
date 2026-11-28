@@ -2120,4 +2120,173 @@ describe('ProgressService', () => {
       );
     });
   });
+
+  describe('C-O1 client completion time', () => {
+    // Server clock for every case: 2026-11-27T15:00:00.000Z.
+    const serverNow = '2026-11-27T15:00:00.000Z';
+    const date = '2026-11-27';
+    // Earliest plausible instant for civil date D: D 00:00Z - 14 h.
+    const earliest = '2026-11-26T10:00:00.000Z';
+
+    beforeEach(() => {
+      jest.useFakeTimers({ now: new Date(serverNow) });
+      prisma.planAssignment.findUnique.mockResolvedValue({
+        training: {
+          id: 'training-1',
+          exercises: [
+            { id: 'te-1', exercise_id: 'exercise-1' },
+            { id: 'te-2', exercise_id: 'exercise-2' },
+          ],
+        },
+        diet: null,
+      });
+      prisma.dayProgress.findUnique.mockResolvedValue(null);
+      prisma.dayProgress.upsert.mockImplementation(
+        ({
+          create,
+          update,
+        }: {
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) =>
+          Promise.resolve({
+            meals_completed: [],
+            ...create,
+            ...update,
+            sync_revision: 1,
+          }),
+      );
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    function storedEntries(): Array<Record<string, unknown>> {
+      const args = prisma.dayProgress.upsert.mock.calls[0][0];
+      return args.update.exercises_completed as Array<Record<string, unknown>>;
+    }
+
+    async function markWith(completedAt: string | undefined, day = date) {
+      await service.markExerciseCompleted('client-1', {
+        date: day,
+        exercise_id: 'exercise-1',
+        training_exercise_id: 'te-1',
+        sets: [{ set_number: 1, reps: 8 }],
+        ...(completedAt !== undefined && { completed_at: completedAt }),
+      });
+      return storedEntries().find(
+        (entry) => entry.training_exercise_id === 'te-1',
+      )?.completed_at;
+    }
+
+    it('keeps the server time when the client omits completed_at', async () => {
+      await expect(markWith(undefined)).resolves.toBe(serverNow);
+    });
+
+    it.each([
+      ['a past time of the same day', '2026-11-27T13:56:50.120Z'],
+      ['the earliest plausible instant', earliest],
+      ['the upper skew boundary', '2026-11-27T15:02:00.000Z'],
+    ])('stores %s sent by the client', async (_label, completedAt) => {
+      await expect(markWith(completedAt)).resolves.toBe(completedAt);
+    });
+
+    it('normalizes an offset time to UTC ISO-8601', async () => {
+      await expect(markWith('2026-11-27T14:56:50+01:00')).resolves.toBe(
+        '2026-11-27T13:56:50.000Z',
+      );
+    });
+
+    it('accepts a late completion of an earlier civil day', async () => {
+      await expect(
+        markWith('2026-11-20T18:30:00.000Z', '2026-11-20'),
+      ).resolves.toBe('2026-11-20T18:30:00.000Z');
+    });
+
+    it.each([
+      ['beyond the allowed future skew', '2026-11-27T15:02:00.001Z'],
+      ['days in the future', '2026-12-04T15:00:00.000Z'],
+      ['before the earliest plausible instant', '2026-11-26T09:59:59.999Z'],
+      ['from a previous year', '2025-11-27T15:00:00.000Z'],
+    ])(
+      'clamps a time %s to the server time without rejecting',
+      async (_label, completedAt) => {
+        await expect(markWith(completedAt)).resolves.toBe(serverNow);
+      },
+    );
+
+    it('keeps the first completion time of an existing entry', async () => {
+      prisma.dayProgress.findUnique.mockResolvedValue({
+        exercises_completed: [
+          {
+            training_exercise_id: 'te-1',
+            exercise_id: 'exercise-1',
+            completed_at: '2026-11-27T09:00:00.000Z',
+            sets: [{ set_number: 1, reps: 6 }],
+          },
+        ],
+        meals_completed: [],
+        training_completed: false,
+        trainings_completed: [],
+        training_sessions: [],
+      });
+      await expect(markWith('2026-11-27T13:56:50.120Z')).resolves.toBe(
+        '2026-11-27T09:00:00.000Z',
+      );
+    });
+
+    it('applies the client time only to the entries created by training completion', async () => {
+      prisma.dayProgress.findUnique.mockResolvedValue({
+        exercises_completed: [
+          {
+            training_exercise_id: 'te-1',
+            exercise_id: 'exercise-1',
+            completed_at: '2026-11-27T09:00:00.000Z',
+          },
+        ],
+        meals_completed: [],
+        training_completed: false,
+        trainings_completed: [],
+        training_sessions: [],
+      });
+
+      await service.completeTraining('client-1', {
+        date,
+        training_id: 'training-1',
+        completed_at: '2026-11-27T13:56:50.120Z',
+      });
+
+      expect(storedEntries()).toEqual([
+        expect.objectContaining({
+          training_exercise_id: 'te-1',
+          completed_at: '2026-11-27T09:00:00.000Z',
+        }),
+        expect.objectContaining({
+          training_exercise_id: 'te-2',
+          completed_at: '2026-11-27T13:56:50.120Z',
+        }),
+      ]);
+    });
+
+    it.each([
+      ['absent', undefined],
+      ['in the future', '2026-11-27T16:00:00.000Z'],
+      ['before the civil day', '2026-11-25T23:00:00.000Z'],
+    ])(
+      'uses the server time for training completion entries when the client time is %s',
+      async (_label, completedAt) => {
+        await service.completeTraining('client-1', {
+          date,
+          training_id: 'training-1',
+          ...(completedAt !== undefined && { completed_at: completedAt }),
+        });
+
+        expect(storedEntries().map((entry) => entry.completed_at)).toEqual([
+          serverNow,
+          serverNow,
+        ]);
+      },
+    );
+  });
 });

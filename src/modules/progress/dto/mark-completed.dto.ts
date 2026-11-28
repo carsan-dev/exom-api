@@ -1,13 +1,16 @@
+import { applyDecorators } from '@nestjs/common';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
   ArrayUnique,
   IsInt,
+  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsNumber,
   IsString,
+  Matches,
   MaxLength,
   ValidateIf,
   Max,
@@ -15,6 +18,22 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { IsDateOnly } from '../../../common/date-only';
+
+// Full date-time with an explicit zone: a zoneless value would be read in the
+// server time zone. Out-of-range instants are clamped by the service, not here.
+const CLIENT_COMPLETED_AT_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const ClientCompletedAt = (description: string) =>
+  applyDecorators(
+    ApiPropertyOptional({ type: String, format: 'date-time', description }),
+    ValidateIf((_, value: unknown) => value !== undefined),
+    IsString(),
+    Matches(CLIENT_COMPLETED_AT_PATTERN, {
+      message: 'completed_at must be an ISO 8601 date-time with a time zone',
+    }),
+    IsISO8601({ strict: true, strictSeparator: true }),
+  );
 
 const getCompletedSetNumber = (value: unknown): unknown =>
   typeof value === 'object' && value !== null
@@ -95,6 +114,11 @@ export class MarkExerciseDto {
   @ValidateNested({ each: true })
   @Type(() => CompletedSetDto)
   sets?: CompletedSetDto[];
+
+  @ClientCompletedAt(
+    'Real completion time on the client (last logged set). The server keeps it only when it falls between the start of `date` minus 14 h and its own time plus 2 min; otherwise, or when absent, it stores its own time. An existing completion keeps its first time.',
+  )
+  completed_at?: string;
 }
 
 export class MarkMealDto {
@@ -152,4 +176,9 @@ export class CompleteTrainingDto {
   @IsString()
   @MaxLength(1000)
   session_note?: string;
+
+  @ClientCompletedAt(
+    'Real completion time on the client, applied only to exercise entries created by this completion. Same range and fallback as exercise completion.',
+  )
+  completed_at?: string;
 }

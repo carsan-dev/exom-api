@@ -27,6 +27,7 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
   const client = randomUUID();
   const exercise = randomUUID();
   const otherClient = randomUUID();
+  const programClient = randomUUID();
   const trainings: string[] = [];
   const recap = randomUUID();
   const task = randomUUID();
@@ -71,7 +72,8 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
           identity === owner ||
           identity === admin ||
           identity === client ||
-          identity === otherClient
+          identity === otherClient ||
+          identity === programClient
         ) {
           req.user = {
             id: identity,
@@ -748,6 +750,11 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
       .set('x-contract-owner', client)
       .expect(200);
     validate(responseSchema('/api/v1/trainings/day', 'get', 200), day.body);
+    // L4b: a manual assignment with no rule keeps both fields, as null.
+    expect(responseData(day)).toMatchObject({
+      program_week: null,
+      program_day: null,
+    });
     const legacy = {
       name: 'Legacy',
       type: 'CARDIO',
@@ -764,6 +771,96 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
       .expect(201);
     trainings.push(responseId(old));
     validate(responseSchema('/api/v1/trainings', 'post', 201), old.body);
+  });
+  it('derives program_week and program_day for /trainings/day from the rule (L4b)', async () => {
+    const created = await request(server())
+      .post('/api/v1/trainings')
+      .set('x-contract-owner', owner)
+      .send(payload())
+      .expect(201);
+    const trainingId = responseId(created);
+    trainings.push(trainingId);
+    await prisma.user.create({
+      data: {
+        id: programClient,
+        firebase_uid: programClient,
+        email: `${programClient}@example.test`,
+        role: 'CLIENT',
+      },
+    });
+    const getDay = async (date: string) => {
+      const response = await request(server())
+        .get(`/api/v1/trainings/day?date=${date}`)
+        .set('x-contract-owner', programClient)
+        .expect(200);
+      validate(
+        responseSchema('/api/v1/trainings/day', 'get', 200),
+        response.body,
+      );
+      return responseData(response);
+    };
+    try {
+      // Week 1 starts on Monday 2099-01-05; Monday and Wednesday train.
+      const rule = await prisma.autoAssignmentRule.create({
+        data: {
+          client_id: programClient,
+          source_week_start: new Date('2099-01-05'),
+          starts_on: new Date('2099-01-05'),
+          days: {
+            create: [
+              { weekday: 1, training_id: trainingId },
+              {
+                weekday: 3,
+                trainings: {
+                  create: [{ training_id: trainingId, position: 0 }],
+                },
+              },
+              { weekday: 7, is_rest_day: true },
+            ],
+          },
+        },
+      });
+
+      // Wednesday of week 2: reconcile materializes it, so the rule is read
+      // through the assignment's auto_assignment_rule_id.
+      expect(await getDay('2099-01-14')).toMatchObject({
+        date: '2099-01-14',
+        trainings: [{ id: trainingId }],
+        program_week: 2,
+        program_day: 2,
+      });
+      expect(
+        await prisma.planAssignment.findUnique({
+          where: {
+            client_id_date: {
+              client_id: programClient,
+              date: new Date('2099-01-14'),
+            },
+          },
+          select: { auto_assignment_rule_id: true },
+        }),
+      ).toEqual({ auto_assignment_rule_id: rule.id });
+
+      // Thursday has no rule day and no assignment: the active rule is used.
+      expect(await getDay('2099-01-15')).toMatchObject({
+        trainings: [],
+        program_week: 2,
+        program_day: null,
+      });
+      expect(
+        await prisma.planAssignment.count({
+          where: { client_id: programClient, date: new Date('2099-01-15') },
+        }),
+      ).toBe(0);
+
+      // Before starts_on, both fields stay present as null.
+      expect(await getDay('2099-01-04')).toMatchObject({
+        program_week: null,
+        program_day: null,
+      });
+    } finally {
+      await prisma.user.deleteMany({ where: { id: programClient } });
+    }
   });
   it('keeps nullable temporal metadata and documents service rejections', async () => {
     const input = payload();
@@ -1083,6 +1180,119 @@ describe('P10 OpenAPI against real HTTP, DTOs and PostgreSQL', () => {
           },
         }),
       ).toBe(0);
+    });
+
+    it('C-O1: stores the client completion time within range and the server time otherwise', async () => {
+      // A real civil date close to the server clock: the 2099 fixtures above
+      // are always in the future, so every client time would be clamped there.
+      const today = new Date().toISOString().slice(0, 10);
+      const dayStart = new Date(`${today}T00:00:00.000Z`).getTime();
+      await prisma.planAssignment.create({
+        data: {
+          client_id: client,
+          date: new Date(today),
+          training_id: trainingId,
+        },
+      });
+      const complete = async (
+        route: 'exercises' | 'trainings',
+        completedAt: string | undefined,
+      ) => {
+        const sessionId = randomUUID();
+        const body =
+          route === 'exercises'
+            ? {
+                date: today,
+                exercise_id: exercise,
+                training_exercise_id: trainingExerciseId,
+                training_session_id: sessionId,
+                sets: [{ set_number: 1, seconds: 30 }],
+              }
+            : {
+                date: today,
+                training_id: trainingId,
+                training_session_id: sessionId,
+              };
+        const before = Date.now();
+        const response = await request(server())
+          .post(`/api/v1/progress/${route}/complete`)
+          .set('x-contract-owner', client)
+          .send(
+            completedAt === undefined
+              ? body
+              : { ...body, completed_at: completedAt },
+          )
+          .expect(201);
+        const after = Date.now();
+        const entries = responseData(response).exercises_completed as Array<{
+          training_session_id?: string;
+          completed_at: string;
+        }>;
+        const stored = entries.find(
+          (entry) => entry.training_session_id === sessionId,
+        )?.completed_at;
+        if (stored === undefined) throw Error('Expected stored completion');
+        return { stored, before, after };
+      };
+      const isServerTime = ({
+        stored,
+        before,
+        after,
+      }: {
+        stored: string;
+        before: number;
+        after: number;
+      }) =>
+        new Date(stored).toISOString() === stored &&
+        Date.parse(stored) >= before &&
+        Date.parse(stored) <= after;
+      try {
+        const clientTime = new Date(
+          Math.max(Date.now() - 5 * 60_000, dayStart - 14 * 3_600_000),
+        ).toISOString();
+        for (const route of ['exercises', 'trainings'] as const) {
+          expect((await complete(route, clientTime)).stored).toBe(clientTime);
+          expect(isServerTime(await complete(route, undefined))).toBe(true);
+          expect(
+            isServerTime(
+              await complete(
+                route,
+                new Date(Date.now() + 3_600_000).toISOString(),
+              ),
+            ),
+          ).toBe(true);
+          expect(
+            isServerTime(
+              await complete(
+                route,
+                new Date(dayStart - 14 * 3_600_000 - 1).toISOString(),
+              ),
+            ),
+          ).toBe(true);
+        }
+        await request(server())
+          .post('/api/v1/progress/exercises/complete')
+          .set('x-contract-owner', client)
+          .send({
+            date: today,
+            exercise_id: exercise,
+            training_exercise_id: trainingExerciseId,
+            training_session_id: randomUUID(),
+            sets: [{ set_number: 1, seconds: 30 }],
+            completed_at: 'not-a-time',
+          })
+          .expect(400);
+      } finally {
+        await prisma.progressOperation.deleteMany({
+          where: { owner_id: client, date: new Date(today) },
+        });
+        await prisma.dayProgress.deleteMany({
+          where: { client_id: client, date: new Date(today) },
+        });
+        await prisma.planAssignment.deleteMany({
+          where: { client_id: client, date: new Date(today) },
+        });
+      }
     });
 
     describe('owner training read routes', () => {
