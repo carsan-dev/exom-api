@@ -20442,6 +20442,12 @@
           "date": {
             "type": "string"
           },
+          "program_day": {
+            "$ref": "#/components/schemas/Wire31"
+          },
+          "program_week": {
+            "$ref": "#/components/schemas/Wire31"
+          },
           "training_completed": {
             "enum": [
               false,
@@ -20462,7 +20468,9 @@
           "date",
           "training_completed",
           "training_completion_mode",
-          "trainings"
+          "trainings",
+          "program_week",
+          "program_day"
         ],
         "type": "object"
       },

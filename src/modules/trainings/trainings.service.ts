@@ -39,6 +39,11 @@ import { reconcileTrainingProgress } from '../../common/progress/plan-progress-r
 import { isTrainingDayComplete } from '../../common/progress/training-completion';
 import { AutoAssignmentMaterializerService } from '../assignments/auto-assignment-materializer.service';
 import { lockClientsDayProgress } from '../../common/progress/day-progress-lock';
+import {
+  deriveProgramPosition,
+  selectProgramRule,
+  type ProgramPosition,
+} from './program-position';
 
 type TrainingSortField =
   | 'name'
@@ -127,6 +132,25 @@ const trainingListSelect = {
   group: { select: { id: true, name: true } },
   _count: { select: { exercises: true } },
 };
+
+// Read-only projection for program_week/program_day (L4b): only what the
+// derivation needs, including training activity like the materializer.
+const programRuleSelect = {
+  id: true,
+  is_active: true,
+  created_at: true,
+  starts_on: true,
+  ends_on: true,
+  days: {
+    select: {
+      weekday: true,
+      is_rest_day: true,
+      training_id: true,
+      training: { select: { is_active: true } },
+      trainings: { select: { training: { select: { is_active: true } } } },
+    },
+  },
+} satisfies Prisma.AutoAssignmentRuleSelect;
 
 const TRAINING_ACCENT_COLOR_REGEX = /^#?(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 const CATALOG_COLOR_REGEX = /^#(?:[0-9A-Fa-f]{6})$/;
@@ -1516,6 +1540,11 @@ export class TrainingsService {
     );
     const trainingCompletionMode =
       assignment?.training_completion_mode ?? TrainingCompletionMode.ALL;
+    const programPosition = await this.loadProgramPosition(
+      clientId,
+      target,
+      assignment?.auto_assignment_rule_id ?? null,
+    );
     return {
       date: target.toISOString().split('T')[0],
       training_completed: isTrainingDayComplete(
@@ -1527,7 +1556,41 @@ export class TrainingsService {
       ),
       training_completion_mode: trainingCompletionMode,
       trainings: serializedTrainings,
+      program_week: programPosition.program_week,
+      program_day: programPosition.program_day,
     };
+  }
+
+  /**
+   * L4b-D6, read-only and outside reconcile: exactly one query, either the
+   * assignment's materializing rule by primary key (active or not) or the
+   * newest active rule covering the date through the
+   * [client_id, is_active, starts_on, ends_on] index.
+   */
+  private async loadProgramPosition(
+    clientId: string,
+    target: Date,
+    assignmentRuleId: string | null,
+  ): Promise<ProgramPosition> {
+    const rule = assignmentRuleId
+      ? await this.prisma.autoAssignmentRule.findFirst({
+          where: { id: assignmentRuleId, client_id: clientId },
+          select: programRuleSelect,
+        })
+      : await this.prisma.autoAssignmentRule.findFirst({
+          where: {
+            client_id: clientId,
+            is_active: true,
+            starts_on: { lte: target },
+            OR: [{ ends_on: null }, { ends_on: { gte: target } }],
+          },
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+          select: programRuleSelect,
+        });
+    return deriveProgramPosition(
+      selectProgramRule(assignmentRuleId, rule ? [rule] : [], target),
+      target,
+    );
   }
 
   async findOne(id: string, clientId?: string, date?: Date) {
